@@ -172,12 +172,13 @@ static LONG WINAPI CrashVeh(EXCEPTION_POINTERS *ep)
         h->eip = c->Eip; h->addr = *(DWORD *)(a - 4); h->val = *(DWORD *)a; h->esp = c->Esp; c->Dr6 = 0; return EXCEPTION_CONTINUE_EXECUTION;
     }
     if ((code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_PRIV_INSTRUCTION || code == EXCEPTION_IN_PAGE_ERROR) && InterlockedIncrement(&n) <= 200)
-    {   char *fn = getenv("RR_CRASH"), path[MAX_PATH], sym[300], rs[300]; FILE *f; CONTEXT *c = ep->ContextRecord; DWORD ret = 0;
+    {   char *fn = getenv("RR_CRASH"), path[MAX_PATH], sym[300], rs[300]; FILE *f; CONTEXT *c = ep->ContextRecord; DWORD ret = 0; sym[0] = 0;
         _snprintf(path, sizeof path, "%s.av.txt", (fn && *fn) ? fn : "crash.txt"); path[sizeof path - 1] = 0;
         if (!IsBadReadPtr((void *)c->Esp, 4)) ret = *(DWORD *)c->Esp;
         f = fopen(path, "a");
         if (f)
-        {   fprintf(f, "#%ld code=%08x eip=%08x %s", n, (unsigned)code, (unsigned)c->Eip, MapSym(c->Eip, sym, sizeof sym) ? sym : "(not in game code)");
+        {   char mod[MAX_PATH] = ""; HMODULE hm = NULL; if (!MapSym(c->Eip, sym, sizeof sym) && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(size_t)c->Eip, &hm) && hm) { char *b; GetModuleFileNameA(hm, mod, sizeof mod); b = strrchr(mod, 0x5C); _snprintf(sym, sizeof sym - 1, "(%s+%x)", b ? b + 1 : mod, (unsigned)(c->Eip - (size_t)hm)); sym[sizeof sym - 1] = 0; }
+            fprintf(f, "#%ld code=%08x eip=%08x %s", n, (unsigned)code, (unsigned)c->Eip, sym[0] ? sym : "(not in game code)");
             if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
                 fprintf(f, " %s@%08x", ep->ExceptionRecord->ExceptionInformation[0] == 8 ? "exec" : ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read", (unsigned)ep->ExceptionRecord->ExceptionInformation[1]);
             fprintf(f, " [esp]=%08x %s esp=%08x ebp=%08x\n", (unsigned)ret, MapSym(ret, rs, sizeof rs) ? rs : "", (unsigned)c->Esp, (unsigned)c->Ebp);

@@ -15,7 +15,7 @@
 
 #define RV_MAX 1290                                         /* = Video Options > Draw distance maximum (shim DD_MAX) */
 extern int rr_ringWant;                                    /* road_build.c: ring size for the next ring set-up */
-extern int rr_gpuRace, rr_farModel; void rr_FarModelInit(int on); int __fastcall rr_ScaleFar(unsigned depth);   /* gpu_scene.c */
+extern int rr_farModel; void rr_FarModelInit(int on); int __fastcall rr_ScaleFar(unsigned depth);   /* gpu_scene.c */
 int  rr_rvCount = 33;                                      /* segments in the view (33 = original) */
 int  rr_rvTabA[(RV_MAX + 1) * 0x24];                       /* lane table A: 0x90 bytes per entry */
 char rr_rvTabB[(RV_MAX + 1) * 0x90];                       /* lane table B */
@@ -232,17 +232,13 @@ void rr_RoadViewInit(void)
     else {
         HMODULE m = GetModuleHandleA("ddraw.dll");
         int (__stdcall *dd)(void) = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_DrawDistance") : 0;
-        if (dd && rr_gpuRace) { int v = dd(); if (v >= 8 && v <= RV_MAX) rr_rvCount = v; }   /* the option only applies to GPU races (software races keep the original 33) */
+        if (dd) { int v = dd(); if (v >= 8 && v <= RV_MAX) rr_rvCount = v; }
     }
-    /* the road must really be generated as far as it is drawn: the original ring (128 pieces) reaches 80 segments ahead (road_ring.h).  A GPU race that looks
-       further gets a bigger ring (the smallest power of two that reaches the view, + margin) whose far part is shadow-generated (road_build.c); a software
-       race (only the test switch can ask for more there) is capped at the original front */
+    /* the road must really be generated as far as it is drawn: the original ring (128 pieces) reaches 80 segments ahead (road_ring.h).  A race that looks
+       further gets a bigger ring (the smallest power of two that reaches the view, + margin) whose far part is shadow-generated (road_build.c) */
     rr_ringWant = 128;
-    if (rr_rvCount > 72) {
-        if (rr_gpuRace) { int n = 128; while (n - 48 < rr_rvCount + 8) n *= 2; rr_ringWant = n; }
-        else rr_rvCount = 72;
-    }
-    if (rr_gpuRace && GetEnvironmentVariableA("RR_RING", e, sizeof e) > 0) { int v = 0; for (i = 0; e[i] >= '0' && e[i] <= '9'; i++) v = v * 10 + (e[i] - '0'); if (v >= 128 && v <= 4096 && !(v & (v - 1)) && v - 48 >= rr_rvCount + 8) rr_ringWant = v; }   /* test switch: ring size of GPU races (tests of the shadow generation) */
+    if (rr_rvCount > 72) { int n = 128; while (n - 48 < rr_rvCount + 8) n *= 2; rr_ringWant = n; }
+    if (GetEnvironmentVariableA("RR_RING", e, sizeof e) > 0) { int v = 0; for (i = 0; e[i] >= '0' && e[i] <= '9'; i++) v = v * 10 + (e[i] - '0'); if (v >= 128 && v <= 4096 && !(v & (v - 1)) && v - 48 >= rr_rvCount + 8) rr_ringWant = v; }   /* test switch: ring size of GPU races (tests of the shadow generation) */
     rr_FarModelInit(rr_rvCount > 33);
     if (rr_farModel) {
         /* longer than the original: the thresholds follow the continued perspective model (identical to the table for the first 6 rows) */

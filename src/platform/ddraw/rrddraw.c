@@ -28,7 +28,7 @@ typedef struct Surf { IDirectDrawSurface itf; LONG ref; int w,h,pitch,bpp,bytes;
 typedef struct DD   { IDirectDraw itf; LONG ref; } DD;
 
 static IDirectDrawVtbl ddvt; static IDirectDrawSurfaceVtbl svt; static IDirectDrawPaletteVtbl pvt;
-static int g_gdi=1; static HWND g_hwnd; static int g_w=640,g_h=480,g_bpp=8; static Surf *g_primary;
+static HWND g_hwnd; static int g_w=640,g_h=480,g_bpp=8; static Surf *g_primary;
 static SDL_Window *g_win; static SDL_Renderer *g_ren; static SDL_Texture *g_tex; static int g_headless; static int g_quiet; static char g_dumpGpu[MAX_PATH];   /* g_quiet = RR_HEADLESS=2: off-screen, never takes the focus, but renders through the real SDL (GPU) renderer; RR_DUMP_GPU=<dir> then dumps what the renderer drew */
 static WNDPROC g_origProc, g_sdlProc; static SDL_FRect g_fullRect={0,0,640,480};   /* the whole frame in logical coordinates: with the stretch scaling mode a NULL destination would not be the whole picture */
 static FILE *g_log; static volatile int g_trAll;   /* RR_LOG_PRESENTS: log every surface call for a few race frames */
@@ -50,7 +50,7 @@ static void MwNoteOpen(const char *rel);   /* menuwide.inc */
 static void HsNoteOpen(const char *rel); static void HsDraw(int fw, int fh);   /* hdsky.inc */
 #include "inject.inc"
 static void StartController(void); static void IcTestHook(void); static void VcTestHook(void); static void McTestHook(void);
-static void JbDrawOverlay(HDC dc); static void StartJukebox(void); static void SgDraw(void); static void StartSongs(void); static int SgTickerUp(void); static void VpTestHook(void);   /* jukebox.inc, musicbox.inc, videoplay.inc */
+static void StartJukebox(void); static void SgDraw(void); static void StartSongs(void); static int SgTickerUp(void); static void VpTestHook(void);   /* jukebox.inc, musicbox.inc, videoplay.inc */
 /* ---------- presentation ---------- */
 static void ToRGB32(Surf *s, DWORD *out)
 {
@@ -99,9 +99,12 @@ static int ReadPixelsArgb(DWORD *px,int w,int h);   /* SDL3 read-back (defined b
 #include "winscale.inc"
 #include <math.h>
 #include "gpuscene.inc"
+#include "riderlamps.inc"   /* the riders' tail lamps, hardcoded per HiBob sprite (generated: analysis\tools\rider_lamps.ps1 -EmitC) */
 #include "world3d.inc"   /* true-3D world of GPU races (after gpuscene.inc: uses its state) */
 #include "menuwide.inc"   /* widescreen side strips of the menu pictures */
 #include "hdsky.inc"      /* GPU races: HD sky picture instead of the panorama */
+#include "weather.inc"    /* True 3D races: time of day, weather, the Esc pause panel */
+#include "weapons.inc"   /* the riders' weapon drawn as another object (True 3D) */
 static void SdTestHook(void); static void MbTestHook(void); static void FrameHashLog(Surf *s); static void StepsHook(void);
 /* SDL3: read the current render target back as w x h ARGB8888 into px (pitch w*4); 0 = ok (SDL2's SDL_RenderReadPixels filled a buffer directly) */
 static int ReadPixelsArgb(DWORD *px,int w,int h)
@@ -142,7 +145,7 @@ static void ShotKey(void)
         SDL_DestroySurface(s); }
     free(px); }
 /* Video Options > Segment tracker (video.ini segment_tracker, default off; RR_SHOW_POS=1 / 0 overrides): where the camera is on the course, top left during races (on top of everything; after the GPU dump, so dumps never show it):
-   <TRUE 3D | GPU PSEUDO 3D | SW> T<track> SEG <road position of the view start in segments, 1/100> X <lateral position>.  The game hands the three variables over at start-up (mainloop.c). */
+   <TRUE 3D | GPU PSEUDO 3D> T<track> SEG <road position of the view start in segments, 1/100> X <lateral position>.  The game hands the three variables over at start-up (mainloop.c). */
 static volatile int *g_posRoad, *g_posLat, *g_posTrack;
 __declspec(dllexport) void __stdcall RR_SetRoadPosPtrs(volatile int *road, volatile int *lat, volatile int *track){ g_posRoad=road; g_posLat=lat; g_posTrack=track; }
 static unsigned **g_ringPP; static int *g_ringNP;   /* the game's road ring (src\road\road_ring.h rr_ring / rr_ringN): test switch RR_SHOT_LAYOUT */
@@ -152,6 +155,7 @@ static int RingLayout(int seg)   /* layout (1 single, 2 split) of the ring's pie
     if(!node || IsBadReadPtr(node,0x20) || (node[2]>>8)!=seg) return 0;
     return *((const unsigned char *)node+0x1c); }
 #include "hdtex.inc"      /* GPU: "slightly upscaled" sprites / textures (uses g_posTrack) */
+#include "textup.inc"     /* the game's text replayed at the window's resolution (sharp text) */
 /* RR_DEMO_ALL=1 (launch.json "Demo: all tracks, level 5"; the game races every track in turn, src\system\shutdown.c): the game speed, RR_SPEED=<percent>
    to start with (default 300); Up / Down while the window has the focus step it through g_speedSteps.  The race clock runs that much faster
    (src\system\mainloop.c asks RR_GameSpeed).  The demo's throttle is injected and the real Up / Down never reach the race (HookGKS) */
@@ -184,7 +188,7 @@ static void ShowRoadPos(void)
 {   static int want=-1; char t[112]; SDL_FRect bg; SDL_BlendMode bm; int r;
     if(want<0){ char *e=getenv("RR_SHOW_POS"); want=(e && *e) ? (*e=='1') : 2; }   /* 2 = no switch: Video Options > Segment tracker decides (it can change at any time) */
     if(!(want==2 ? (g_vid.segpos || SpeedOn()) : (want || SpeedOn())) || !g_posRoad || !g_posLat || !g_posTrack || !g_lastSceneTick || (int)(GetTickCount()-g_lastSceneTick)>500) return;   /* races only: a 3D scene was drawn just now */
-    r=*g_posRoad; _snprintf(t,sizeof t,"%s  T%d SEG %d.%02d X %d",g_w3On?"TRUE 3D":(g_gpuOn?"GPU PSEUDO 3D":"SW"),*g_posTrack,r>>8,(r&255)*100/256,*g_posLat); t[sizeof t-1]=0;
+    r=*g_posRoad; _snprintf(t,sizeof t,"%s  T%d SEG %d.%02d X %d",g_w3On?"TRUE 3D":"GPU PSEUDO 3D",*g_posTrack,r>>8,(r&255)*100/256,*g_posLat); t[sizeof t-1]=0;
     if(SpeedOn()){ int sp=RR_GameSpeed(); size_t l=strlen(t); _snprintf(t+l,sizeof t-l,"  SPEED x%d.%d (Up/Down, Q quit)",sp/100,sp%100/10); t[sizeof t-1]=0; }
     bg.x=4; bg.y=4; bg.w=(float)strlen(t)*8+8; bg.h=14;
     SDL_GetRenderDrawBlendMode(g_ren,&bm); SDL_SetRenderDrawBlendMode(g_ren,SDL_BLENDMODE_BLEND);
@@ -196,6 +200,8 @@ static void Present(Surf *s)
 {
     if (g_vpPlaying) return;
     DWORD *px; char path[MAX_PATH+16]; int gpuDump=0; if(g_modalSurf && s!=g_modalSurf) return; g_frame++; g_lastPresentTick=GetTickCount(); g_lastShown=s;
+    { static int on=-1; static DWORD t0; static unsigned long f0; if(on<0) on=getenv("RR_PRESENT_RATE")!=NULL;   /* test switch RR_PRESENT_RATE=1: presents per second in the log (speed checks) */
+      if(on){ DWORD t=GetTickCount(); if(!t0){ t0=t; f0=g_frame; } else if(t-t0>=1000){ LOG("presents: %lu per s",g_frame-f0); t0=t; f0=g_frame; } } }
     { static char *tkp; static int tkinit; if(!tkinit){ tkinit=1; tkp=getenv("RR_TRACK"); } if(tkp && *tkp && !IsBadWritePtr((void*)0x4a603f,1)) *(volatile BYTE*)0x4a603f=(BYTE)atoi(tkp); }
     { static int lastMode=-99; volatile int *pm=g_modePtr; if(!IsBadReadPtr((void*)pm,4) && *pm!=lastMode){ lastMode=*pm; LOG("game mode -> %d at present #%lu",lastMode,g_frame); { char *tk=getenv("RR_TRACK"); if(tk && *tk && !IsBadWritePtr((void*)0x4a603f,1)){ *(volatile BYTE*)0x4a603f=(BYTE)atoi(tk); LOG("RR_TRACK=%s written to 0x4a603f",tk); } }
           if(lastMode==1) g_raceFrame0=g_frame; } if(g_raceFrame0 && g_frame>=g_raceFrame0+60){ char *sn=getenv("RR_SNAP"); static int snapped; if(sn && !snapped){ FILE *sf=fopen(sn,"wb"); snapped=1; if(sf){ DWORD a; for(a=0x47a000;a<0x4ea000;a+=0x1000){ static BYTE zero[0x1000]; fwrite(IsBadReadPtr((void*)a,0x1000)?zero:(void*)a,1,0x1000,sf); } fclose(sf); LOG("snapshot written"); } } } }
@@ -230,17 +236,12 @@ static void Present(Surf *s)
     if (!g_clockMode && ScriptTick(g_frame) && g_dumpDir[0]) { sprintf(path,"%s/at%06lu.bmp",g_dumpDir,g_frame); DumpBmp(s,path); gpuDump=1; }
     if (g_dumpDir[0] && g_dumpEvery>0 && g_frame % g_dumpEvery == 0){ sprintf(path,"%s\\f%06lu.bmp",g_dumpDir,g_frame); DumpBmp(s,path); }
     if (g_dumpOnFile[0] && GetFileAttributesA(g_dumpOnFile)!=INVALID_FILE_ATTRIBUTES){ sprintf(path,"%s.bmp",g_dumpOnFile); DumpBmp(s,path); DeleteFileA(g_dumpOnFile); }
-    if (g_gdi && !g_headless && g_hwnd) {   /* GDI present: StretchDIBits into the window DC (WS_CLIPCHILDREN keeps the RashButton menu controls on top) */
-        HDC dc=GetDC(g_hwnd); BITMAPINFO bi; px=(DWORD*)malloc((size_t)s->w*s->h*4);
-        if(px && dc){ ToRGB32(s,px); memset(&bi,0,sizeof bi); bi.bmiHeader.biSize=sizeof bi.bmiHeader; bi.bmiHeader.biWidth=s->w; bi.bmiHeader.biHeight=-s->h; bi.bmiHeader.biPlanes=1; bi.bmiHeader.biBitCount=32; bi.bmiHeader.biCompression=BI_RGB;
-            StretchDIBits(dc,0,0,g_w,g_h,0,0,s->w,s->h,px,&bi,DIB_RGB_COLORS,SRCCOPY); JbDrawOverlay(dc); }
-        free(px); if(dc) ReleaseDC(g_hwnd,dc); return; }
     if (g_headless || !g_ren || !g_tex) return;
     WinFit();
     if (!GpuCompose(s)) {   /* GPU race: background + GPU world + overlay (gpuscene.inc) */
-    px=(DWORD*)malloc((size_t)s->w*s->h*4); if(!px) return; ToRGB32(s,px);
+    px=(DWORD*)malloc((size_t)s->w*s->h*4); if(!px) return; { Surf *v=TxClean(s); ToRGB32(v?v:s,px); }   /* (the shown copy without the text TxDraw draws sharp) */
     SDL_UpdateTexture(g_tex,NULL,px,s->w*4);
-    SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect); MwDraw(px); free(px); }   /* (black bars: the draw colour is whatever an overlay last set) */
+    SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect); MwDraw(px); free(px); TxDraw(s); }   /* (black bars: the draw colour is whatever an overlay last set) */
     { static int shot=-1; if(shot<0){ char *e=getenv("RR_SONGS_SHOT"); shot=(e && *e=='1'); } if(shot) SgDraw(); }   /* test switch RR_SONGS_SHOT=1: the ticker before the dumps (pictures of it) */
     if (g_dumpGpu[0]){ if(gpuDump) DumpGpu(g_frame); else if(g_gpuReq){ unsigned long q=g_gpuReq; g_gpuReq=0; DumpGpu(q); } }   /* what the renderer drew (before the buffer flip) */
     { static int shot2=-1; if(shot2<0){ char *e=getenv("RR_SONGS_SHOT"); shot2=(e && *e=='1'); } if(!shot2) SgDraw(); }   /* "now playing" ticker of the song player (musicbox.inc; after the test dumps) */
@@ -268,10 +269,10 @@ static void InitVideo(void)
             RR_QUIET_RECORD=1: no tool window - OBS lists only normal windows; its Game Capture takes the frames from Direct3D: analysis\rec\rec_obs_test.ps1) */
         SetWindowPos(g_hwnd,HWND_BOTTOM,0,0,g_w,g_h,SWP_NOACTIVATE|SWP_SHOWWINDOW|SWP_FRAMECHANGED); SetActiveWindow(g_hwnd); SetFocus(g_hwnd);
         SendMessageA(g_hwnd,WM_ACTIVATEAPP,TRUE,(LPARAM)GetCurrentThreadId()); SendMessageA(g_hwnd,WM_ACTIVATE,WA_ACTIVE,0); SendMessageA(g_hwnd,WM_SETFOCUS,0,0); }   /* fake app activation: the game skips its credits when it is not the active app */
-    if (g_quiet && g_hwnd) { g_headless=0; g_gdi=0;   /* quiet GPU mode: keep the off-screen no-activate window, but go on to create the SDL renderer */
+    if (g_quiet && g_hwnd) { g_headless=0;   /* quiet GPU mode: keep the off-screen no-activate window, but go on to create the SDL renderer */
         if ((e=getenv("RR_QUIET_SIZE"))) { int qw=0, qh=0; if (sscanf(e,"%dx%d",&qw,&qh)==2 && qw>=320 && qh>=240 && qw<=7680 && qh<=4320) SetWindowPos(g_hwnd,HWND_BOTTOM,0,0,qw,qh,SWP_NOACTIVATE); } }   /* test switch: the renderer's output size (e.g. 1920x1080 to check the GPU renderer at a high resolution) */
     else if (g_headless || !g_hwnd) return;
-    { char *wm=getenv("RR_WINDOW"), *gd=getenv("RR_GDI"); g_vidLegacy=(wm && *wm) || (gd && *gd==49); if(g_quiet || g_vidLegacy) g_vidPersist=0; else { VidLoad(); VidApply(); } if((e=getenv("RR_MENUSCALE")) && *e) g_vid.scale=VidClamp(atoi(e),VS_ASPECT,VS_WIDE); if((e=getenv("RR_FILTER")) && *e) g_vid.filter=*e==49; }   /* RR_MENUSCALE / RR_FILTER: tests; video.ini + Restroom > Video Options (winscale.inc); RR_WINDOW / RR_GDI=1 keep the plain fixed window below */
+    { char *wm=getenv("RR_WINDOW"); g_vidLegacy=(wm && *wm); if(g_quiet || g_vidLegacy) g_vidPersist=0; else { VidLoad(); VidApply(); } if((e=getenv("RR_MENUSCALE")) && *e) g_vid.scale=VidClamp(atoi(e),VS_ASPECT,VS_WIDE); if((e=getenv("RR_FILTER")) && *e) g_vid.filter=*e==49; }   /* RR_MENUSCALE / RR_FILTER: tests; video.ini + Restroom > Video Options (winscale.inc); RR_WINDOW keeps the plain fixed window below */
     if (!g_quiet && g_vidLegacy) {   /* make the game window a normal 640x480 client-area window */
         char *wm=getenv("RR_WINDOW"); int popup=(wm && !_stricmp(wm,"popup")); RECT r; DWORD st=popup ? (WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS) : (WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS);   /* default: a normal movable window (GetWindowRect is translated, see inject.inc); RR_WINDOW=popup: borderless at (0,0) */
         r.left=0; r.top=0; r.right=g_w; r.bottom=g_h;
@@ -279,8 +280,6 @@ static void InitVideo(void)
         SetWindowPos(g_hwnd,HWND_NOTOPMOST,popup?0:80,popup?0:60,r.right-r.left,r.bottom-r.top,SWP_FRAMECHANGED|SWP_SHOWWINDOW);
     }
     SetClassLongPtrA(g_hwnd,GCLP_HBRBACKGROUND,(LONG_PTR)GetStockObject(NULL_BRUSH));   /* the game invalidates with erase=TRUE: do not paint black over the presented frame */
-    { char *gdi=getenv("RR_GDI"); g_gdi = (gdi && *gdi==49); }
-    if (g_gdi) return;   /* default: GDI present, no SDL window (see Present) */
     if (!SDL_Init(SDL_INIT_VIDEO)) { LOG("SDL_Init: %s",SDL_GetError()); g_headless=1; return; }
     g_origProc=(WNDPROC)GetWindowLongPtrA(g_hwnd,GWLP_WNDPROC);
     {   /* SDL3: wrap the game's own window (SDL2's SDL_CreateWindowFrom) */
@@ -292,8 +291,10 @@ static void InitVideo(void)
        SDL3 learns the window's size and position only in its own procedure, so WinProc hands those messages to it (g_sdlProc, which then calls the game's) */
     g_sdlProc=(WNDPROC)GetWindowLongPtrA(g_hwnd,GWLP_WNDPROC); if(g_sdlProc==g_origProc) g_sdlProc=NULL;
     if (g_origProc) SetWindowLongPtrA(g_hwnd,GWLP_WNDPROC,(g_quiet && !getenv("RR_QUIET_WINPROC"))?(LONG_PTR)g_origProc:(LONG_PTR)WinProc);   /* (test switch RR_QUIET_WINPROC=1: a quiet run with the real window's procedure) */
-    /* the accelerated renderer by default; RR_GPU=0 = the software renderer only */
-    { char *gpu=getenv("RR_GPU"); g_ren = (gpu && *gpu==48) ? NULL : SDL_CreateRenderer(g_win,NULL); if(!g_ren) g_ren = SDL_CreateRenderer(g_win,"software"); }
+    /* an accelerated renderer only: the race world is always drawn by the GPU (gpuscene.inc) */
+    g_ren = SDL_CreateRenderer(g_win,NULL);
+    if (g_ren && !strcmp(SDL_GetRendererName(g_ren),"software")) { SDL_DestroyRenderer(g_ren); g_ren=NULL; }
+    if (!g_ren) { LOG("no accelerated SDL renderer: %s",SDL_GetError()); if (!g_quiet) MessageBoxA(NULL,"Open Rash needs a graphics card with Direct3D 11 (no accelerated renderer was found).","Open Rash",MB_OK|MB_ICONERROR); ExitProcess(1); }
     if (g_ren){ SDL_SetRenderLogicalPresentation(g_ren,g_w,g_h,SDL_LOGICAL_PRESENTATION_LETTERBOX); g_tex = SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,g_w,g_h); }
     if (g_ren){ LOG("SDL %d.%d.%d renderer: %s",SDL_VERSIONNUM_MAJOR(SDL_GetVersion()),SDL_VERSIONNUM_MINOR(SDL_GetVersion()),SDL_VERSIONNUM_MICRO(SDL_GetVersion()),SDL_GetRendererName(g_ren)); }
     if (g_tex) SDL_SetTextureScaleMode(g_tex,SDL_SCALEMODE_NEAREST);   /* SDL3 textures default to linear filtering (SDL2: nearest); WinFit applies the Smoothing option */
@@ -327,7 +328,7 @@ static Surf *NewSurf(int w,int h,int bpp)
     if(!s->dib){ free(s); return NULL; }
     return s;
 }
-static void FreeSurf(Surf *s){ AcquireSRWLockExclusive(&g_surfLk); if(g_lastShown==s) g_lastShown=NULL; ReleaseSRWLockExclusive(&g_surfLk); if(s->dc){ SelectObject(s->dc,s->oldBmp); DeleteDC(s->dc); } DeleteObject(s->dib); if(s->pal) P_Release(&s->pal->itf); free(s); }
+static void FreeSurf(Surf *s){ TxForgetSurf(s); AcquireSRWLockExclusive(&g_surfLk); if(g_lastShown==s) g_lastShown=NULL; ReleaseSRWLockExclusive(&g_surfLk); if(s->dc){ SelectObject(s->dc,s->oldBmp); DeleteDC(s->dc); } DeleteObject(s->dib); if(s->pal) P_Release(&s->pal->itf); free(s); }
 
 /* ---------- widescreen race frame ----------
  * The game builds a new 8-bit flip chain (primary + 2 back buffers) at the start of every race (SetMode, then CreateSurface with back buffers) and drops it when the race is over (the
@@ -338,8 +339,7 @@ static int WidePad(const Surf *s){ return s->w>640 ? (s->w-640)/2 : 0; }
 static void FrameSync(void)   /* the SDL frame texture follows the frame width g_w */
 {   g_fullRect.w=g_w; g_fullRect.h=g_h; g_wsDirty=1; g_wsAppF=-1;
     if(g_ren && g_tex && g_texW!=g_w){ SDL_DestroyTexture(g_tex); g_tex=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,g_w,g_h); g_texW=g_w; if(!g_tex) g_headless=1; LOG("video: frame width %d",g_w); } }
-/* called by the game at the start of every race: returns the width of the frame the race will be drawn in (0 = the normal 640).  Widescreen needs the
-   GPU renderer (the software renderer's widened frame is not offered any more: it keeps the original 640 view) */
+/* called by the game at the start of every race: returns the width of the frame the race will be drawn in (0 = the normal 640). */
 __declspec(dllexport) int __stdcall RR_RaceBegin(void)
 {   int tw=0, th=0, ws=0; char *e;
     if((e=getenv("RR_RACEVIEW")) && *e) g_vid.race=VidClamp(atoi(e),RV_WIDE,RV_STRETCH);   /* tests */
@@ -400,13 +400,14 @@ static HRESULT __stdcall S_Blt(IDirectDrawSurface *t, LPRECT dr, LPDIRECTDRAWSUR
     if(dr && s && d->w>640 && !d->isPrimary && s->w<=640){ int pad=WidePad(d); d2.left+=pad; d2.right+=pad; }   /* HUD pieces are drawn centred in the wide race frame */
     if(f & DDBLT_COLORFILL){ int x,y; RECT c=d2; DWORD v=fx?fx->dwFillColor:0;
         if(ClipTo(&c,d)) for(y=c.top;y<c.bottom;y++){ if(d->bpp==16) for(x=c.left;x<c.right;x++) ((WORD*)(d->bits+y*d->pitch))[x]=(WORD)v; else memset(d->bits+y*d->pitch+c.left,(BYTE)v,c.right-c.left); } }
-    else if(s){ RECT s2=sr?*sr:FullRect(s); int key=(f&DDBLT_KEYSRC) && s->hasCK; DoBlt(d,d2,s,s2,key,s->ckLo,s->ckHi); if(dr) WideWrap(d,dr,s,s2,key); }
+    else if(s){ RECT s2=sr?*sr:FullRect(s); int key=(f&DDBLT_KEYSRC) && s->hasCK, tx=TxBltBegin(d,d2,s,s2); DoBlt(d,d2,s,s2,key,s->ckLo,s->ckHi); if(tx) TxBltEnd(d,d2,s,s2,key); if(dr) WideWrap(d,dr,s,s2,key); }   /* (TxBlt: the text items go along, textup.inc) */
     if(d->isPrimary) Present(d); return DD_OK; }
 static HRESULT __stdcall S_BltFast(IDirectDrawSurface *t, DWORD x, DWORD y, LPDIRECTDRAWSURFACE src, LPRECT sr, DWORD f)
 {   Surf *d=(Surf*)t, *s=(Surf*)src; RECT s2, d2, o2; TR("BltFast",d); if(!s) return DDERR_INVALIDPARAMS; s2=sr?*sr:FullRect(s);
     d2.left=x; d2.top=y; d2.right=x+(s2.right-s2.left); d2.bottom=y+(s2.bottom-s2.top); o2=d2;
     if(d->w>640 && !d->isPrimary && s->w<=640){ int pad=WidePad(d); d2.left+=pad; d2.right+=pad; }
-    DoBlt(d,d2,s,s2,(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK,s->ckLo,s->ckHi); WideWrap(d,&o2,s,s2,(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK); if(d->isPrimary) Present(d); return DD_OK; }
+    { int key=(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK, tx=TxBltBegin(d,d2,s,s2); DoBlt(d,d2,s,s2,key,s->ckLo,s->ckHi); if(tx) TxBltEnd(d,d2,s,s2,key); }
+    WideWrap(d,&o2,s,s2,(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK); if(d->isPrimary) Present(d); return DD_OK; }
 static HRESULT __stdcall S_Flip(IDirectDrawSurface *t, LPDIRECTDRAWSURFACE o, DWORD f)
 {   Surf *p=(Surf*)t; Surf *b; TR("Flip",p); b=o?(Surf*)o:p->back[0]; if(g_trAll) LOG("Flip primary=%p bits=%p  from=%p (arg %p back[0]=%p) bits=%p",(void*)p,(void*)p->bits,(void*)b,(void*)o,(void*)p->back[0],b?(void*)b->bits:NULL); if(b && b->bpp==p->bpp){ int y; for(y=0;y<p->h;y++) memcpy(p->bits+y*p->pitch,b->bits+y*b->pitch,p->w*p->bytes); } Present(p); return DD_OK; }
 static HRESULT __stdcall S_GetAttached(IDirectDrawSurface *t, LPDDSCAPS c, LPDIRECTDRAWSURFACE *o)
@@ -416,6 +417,7 @@ static HRESULT __stdcall S_GetDC(IDirectDrawSurface *t, HDC *h)
     if(!s->dc){ s->dc=CreateCompatibleDC(NULL); s->oldBmp=SelectObject(s->dc,s->dib); }
     pp = s->isPrimary?s:(s->front?s->front:g_primary); pal = s->pal?s->pal:(pp?pp->pal:NULL);
     if(pal){ RGBQUAD q[256]; int i; for(i=0;i<256;i++){ q[i].rgbRed=pal->e[i].peRed; q[i].rgbGreen=pal->e[i].peGreen; q[i].rgbBlue=pal->e[i].peBlue; q[i].rgbReserved=0; } SetDIBColorTable(s->dc,0,256,q); }
+    TxNoteDC(s);   /* (text drawn on it is recorded: textup.inc) */
     SetViewportOrgEx(s->dc,WidePad(s),0,NULL);   /* wide race frame: the game's 640-wide text / HUD drawing is centred */
     *h=s->dc; return DD_OK; }
 static int g_rdcN;
@@ -475,7 +477,7 @@ static void BuildVtables(void)
     pvt.QueryInterface=P_QI; pvt.AddRef=P_AddRef; pvt.Release=P_Release; pvt.GetCaps=P_GetCaps; pvt.GetEntries=P_GetEntries; pvt.Initialize=P_Init; pvt.SetEntries=P_SetEntries;
 }
 HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *out, IUnknown *outer)
-{   char *lg=getenv("RR_LOG"); DD *d; static int built; if(lg && !g_log) g_log=fopen(lg,"w"); LOG("DirectDrawCreate"); g_gameTid=GetCurrentThreadId(); if(!built){ LoadScript(); HookKeyboard(); HookFocus(); HookCreditsHold(); StartController(); StepsHook(); } if(!built){ BuildVtables(); built=1; }
+{   char *lg=getenv("RR_LOG"); DD *d; static int built; if(lg && !g_log) g_log=fopen(lg,"w"); LOG("DirectDrawCreate"); g_gameTid=GetCurrentThreadId(); if(!built){ LoadScript(); HookKeyboard(); HookFocus(); HookCreditsHold(); TxHook(); StartController(); StepsHook(); } if(!built){ BuildVtables(); built=1; }
     d=(DD*)calloc(1,sizeof *d); if(!d) return DDERR_OUTOFMEMORY; d->itf.lpVtbl=&ddvt; d->ref=1; *out=&d->itf; return DD_OK; }
 
 #include "savedlg.inc"
@@ -488,9 +490,10 @@ HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *out, IUnknown *outer)
 #include "controller.inc"
 #include "../regstore_impl.h"   /* the game's settings file (the "Controls" blob is stored there, not in the registry) */
 #include "inputcfg.inc"
-#include "ridercol.inc"     /* Video Options > Rider colours (GPU renderer only) */
+#include "ridercol.inc"     /* Restroom > Game Options > Change clothes */
 #include "videocfg.inc"
 #include "modscfg.inc"      /* Restroom > Game Options: the widescreen mod and its options */
+#include "customrace.inc"   /* Game Mode > Custom Race: the road editor (src\ui\custom_race.c) */
 #include "campaign.inc"
 #include "crashlog.inc"
 #include "steps.inc"

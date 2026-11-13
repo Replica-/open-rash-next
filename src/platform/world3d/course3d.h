@@ -323,7 +323,7 @@ static unsigned C3_Shade(unsigned rgba, const float *a, const float *b, const fl
     if (l <= 0) return rgba;
     if (n[1] < 0) l = -l;               /* face up */
     sh = (n[0] * sun[0] + n[1] * sun[1] + n[2] * sun[2]) / l;
-    sh = (rgba == 0xffffffffu) ? 0.85f + 0.15f * (sh > 0 ? sh : 0)   /* textured: the original is unlit, only a hint of shape */
+    sh = ((rgba | 0x01000000u) == 0xffffffffu) ? 0.85f + 0.15f * (sh > 0 ? sh : 0)   /* textured (alpha 254: a facade, below): the original is unlit, only a hint of shape */
                                : 0.55f + 0.45f * (sh > 0 ? sh : 0);
     for (i = 0; i < 3; i++) { float ch = (float)((rgba >> (i * 8)) & 0xff) * sh; out |= (unsigned)(ch > 255 ? 255 : ch) << (i * 8); }
     return out;
@@ -441,9 +441,70 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                 if (q0 <= 1.5 && q1 <= 1.5) q0 = q1 = 1; }
             if (i < C3_NP / 2) { uv[0] = (float)q0; uv[1] = V; uv[2] = 0; uv[3] = V; uv[4] = 0; uv[5] = 0; uv[6] = (float)q1; uv[7] = 0; }
             else { uv[0] = 0; uv[1] = V; uv[2] = (float)q0; uv[3] = V; uv[4] = (float)q1; uv[5] = 0; uv[6] = 0; uv[7] = 0; }
+            if (wall && (r0->h[i] == 0) != (r0->h[i + 1] == 0) && r0->h[i] >= 0 && r0->h[i + 1] >= 0 && (r0->h[i] > 300 || r0->h[i + 1] > 300)) {
+                /* a cliff face: bands up the face, ledges and recesses pushed back into the rock (never towards the road), the same per piece edge on both
+                   sides of it (a function of the piece and the height) - the fixed sun (C3_Shade) shades each facet; vertex alpha 252: rock (render3d.h) */
+                int j, NS = 7; float p0[2][3], p1[2][3], u2[8];
+                for (j = 0; j < NS; j++) {
+                    int e;
+                    for (e = 0; e < 2; e++) {   /* band edge j + e on row 0 (piece k) and row 1 (piece k + 1) */
+                        int rr; for (rr = 0; rr < 2; rr++) {
+                            const C3Row *R = rr ? r1 : r0; int kk = k + rr, ft = R->h[i] == 0 ? i : i + 1, tp = ft == i ? i + 1 : i;
+                            double f = (double)(j + e) / NS, H = R->h[tp] * f, sgn = R->u[ft] >= 0 ? 1.0 : -1.0, n, dsp;
+                            n = 0.5 * sin(kk * 0.83 + f * 5.3 + sgn) + 0.3 * sin(kk * 2.11 + f * 13.7 + 0.7) + 0.2 * sin(kk * 0.29 + f * 2.3 + 2.1);
+                            dsp = sgn * sin(3.14159265 * f) * (0.12 + 0.28 * (0.5 + 0.5 * n)) * R->h[tp];   /* (outwards, 12 .. 40 % of the face's height) */
+                            C3_Point(c, kk, R->u[ft] + (R->u[tp] - R->u[ft]) * f + dsp, H, rr ? p1[e] : p0[e]); } }
+                    {   /* texture across: from the foot's end to the top's end of this strip's uv */
+                        int footA = r0->h[i] == 0; float fa = (float)j / NS, fb = (float)(j + 1) / NS, ua0, ub0, ua1, ub1;
+                        float uFootRow0 = footA ? uv[0] : uv[2], uTopRow0 = footA ? uv[2] : uv[0], uFootRow1 = footA ? uv[6] : uv[4], uTopRow1 = footA ? uv[4] : uv[6];
+                        ua0 = uFootRow0 + (uTopRow0 - uFootRow0) * fa; ub0 = uFootRow0 + (uTopRow0 - uFootRow0) * fb;
+                        ua1 = uFootRow1 + (uTopRow1 - uFootRow1) * fa; ub1 = uFootRow1 + (uTopRow1 - uFootRow1) * fb;
+                        u2[0] = ua0; u2[1] = V; u2[2] = ub0; u2[3] = V; u2[4] = ub1; u2[5] = 0; u2[6] = ua1; u2[7] = 0; }
+                    C3_QuadTint(c, p0[0], p0[1], p1[1], p1[0], 0xffffffffu, tex[i], u2, i == c->darkStrip ? 0xfc8a8a8au : 0xfcffffffu); }
+                continue; }
             C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex[i], uv, i == c->darkStrip ? 0xff8a8a8au : 0xffffffffu);
         } else C3_Quad(c, a, b, cc, d, (ground && r0->mat[i] != M_CURB && r0->mat[i] != M_WALK) ? ground : C3_Colour(r0->mat[i], kind, k));
     }
+}
+
+/* snow banks along both road edges (piece k .. k + 1, rows r0 / r1): a bumpy ridge from the gutter over the curb onto the sidewalk / verge, 4 bumps a
+   piece.  Always in the mesh, vertex alpha 250: the world shader shows them only while it snows (render3d.h) */
+static void C3_SnowBank(C3Course *c, int k, const C3Row *r0, const C3Row *r1)
+{
+    enum { NB = 4, NP = 5 }; int side, j, i;
+    for (side = 0; side < 2; side++) {
+        int ie = side ? 8 : 6, it = side ? 9 : 5; double s = side ? 1.0 : -1.0; float pa[NP][3], pb[NP][3];
+        for (j = 0; j <= NB; j++) {
+            double t = (double)j / NB, p = k + t, e = r0->u[ie] + (r1->u[ie] - r0->u[ie]) * t, top = r0->h[it] + (r1->h[it] - r0->h[it]) * t, x = p * 1.7 + side * 31.0, bump, wid;
+            static const double fu[NP] = { -60, -18, 22, 70, 110 }, fh[NP] = { 0, 0.55, 1.0, 0.7, 0 };   /* across: gutter, front, crest, back, foot */
+            bump = 16 + 30 * (0.5 + 0.25 * sin(x * 2.3) + 0.15 * sin(x * 5.1 + 1.3) + 0.1 * sin(x * 11.7 + 0.4));
+            wid = 0.8 + 0.35 * (0.5 + 0.5 * sin(x * 1.1 + 2.0));
+            if (top < 0) top = 0;
+            for (i = 0; i < NP; i++) {
+                double u = e + s * fu[i] * wid, hh = i == 0 ? 1 : (i == NP - 1 ? top + 1 : (i == 1 ? top * 0.55 + bump * fh[i] : top + bump * fh[i]));
+                C3_Point(c, p, u, hh, pb[i]); }
+            if (j) for (i = 0; i < NP - 1; i++) C3_Quad(c, pa[i], pa[i + 1], pb[i + 1], pb[i], 0xfaf2f4f8u);
+            memcpy(pa, pb, sizeof pa); } }
+}
+
+/* snow built up on parts of the road (piece k, rows r0 / r1): on some pieces one or two low lumpy drifts at random places across the carriageway,
+   a fixed choice per piece.  Vertex alpha 250 like the banks: only while it snows */
+static void C3_SnowDrift(C3Course *c, int k, const C3Row *r0, const C3Row *r1)
+{
+    enum { NA = 6, NC = 7 }; unsigned s = (unsigned)k * 2654435761u ^ 0x9e3779b9u; int dr, nd, ia, ic;
+    #define C3_RND() ((s = s * 1664525u + 1013904223u), ((s >> 8) & 0xffff) / 65535.0)
+    nd = C3_RND() < 0.45 ? (C3_RND() < 0.35 ? 2 : 1) : 0;
+    for (dr = 0; dr < nd; dr++) {
+        double t0 = C3_RND() * 0.55, len = 0.25 + C3_RND() * 0.4, f = 0.15 + C3_RND() * 0.7, wid = 140 + C3_RND() * 260, hgt = 15 + C3_RND() * 30, ph = C3_RND() * 6.28;
+        float g[NA + 1][NC + 1][3];
+        if (t0 + len > 1) len = 1 - t0;
+        for (ia = 0; ia <= NA; ia++) for (ic = 0; ic <= NC; ic++) {
+            double ta = (double)ia / NA, tc = (double)ic / NC, t = t0 + len * ta, p = k + t;
+            double l = r0->u[6] + (r1->u[6] - r0->u[6]) * t, r = r0->u[8] + (r1->u[8] - r0->u[8]) * t, u = l + 80 + (r - l - 160) * f + (tc - 0.5) * wid;
+            double bell = sin(3.14159265 * ta) * sin(3.14159265 * tc), h = hgt * bell * (0.7 + 0.3 * sin(ta * 7.0 + tc * 5.0 + ph));
+            C3_Point(c, p, u, 1 + (h > 0 ? h : 0), g[ia][ic]); }
+        for (ia = 0; ia < NA; ia++) for (ic = 0; ic < NC; ic++) C3_Quad(c, g[ia][ic], g[ia][ic + 1], g[ia + 1][ic + 1], g[ia + 1][ic], 0xfaf2f4f8u); }
+    #undef C3_RND
 }
 
 /* skirts: the terrain does not end C3_FAR beyond the last profile point in the original - it paints the ground / hillside to the screen edges, so a
@@ -514,13 +575,21 @@ static int C3_IsCross(const C3Course *c, int k, int h)
 }
 
 /* facade height of piece k's half h on one side (0 = none: no piece, not SEC_OPEN, a cross street, no facade texture) */
+/* more variety in a row of buildings (ra->ngen generated facades, world3d.inc W3GenFacades - urban tracks only): per block of 8 pieces on each side, every
+   building gets one of the generated facades in place of the course's (shop fronts, offices, houses) and a height 1 .. 1.6 times the course's.  The same for every caller
+   (C3_FacadeH compares neighbours with it: end walls where the heights differ) */
+static void C3_FacadeVary(const RxAssets *ra, int k, int h, int side, int *fac, double *fh)
+{   unsigned u = (unsigned)((k + side * 3) / 8) * 2654435761u ^ (unsigned)(side * 40503 + h * 977 + 12345);
+    u ^= u >> 15; u *= 2246822519u; u ^= u >> 13;
+    if (ra->ngen <= 0 || *fac < 0) return;
+    *fac = ra->gen0 + (int)((u >> 8) % (unsigned)ra->ngen); *fh *= 1.0 + ((u >> 20) % 61) / 100.0; }
 static double C3_FacadeH(C3Course *c, RxAssets *ra, int k, int h, int side)
 {
     const RoadSection *s;
     if (k < 0 || k >= c->n || (h && c->piece[k].layout != 2)) return 0;
     s = h ? &c->piece[k].halfB : &c->piece[k].halfA;
     if (s->kind != SEC_OPEN || (s->kindFlags & 0x20) || RX_SideTex(ra, s, k, h, side, 0) < 0) return 0;
-    return RX_FacadeHeight(ra, s, k, h, side);
+    {   int fac = RX_SideTex(ra, s, k, h, side, 0); double fh = RX_FacadeHeight(ra, s, k, h, side); C3_FacadeVary(ra, k, h, side, &fac, &fh); return fh; }
 }
 
 /* a building behind a facade (the game only draws the front, rr_SkidMarkDraw): the facade, a roof and a back wall C3_BLDG deep, and an end wall
@@ -536,17 +605,25 @@ static void C3_Building(C3Course *c, int k, int h, int side, double pa, double p
        depth is squeezed.  Here half the copies of square texels: 0.5 or 1 per segment (compared side by side with the original) */
     double texel = fh / (tx->h > 0 ? tx->h : 1), sq = c->L / ((tx->w > 0 ? tx->w : 64) * texel), n = sq < 1.5 ? 0.5 : 1, per = c->L / n;
     float uk0 = (float)(pa * n), uk1 = (float)(pb * n), ud = (float)(C3_BLDG / per);
-    tx->key = 1;   /* drawn as sprites by the game: index 0 is see-through (roof outlines ...) */
+    tx->key = 1; tx->facade = 1;   /* drawn as sprites by the game: index 0 is see-through (roof outlines ...); facade: lit windows at night (world3d.inc W3GpuTex) */
     unsigned roof = 0xff3c3a38u; int end;
     {   float a[3], b[3], cc[3], d[3], uv[8];
         uv[0] = uk0; uv[1] = 1; uv[2] = uk0; uv[3] = 0; uv[4] = uk1; uv[5] = 0; uv[6] = uk1; uv[7] = 1;   /* a / b = foot / top at pa, cc / d = top / foot at pb */
         C3_Point(c, pa, x0, t0, a); C3_Point(c, pa, x0, t0 + fh, b); C3_Point(c, pb, x1, t1 + fh, cc); C3_Point(c, pb, x1, t1, d);
-        C3_QuadT(c, a, b, cc, d, 0xffffffffu, fac, uv);   /* facade */
+        C3_QuadTint(c, a, b, cc, d, 0xffffffffu, fac, uv, 0xfeffffffu);   /* facade (vertex alpha 254: its windows may light up at night, render3d.h) */
         C3_Point(c, pa, b0, t0, a); C3_Point(c, pa, b0, t0 + fh, b); C3_Point(c, pb, b1, t1 + fh, cc); C3_Point(c, pb, b1, t1, d);
-        C3_QuadT(c, a, b, cc, d, 0xffffffffu, fac, uv);   /* back wall */
+        C3_QuadTint(c, a, b, cc, d, 0xffffffffu, fac, uv, 0xfeffffffu);   /* back wall */
         if (!tx->holes) {   /* a facade with see-through texels (gables, ornate tops) has no roof: the game shows the sky there, not a slab seen from below */
             C3_Point(c, pa, x0, t0 + fh, a); C3_Point(c, pa, b0, t0 + fh, b); C3_Point(c, pb, b1, t1 + fh, cc); C3_Point(c, pb, x1, t1 + fh, d);
-            C3_Quad(c, a, b, cc, d, roof); }
+            C3_Quad(c, a, b, cc, d, roof);
+            {   /* snow lying on the roof, bumpy (drifts), thin at the edges - vertex alpha 250: seen only while it snows (render3d.h, as C3_SnowBank) */
+                enum { NA = 4, NC = 6 }; float g[NA + 1][NC + 1][3]; int ia, ic;
+                for (ia = 0; ia <= NA; ia++) for (ic = 0; ic <= NC; ic++) {
+                    double ta = (double)ia / NA, tc = (double)ic / NC, p = pa + (pb - pa) * ta, xf = x0 + (x1 - x0) * ta, xb = b0 + (b1 - b0) * ta, top = t0 + (t1 - t0) * ta + fh;
+                    double edge = (ic == 0 || ic == NC) ? 0.15 : 1.0, x = p * 2.9 + tc * 4.1 + side * 7.0;
+                    double bump = 4 + edge * (18 + 48 * (0.5 + 0.3 * sin(x * 1.7) + 0.2 * sin(x * 4.3 + tc * 9.0)));
+                    C3_Point(c, p, xf + (xb - xf) * tc, top + bump, g[ia][ic]); }
+                for (ia = 0; ia < NA; ia++) for (ic = 0; ic < NC; ic++) C3_Quad(c, g[ia][ic], g[ia][ic + 1], g[ia + 1][ic + 1], g[ia + 1][ic], 0xfaf2f4f8u); } }
     }
     for (end = 0; end < 2; end++) {   /* end walls at pa (before) / pb (after) */
         int nb = end ? k + 1 : k - 1; double p = end ? pb : pa, xa = end ? x1 : x0, xb = end ? b1 : b0, t = end ? t1 : t0;
@@ -554,7 +631,7 @@ static void C3_Building(C3Course *c, int k, int h, int side, double pa, double p
         uv[0] = 0; uv[1] = 1; uv[2] = ud; uv[3] = 1; uv[4] = ud; uv[5] = 0; uv[6] = 0; uv[7] = 0;   /* square texels across the building's depth too */
         if (!corner[end] && C3_FacadeH(c, ra, nb, h, side) == fh) continue;
         C3_Point(c, p, xa, t, a); C3_Point(c, p, xb, t, b); C3_Point(c, p, xb, t + fh, cc); C3_Point(c, p, xa, t + fh, d);
-        C3_QuadTint(c, a, b, cc, d, 0xffffffffu, fac, uv, 0xff8c8c8cu);   /* the side wall in shade, as the game draws a building's side at a cross street (~55 %) */
+        C3_QuadTint(c, a, b, cc, d, 0xffffffffu, fac, uv, 0xfec8c8c8u);   /* the side wall a little in shade (the sun shades it more, or less: render3d.h) */
     }
 }
 
@@ -627,6 +704,7 @@ static void C3_Roadside(C3Course *c, int k, int h, const RoadSection *s0, double
         double t0 = s0->shoulderH[side], t1 = s1->shoulderH[side];
         int curb = RX_SideTex(ra, s0, k, h, side, 2), walk = RX_SideTex(ra, s0, k, h, side, 1), fac = RX_SideTex(ra, s0, k, h, side, 0);
         double fh = fac >= 0 ? RX_FacadeHeight(ra, s0, k, h, side) : 0;
+        C3_FacadeVary(ra, k, h, side, &fac, &fh);
         C3_Span(c, k, e0, 0, e0, t0, e1, 0, e1, t1, C3_Colour(M_CURB, 0, k), curb, 1);
         C3_Span(c, k, e0, t0, x0, t0, e1, t1, x1, t1, C3_Colour(M_WALK, 0, k), walk, 0);
         {   double pc = 0, f = C3_Corner(c, k, h, side, s0, e0, x0, t0, e1, x1, t1, ra, &pc), pa = k, pb = k + 1, xa = x0, xb = x1, ta = t0, tb = t1;
@@ -742,7 +820,7 @@ static void C3_Sea(C3Course *c, int k, const RoadSection *s0, double o0, const R
         d0 = h0[6]; d1 = h1[6]; e0 = u0[6] + o0; e1 = u1[6] + o1; f0 = e0 + sg * C3_SEA; f1 = e1 + sg * C3_SEA;
         C3_Point(c, k, side ? e0 : f0, d0, a); C3_Point(c, k, side ? f0 : e0, d0, b); C3_Point(c, k + 1, side ? f1 : e1, d1, cc); C3_Point(c, k + 1, side ? e1 : f1, d1, d);
         uv[0] = 0; uv[1] = 1; uv[2] = rep; uv[3] = 1; uv[4] = rep; uv[5] = 0; uv[6] = 0; uv[7] = 0;
-        C3_QuadT(c, a, b, cc, d, sea >= 0 ? 0xffffffffu : 0xff8a5a2au, sea, uv);
+        C3_QuadTint(c, a, b, cc, d, 0xfd8a5a2au, sea, uv, 0xfdffffffu);   /* (vertex alpha 253: water - the world renderer draws a water surface there, render3d.h) */
     }
 }
 
@@ -1046,7 +1124,9 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
             const RoadSection *s0 = h ? &p0->halfB : &p0->halfA, *s1 = h ? (p1->layout == 2 ? &p1->halfB : &p1->halfA) : &p1->halfA;
             double o0 = 0, o1 = 0; RoadSection merged;
             int walk = ra && s0->kind == SEC_OPEN, tex[C3_NP - 1];
+            int nv0;
             if (C3_HideHalf(c, k, h)) continue;
+            nv0 = c->nv;
             if (p0->layout != 2 && p1->layout == 2 && !c->forkPick) { C3_ForkMerge(p1, &merged); s1 = &merged; }
             c->fr = h ? c->frameB : c->frame;
             C3_Section(s0, o0, &r0); C3_Section(s1, o1, &r1);
@@ -1063,6 +1143,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 /* near a fork / join, where the inner side (A's right, B's left) has its rail (GroundMarkQueue side structure on the shoulder's outer edge), the shoulder
                    is dark road surface: the wedge the rails stand on in software (Sierra 898..903 on B) */
             if (!(walk && (s0->kindFlags & 0x20))) C3_Strip(c, k, &r0, &r1, s0->kind, walk, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, ra);
+            if (!(walk && (s0->kindFlags & 0x20)) && s0->kind != SEC_WALL_SPLIT) { C3_SnowBank(c, k, &r0, &r1); C3_SnowDrift(c, k, &r0, &r1); }   /* (seen only in snow; not in tunnels / across cross streets) */
             if (c->darkStrip >= 0) {   /* the solid white edge line at the road side of that dark shoulder (no TEXG texture has one: drawn as a strip) */
                 double e0 = h ? s0->edgeL : s0->edgeR, e1 = h ? s1->edgeL : s1->edgeR, w = h ? -C3_EDGELINE : C3_EDGELINE; float a[3], b[3], cc[3], d[3];
                 C3_Point(c, k, e0, 1, a); C3_Point(c, k, e0 + w, 1, b); C3_Point(c, k + 1, e1 + w, 1, cc); C3_Point(c, k + 1, e1, 1, d);
@@ -1071,9 +1152,11 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
             if (ra && c->skirts && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
             if (ra && s0->kind >= SEC_WALL1 && s0->kind <= SEC_WALL_SPLIT) C3_Sea(c, k, s0, o0, s1, o1, ra);
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) C3_Tunnel(c, k, h, s0, o0, s1, o1, ra, tex[2]);   /* (Peninsula 385..413, 475..499; the rock: the left cliff face's texture) */
-            C3_Lanes(c, k, s0, o0, s1, o1, ra);
+            {   int nr0 = c->nv, j; C3_Lanes(c, k, s0, o0, s1, o1, ra);   /* the road surface: vertex alpha 248 (render3d.h: Video / Esc "Road" = new asphalt, a sheen in the sun) */
+                for (j = nr0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf8000000u; }
             if (walk) C3_Roadside(c, k, h, s0, o0, s1, o1, ra);
             if (ra) { C3_Sprites(c, k, h, s0, o0, ra); C3_SideStructs(c, k, h, s0, o0, s1, o1, ra); }
+            if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) { int j; for (j = nv0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff || (c->v[j].rgba >> 24) == 0xf8) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf9000000u; }   /* under a roof (a tunnel: vertex alpha 249) - no rain, puddles or snow there (render3d.h) */
         }
     }
     c->fr = c->frame;

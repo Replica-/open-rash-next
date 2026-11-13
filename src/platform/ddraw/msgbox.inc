@@ -87,7 +87,7 @@ static int MbRunT(const char *text,const char *title,UINT type,DWORD timeoutMs)
     g_modalSurf=prevModal; g_lastShown=g_primary; free(base.bits); FreeSurf(tmp);
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
     if(g_primary && !prevModal) Present(g_primary);
-    LOG("messagebox: answered %d",result); return result; }
+    ModalEatClick(); LOG("messagebox: answered %d",result); return result; }
 
 static int MbRun(const char *text,const char *title,UINT type){ return MbRunT(text,title,type,0); }
 /* exported for converted game code (src\game\alerts.c): returns the MessageBox id, or -1 when timeoutMs elapsed */

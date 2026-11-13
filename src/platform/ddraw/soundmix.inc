@@ -97,4 +97,4 @@ __declspec(dllexport) int __stdcall RR_SoundMix(RRSoundMix *d)
     if(!result && g_vid.songs!=songs0){ g_vid.songs=songs0; VidSave(); }   /* Cancel: the Music setting back too */
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
     if(g_primary && !prevModal) Present(g_primary);
-    LOG("soundmix: closed, result %d",result); return result; }
+    ModalEatClick(); LOG("soundmix: closed, result %d",result); return result; }

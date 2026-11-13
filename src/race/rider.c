@@ -5,6 +5,7 @@
 #include "../data/records.h"
 #include "../road/road_ring.h"
 #include "../legacy_decls.h"
+#include "rider_slots.h"
 #include <string.h>
 #include <stdarg.h>
 #include <commctrl.h>
@@ -122,6 +123,11 @@ void __fastcall rr_RiderApplyHit(int r, int *p2, int *p3, int kind)
         if ((unsigned char)x != *(unsigned char *)(g_playerRider + 0x328) && (unsigned char)x != 0xff) return;
     }
     if (*(int *)(r + 0x2f4) != 0) return;
+    {   /* the shim (world3d.inc RR_HitFx): blood sprays from the rider who is hit (object f) - drawing only, nothing here changes */
+        static void (__stdcall *fx)(unsigned); static int init;
+        if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; fx = m ? (void (__stdcall *)(unsigned))GetProcAddress(m, "RR_HitFx") : 0; }
+        if (fx) fx((unsigned)f);
+    }
     if (g_copRider != 0 && *(int *)(g_copRider + 0x2fc) == f) SfxEventQueue(0x13, 0, 0);   /* the "player was hit" event (0x403e44) */
     memcpy((int *)(f + 0x1c), (int *)(r + 0x1c), 5 * 4);
     memcpy((int *)(f + 0x30), (int *)(r + 0x30), 5 * 4);
@@ -572,6 +578,7 @@ void __stdcall rr_RidersFree(void)
     for (n = 0x10; n != 0; n--) *p++ = 0;
     p = &tbl_riders_as_unsigned;
     for (n = 0x10; n != 0; n--) *p++ = 0;
+    RrSlotsEnd();   /* (the extra slots, rider_slots.c) */
 }
 
 /* snapshot the object's position / speed / heading into its owner's record (+0x1d8..0x1ec) */
@@ -611,11 +618,12 @@ static void RiderColoursApply(int row)
 RR_REPLACE(RaceSpawnRiders, rr_RaceSpawnRiders);
 void __cdecl rr_RaceSpawnRiders(void)
 {
-    unsigned char L[0x80];
+    unsigned char L[RR_SLOTS_MAX * 8 + 16];
     int i, *T, *e, *rider;
     RiderSpecsLoad();
     ObjectListCreate();
-    g_riderCount = 0x10;
+    RrSlotsBegin();   /* this race's opponents (Game Options > Opponents, rider_slots.c): 16 slots, more above 14 */
+    g_riderCount = rr_slots;
     RiderPoolAlloc();
     RiderRecPoolAlloc();
     g_copRider = 0;
@@ -629,12 +637,12 @@ void __cdecl rr_RaceSpawnRiders(void)
     g_playerRider = RiderBikeCreate((int)&tbl_playerSpecA, (int)&tbl_playerSpecB, *(int *)((int)RR_RING(e[1]) + 0x14),
                                 e[0], 0, (unsigned char)(*(signed char *)&rec_fadeFactors.g_selectedRecordSet), (*(unsigned char *)&rec_playerRecord.g_playerRecord));
     *(char *)(g_playerRider + 0x328) = (*(unsigned char *)&rec_playerRecord.g_playerRecord);
-    (&rec_riders.tbl_riders)[0] = g_playerRider;
-    (&rec_riders.tbl_rankRiders)[0] = *(int *)(g_playerRider + 0x2fc);
+    RrRiders()[0] = g_playerRider;
+    RrRankRiders()[0] = *(int *)(g_playerRider + 0x2fc);
     ParamBlockLoad((&(*(int *)&g_songState.tbl_riderSpecChunks))[*(unsigned char *)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1e0) + 5)] + 0x14c);
     RiderColoursApply(*(unsigned char *)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1e0) + 5));   /* the player's colour row (rankings.c rr_RiderRankLookup) */
     for (i = 1; i < g_riderCount - 1; i++) {
-        if (g_gameMode == 2 && (*(signed char *)&rec_fadeFactors.g_selectedRecordSet) == i) { (&rec_riders.tbl_riders)[i] = 0; (&rec_riders.tbl_rankRiders)[i] = 0; continue; }
+        if ((g_gameMode == 2 && (*(signed char *)&rec_fadeFactors.g_selectedRecordSet) == i) || i > rr_opponents) { RrRiders()[i] = 0; RrRankRiders()[i] = 0; continue; }   /* (fewer opponents: the slots past the count stay empty) */
         if (*(int *)(L + 8 * i) == -1) {
             unsigned char b = L[8 * i + 4];
             e = T + (signed char)b * 2;
@@ -643,15 +651,14 @@ void __cdecl rr_RaceSpawnRiders(void)
             *(int *)(rider[0xbf] + 0xe0) = (int)&fn_UnusedRiderHook;
         } else {
             int a, fl;
-            if ((*(unsigned char *)&rec_playerRecord.g_playerLevel) > 3) { a = *(int *)((char *)&tbl_bikePairsHigh + 8 * i); fl = *(int *)((char *)&tbl_bikePairsHigh + 8 * i + 4); }
-            else { a = *(int *)((char *)&tbl_bikePairsLow + 8 * i); fl = *(int *)((char *)&tbl_bikePairsLow + 8 * i + 4); }
+            RrSlotStart(i, (*(unsigned char *)&rec_playerRecord.g_playerLevel) > 3, &a, &fl);   /* (tbl_bikePairsHigh / Low; extra riders: rider_slots.c) */
             rider = (int *)RiderBikeCreate((int)&tbl_aiRiderSpecA, (int)&tbl_aiRiderSpecB, *(int *)((int)RR_RING(fl) + 0x14),
                                         a, 1, i, L[8 * i + 4]);
         }
-        if (rider) { (&rec_riders.tbl_riders)[i] = (int)rider; (&rec_riders.tbl_rankRiders)[i] = rider[0xbf]; }
+        if (rider) { RrRiders()[i] = (int)rider; RrRankRiders()[i] = rider[0xbf]; }
     }
     for (i = 1; i < g_riderCount - 1; i++) {
-        int r = (&rec_riders.tbl_riders)[i], s, call = 0;
+        int r = RrRiders()[i], s, call = 0;
         if (!r) continue;
         s = *(int *)(r + 0x324);
         if (s == -1) call = 1;
@@ -700,15 +707,16 @@ int * __fastcall rr_RiderBikeCreate(char *bikeName, char *riderName, int seg, in
     v = (int)Random();
     variant = (unsigned char)(v % 3);
     RiderRecordBind((int)rider, variant, ofs, kind);
-    rider[0x78] = (int)(&(*(char *)&rec_riderKindParams.tbl_riderKindParams) + kind * 0x40);
+    rider[0x78] = (int)RrKindParams(kind);   /* (tbl_riderKindParams + kind * 0x40; extra slots: rider_slots.c) */
     *(int *)rider[0x78] = 0;
     if (*(int *)rider[0x78] != 0)
         ObjectPositionSet(*(int *)rider[0x78], 0xea, 200);
     *(int *)(rider[0x78] + 0x10) = 0;
     *(unsigned char *)((int)rider + 0x1e9) = 0;
     rider[0x7b] = 0;
-    if (mode != 0 || (variant = rec_playerRecord.g_playerBike, g_gameMode == 1))
-        variant = (&(*(unsigned char *)&rec_laneBikeIds.tbl_thrashBikes))[(unsigned)(*(unsigned char *)&rec_playerRecord.g_playerLevel) + kind * 5];
+    variant = rec_playerRecord.g_playerBike;
+    if (mode != 0)
+        variant = (unsigned char)RrSlotBike(kind, (*(unsigned char *)&rec_playerRecord.g_playerLevel));   /* (tbl_thrashBikes[level + kind * 5]) */
     *(unsigned char *)(rider[0x78] + 5) = variant;
     RiderPutOnGrid((int)bike);
     BikeSpecApply((int)bike, *(int *)(rider[0x78] + 0xc) / 2, (unsigned)*(unsigned char *)(rider[0x78] + 5));
@@ -1147,7 +1155,7 @@ void __fastcall rr_ChaserSpawn(int seg, int param_2)
     if ('\a' < g_copVariantIndex)
         g_copVariantIndex = '\0';
     i = '\0';
-    obj = (int *)RiderBikeCreate((int)&tbl_copSpecA, (int)&tbl_copSpecB, seg, 0, 2, 0x0f, 0xf);
+    obj = (int *)RiderBikeCreate((int)&tbl_copSpecA, (int)&tbl_copSpecB, seg, 0, 2, (char)RrCopKind(), 0xf);   /* (the police: the last slot, 15 with the original count) */
     if (obj == 0)
         return;
     rec_riders.g_copRec = obj[0xbf];
@@ -1220,7 +1228,7 @@ RR_REPLACE_FAST(RiderRacePosition, rr_RiderRacePosition, 4);
 int __fastcall rr_RiderRacePosition(int rider)
 {
     int rank = 1, i;
-    int *table = &rec_riders.tbl_rankRiders;
+    int *table = RrRankRiders();
     unsigned char segFlags = *(unsigned char *)(*(int *)(rider + 0x2c) + 0x36);
     int myPos = *(int *)(rider + 0x1f8);
     for (i = 0; i < g_riderCount - 1; i++) {
@@ -1249,16 +1257,16 @@ unsigned __fastcall rr_RiderRankCached(int p1)
 RR_REPLACE_STD(RankRubberBandTick, rr_RankRubberBandTick, 0);
 void __stdcall rr_RankRubberBandTick(void)
 {
-    int *slot[16];
+    int *slot[RR_SLOTS_MAX];
     signed char rank, dl, cl;
-    int i, bl;
+    int i, bl, n = g_riderCount;   /* (16 slots, the police the last; more opponents: rider_slots.c) */
     if (g_copNextTime_as_unsigned > g_raceTime_as_unsigned) return;
     if (g_playerRider == 0) return;
     rank = (signed char)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1fc) - 1);
     g_copNextTime_as_unsigned = g_raceTime_as_unsigned + 0x3c;
-    for (i = 0; i < 16; i++) slot[i] = 0;
-    for (dl = 0; dl < 16; dl++) {
-        int r = (&rec_riders.tbl_riders)[dl], a, *me, cond, *s, rk;
+    for (i = 0; i < n; i++) slot[i] = 0;
+    for (dl = 0; dl < n; dl++) {
+        int r = RrRiderAt(dl), a, *me, cond, *s, rk;
         if (r == 0) continue;
         if (*(char *)(r + 0x300) != 0) continue;
         a = *(int *)(r + 0x304);
@@ -1266,9 +1274,9 @@ void __stdcall rr_RankRubberBandTick(void)
         if (*(unsigned *)(a + 4) & (unsigned)me[1] & 0xc0) cond = 1;
         else cond = *(int *)(*(int *)(a + 0x10) + 0x20) != *(int *)(me[0x10 / 4] + 0x20);
         if (!cond) continue;
-        s = (int *)(&rec_riders.tbl_rankRiders)[dl];
+        s = (int *)RrRankAt(dl);
         rk = s[0x1fc / 4];
-        if (rk > 0 && rk <= 0x10) slot[rk - 1] = s;
+        if (rk > 0 && rk <= n) slot[rk - 1] = s;
     }
     cl = rank;
     bl = 0;
@@ -1284,7 +1292,7 @@ void __stdcall rr_RankRubberBandTick(void)
         }
     }
     dl = 0;
-    for (cl++; cl < 0x10; cl++) {
+    for (cl++; cl < n; cl++) {
         int *s = slot[cl];
         if (s != 0) {
             int *o = (int *)s[0x1c4 / 4];
@@ -1356,14 +1364,7 @@ void __fastcall rr_RiderRecordBind(int r, unsigned char tag, int arg, char slot)
 {
     I32(r, 0x1dc) = 0;
     I32(r, 0x1e4) = 0;
-    if (slot < 9) {
-        I32(r, 0x1d8) = (int)(&(*(unsigned *)&rec_sndPlayerEngine.g_recordsTable) + slot * 0x81);
-    } else if (slot == 0xf) {
-        I32(r, 0x1d8) = (int)&(*(char *)&rec_sndPlayerEngine.g_copRecord);
-    } else {
-        I32(r, 0x1d8) = (int)(&(*(char *)&rec_sndPlayerEngine.tbl_riderRecords) + slot * 0x204);
-        (&(*(char *)&rec_sndPlayerEngine.tbl_riderRecordsSlot))[slot * 0x204] = slot + 1;
-    }
+    I32(r, 0x1d8) = (int)RrRecord(slot);   /* slots 0..8 g_recordsTable, 9..14 tbl_riderRecords (+0x165 = slot + 1), the police g_copRecord; extra slots: rider_slots.c */
     *(unsigned char *)(I32(r, 0x1d8) + 0x18c) = tag;
     I32(I32(r, 0x1d8), 400) = arg;
 }

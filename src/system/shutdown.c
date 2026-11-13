@@ -109,7 +109,7 @@ static int AutoRaceTrack(void)
     return e[0] - '0';
 }
 
-/* Test switch RR_START_MENU=<mode>: the first menu screen instead of 7 (the credits, a wall-clock animation that ends in a demo race).  9 = Game Mode (where a Thrash race returns to). */
+/* Test switch RR_START_MENU=<mode>: the first menu screen instead of 7 (the credits, a wall-clock animation that ends in a demo race).  9 = Game Mode. */
 static int StartMenu(void)
 {
     char e[8]; int v = 0, i;

@@ -1,5 +1,5 @@
-/* "Slightly upscaled" sprites and textures (included by rrddraw.c after RR_SetRoadPosPtrs).  Video Options > Sprites = Original / Slightly upscaled
- * (video.ini sprites; RR_HDTEX=0/1 overrides), GPU renderer only.  Pictures made with Stable Diffusion (Fooocus img2img, denoise 0.46, all views of a
+/* "Slightly upscaled" sprites and textures (included by rrddraw.c after RR_SetRoadPosPtrs).  Always on with the widescreen mod
+ * (no option; test switch RR_HDTEX=0/1 overrides).  Pictures made with Stable Diffusion (Fooocus img2img, denoise 0.46, all views of a
  * family on one canvas: analysis\cars_hd\README.md) at exactly 4 x the original size, alpha = the original's colour key:
  *   <dir>\hd\t<track>\<NAME>.png          every texture / sprite of the track (track 1..5 = g_raceTrack)
  *   <dir>\hd\cars\<CARFILE>\<NAME>.png    traffic cars (the track's Data\Cars\<CARFILE>.CAR: tbl_trackCarFiles[track - 1])
@@ -9,7 +9,7 @@
 static int g_hdGen = 1;   /* +1 when the setting changes: GpuTexFor rebuilds its textures */
 static int HdTexOn(void)
 {   static int env = -2; if (env == -2) { const char *e = getenv("RR_HDTEX"); env = (e && *e) ? (*e != '0') : -1; }
-    return (env >= 0 ? env : g_vid.hdtex && VidHdArt()) && GpuWanted(); }   /* (the setting only with a widescreen art folder: the pictures live there) */
+    return (env >= 0 ? env : VidHdArt()) && GpuWanted(); }   /* (always with a widescreen art folder: the pictures live there) */
 static int HdTrack(void) { int t = g_posTrack ? *g_posTrack : 0; return t >= 1 && t <= 5 ? t : 0; }
 
 typedef struct HdEntry { int track; char name[9]; int w, h; DWORD hash; DWORD *px; } HdEntry;   /* px = 4w x 4h ARGB, NULL = no picture; hash = of the original's indices (HdTexFind) */

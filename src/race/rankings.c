@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "rider_slots.h"
 #include <string.h>
 #include <stdbool.h>
 
@@ -50,13 +51,13 @@ unsigned __fastcall rr_RiderRankLookup(int rider)
     int *p;
     if (I32(rider, 0xc4) != 8) return 0xffffffff;
     if (g_copRider != 0 && I32(g_copRider, 0x2fc) == rider) return 0xde;
-    if (rec_riders.tbl_rankRiders == rider) return *(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5);
+    if (RrRankRiders()[0] == rider) return *(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5);
     i = 1;
     if (1 < g_riderCount - 1) {
-        p = &(*(int *)&rec_riders.tbl_rankRiders1);
+        p = RrRankRiders() + 1;
         do {
-            if (*p == rider)
-                return ((unsigned)(*(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5) == i) - 1) & i;
+            if (*p == rider) { unsigned c = (unsigned)RrSlotColour((int)i);   /* (the slot's colour row: the slot; extra riders a random one, rider_slots.c) */
+                return ((unsigned)(*(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5) == c) - 1) & c; }
             p++;
             i++;
         } while ((int)i < g_riderCount - 1);
@@ -72,13 +73,13 @@ unsigned __fastcall rr_RiderRankSweep(int rider)
     int *p;
     if (I32(rider, 0xc4) != 4) return 0xffffffff;
     if (g_copRider == rider) return 0xde;
-    if (rec_riders.tbl_riders == rider) return *(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5);
+    if (RrRiders()[0] == rider) return *(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5);
     i = 1;
     if (1 < g_riderCount - 1) {
-        p = &(*(int *)&rec_riders.tbl_riders1);
+        p = RrRiders() + 1;
         do {
-            if (*p == rider)
-                return ((unsigned)(*(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5) == i) - 1) & i;
+            if (*p == rider) { unsigned c = (unsigned)RrSlotColour((int)i);
+                return ((unsigned)(*(unsigned char *)(I32(I32(g_playerRider, 0x2fc), 0x1e0) + 5) == c) - 1) & c; }
             p++;
             i++;
         } while ((int)i < g_riderCount - 1);

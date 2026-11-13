@@ -8,6 +8,7 @@
 #include <stdbool.h>
 
 RR_DATA(int,           g_riderCount);
+#define RESULT_SLOTS (g_riderCount < 16 ? g_riderCount : 16)   /* the results tables (0x4c / 0x40-byte records, the page's lines) hold the original 15 places: more opponents (race\rider_slots.c) fill the first 15 */
 RR_DATA(int,           g_playerRider);
 RR_DATA(unsigned,      tbl_bikePrices);
 RR_DATA(unsigned char, s_FNH);
@@ -36,7 +37,6 @@ RR_DATA(char,          g_unsavedChanges);
 RR_DATA(int,           g_gameMode);
 RR_DATA(char,          g_demoMode);
 RR_DATA(HWND,          g_mainWindow);
-RR_DATA(int,           g_surfaceA);
 #define g_playerBike_as_int (*(int *)&rec_playerRecord.g_playerBike)   /* the same variable with the type another part of this file uses */
 #define g_playerCash_as_int (*(int *)&(*(unsigned *)&rec_playerRecord.g_playerCash))   /* the same variable with the type another part of this file uses */
 #define tbl_prizes_as_char (*(char *)&(*(int *)&rec_menuScreen.tbl_prizes))   /* the same variable with the type another part of this file uses */
@@ -171,7 +171,7 @@ void __fastcall rr_PrizeRecordSet(int icon, char *name, int a3, int idx, unsigne
         if (name != 0) {
             MenuItemDraw((int)&(*(int *)&rec_levelPageItems.tbl_levelPageItems) + 0x38 * idx, 0);
         } else {
-            int n1 = g_riderCount - 1;
+            int n1 = RESULT_SLOTS - 1;
             for (i = 0; i < n1; i++) (&(*(char *)&rec_levelPageItems.tbl_levelPageItemsSel))[0x38 * i] = (idx == i);
             DialogControlsRefresh(0);
         }
@@ -207,7 +207,7 @@ void __fastcall rr_ResultsInsert(int a1, int a2, int a3, unsigned int a4, char a
 {
     char *tab = (char *)&(*(int *)&rec_menuScreen.tbl_prizes);              /* 0x4c-byte records, sort key at +4 */
     unsigned int eta = a4 / 10;
-    int n = g_riderCount, i;
+    int n = RESULT_SLOTS, i;
     if (a3 != 0) return;
     for (i = 0; i < n - 1; i++) {
         if (U32(tab, 0x4c * i + 4) <= eta) continue;
@@ -262,10 +262,6 @@ int __fastcall rr_ChoiceScreenPick(int *item)
     }
     MenuTablesReset(item[1]);
     MoviePlay((int)&s_Start, 6, 2);
-    if (g_gameMode == 1) {
-        int keep = g_surfaceA;
-        PictureShow(TauntText(0x1b, (int)item), keep);
-    }
     return 8;
 }
 
@@ -275,7 +271,7 @@ void __fastcall rr_MenuTablesReset(int page)
 {
     char *a = (char *)SYM((*(char *)&rec_menuScreen.g_menuScreen), 0x4e8);          /* 0x46ab48 */
     char *b = (char *)SYM((*(char *)&rec_slotCount.g_slotCount), 4);              /* 0x496c98 */
-    int i, n = g_riderCount - 1;
+    int i, n = RESULT_SLOTS - 1;
     for (i = 0; n > 0 && i < n; i++, a += 0x4c, b += 0x40) {
         *(int *)(a + 4) = -1; a[0x10] = 0; a[0xc] = 0;
         if (g_gameMode == 2) ResultLineText((int)b, i, 0, SYM((*(char *)&rec_comm.g_vxdHandle), -0x220));
@@ -307,11 +303,6 @@ int __fastcall rr_BikeShopBuy(int *item)
         }
         rec_demoPage.tbl_levelPage[0] = 1;
         (*(unsigned *)&rec_playerRecord.g_playerCash) -= cost;
-        return 0x21;
-    }
-    if (g_gameMode == 1) {
-        (*(unsigned char *)&rec_playerRecord.g_tracksWonMask) = 0;
-        rec_demoPage.tbl_levelPage[0] = (item[2] == 0xC3 ? 3 : 0) + 0xC1;
         return 0x21;
     }
     if (g_gameMode == 3) return LevelPageOpen();

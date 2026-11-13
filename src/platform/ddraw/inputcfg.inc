@@ -68,7 +68,7 @@ static void IcDisc(HDC dc,int cx,int cy,int r,COLORREF fill,COLORREF frame)
 {   HBRUSH b=CreateSolidBrush(fill); HPEN p=CreatePen(PS_SOLID,1,frame); HGDIOBJ ob=SelectObject(dc,b), op=SelectObject(dc,p); Ellipse(dc,cx-r,cy-r,cx+r+1,cy+r+1); SelectObject(dc,ob); SelectObject(dc,op); DeleteObject(b); DeleteObject(p); }
 static void IcPoly(HDC dc,const POINT *pt,int n,COLORREF fill,COLORREF frame)
 {   HBRUSH b=CreateSolidBrush(fill); HPEN p=CreatePen(PS_SOLID,1,frame); HGDIOBJ ob=SelectObject(dc,b), op=SelectObject(dc,p); Polygon(dc,pt,n); SelectObject(dc,ob); SelectObject(dc,op); DeleteObject(b); DeleteObject(p); }
-static void IcText(HDC dc,int x,int y,const char *t,COLORREF c,UINT al){ SetTextColor(dc,c); SetTextAlign(dc,al); TextOutA(dc,x,y,t,(int)strlen(t)); SetTextAlign(dc,TA_LEFT|TA_TOP); }
+static void IcText(HDC dc,int x,int y,const char *t,COLORREF c,UINT al){ SetTextColor(dc,c); SetTextAlign(dc,al); TxTextOutA(dc,x,y,t,(int)strlen(t)); SetTextAlign(dc,TA_LEFT|TA_TOP); }
 static COLORREF IcDim(COLORREF c,int pct){ return RGB(GetRValue(c)*pct/100,GetGValue(c)*pct/100,GetBValue(c)*pct/100); }
 
 /* ---- keyboard picture: the keys, in units of one key width ---- */
@@ -250,7 +250,7 @@ __declspec(dllexport) int __stdcall RR_InputConfig(BYTE *blob, BYTE *keymap)
     g_modalSurf=prevModal; g_lastShown=g_primary; free(base.bits); FreeSurf(tmp);
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
     if(g_primary && !prevModal) Present(g_primary);
-    LOG("inputcfg: closed"); return 1; }
+    ModalEatClick(); LOG("inputcfg: closed"); return 1; }
 
 /* test hook: RR_TEST_INPUTCFG=1 opens the screen once, 4 s after the start of the time clock, with a built-in table when the game did not give us one */
 static void IcTestHook(void)

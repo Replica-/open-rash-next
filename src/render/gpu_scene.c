@@ -1,12 +1,11 @@
-/* GPU renderer, game side (Video Options > Renderer = GPU; not part of the original game).
+/* GPU renderer, game side (every race; not part of the original game).
  *
- * In a GPU race the frame driver (frame_draw.c) no longer rasterises the world into the 8-bit frame: every draw node goes to the shim's GPU renderer
+ * The frame driver (frame_draw.c) does not rasterise the world into the 8-bit frame: every draw node goes to the shim's GPU renderer
  * (RR_GpuQuad, src\platform\gpu_api.h) with its sub-pixel vertices, texture coordinates and the texture's whole mip chain, in the game's painter's order.
  * The shim draws them at the window's own resolution with perspective-correct, filtered textures and lays the game's HUD over them.  Everything the
  * game decides (what is drawn, where, with which texture, in which order) is unchanged, and so is the game state: only the pixels are made elsewhere.
- * A software race (Renderer = Software) never reaches this code and is the original exactly (the test goldens).
  *
- * Also here: the perspective model for draw distances beyond the original 33 road segments (GPU races only).  The game projects everything as
+ * Also here: the perspective model for draw distances beyond the original 33 road segments.  The game projects everything as
  * offset * scale(depth), scale read from the table tbl_perspectiveScale (depth in 1/256 segment, entry = depth / 2, 128 entries per segment, 34 segments).  Near
  * the camera the table is a true perspective curve (about K / (i - 143)); further out it flattens towards ~1400 and never reaches 0, and past 34 segments
  * the original read unrelated data.  For longer views the table is kept for the first 8 segments and continued by K / (i - c), matched in value and slope
@@ -15,6 +14,8 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../platform/gpu_api.h"
+#include "../race/rider_slots.h"
+RR_DATA(int, g_riderCount);
 
 RR_DATA(int, g_fbOffsetX);            /* frame buffer x / y offset of that origin */
 RR_DATA(int, g_fbOffsetY);
@@ -73,8 +74,8 @@ static void CourseProgress(void)
     p.player = player[0x1f8 / 4] / 256.0f;
     p.miles = player[0x1f8 / 4] / 85600.0f;
     p.nRivals = 0;
-    for (i = 1; i < 16 && p.nRivals < 16; i++) {
-        int *o = (int *)(&rec_riders.tbl_riders)[i], *r;
+    for (i = 1; i < g_riderCount && p.nRivals < 64; i++) {   /* (every slot, the police last: race\rider_slots.c) */
+        int *o = (int *)RrRiderAt(i), *r;
         if (!o) continue;
         r = (int *)o[0x2fc / 4];
         if (!r || r == player) continue;
@@ -114,6 +115,7 @@ void rr_GpuFlat(const int *v, const double *hv, unsigned char colour, int world,
     g.levels = 0; g.w = g.h = 0; g.pitch = 0; g.flags = 0; g.colour = colour; g.world = world; g.depth = depth; g.objDepth = objDepth; memset(g.name, 0, sizeof g.name);
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
+    g.riderSprite = -1;
     Clip(&g);
     g_gpuQuad(&g);
 }
@@ -135,8 +137,11 @@ void rr_GpuTextured(const int *node, const int *v, const double *hv, const int *
     g.pitch = 0; g.flags = (obj[3] & 2) ? RRG_KEY : 0; g.colour = -1; g.world = world; g.depth = depth; g.objDepth = objDepth; memcpy(g.name, obj + 4, sizeof g.name);   /* name: texture object words 4..5 */
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);   /* (W3_OBJ just looked this record up) */
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
+    g.riderSprite = -1;
     if (obj[3] & 0x2000) {             /* rider tile: just composed into the object's 256-wide level-0 bitmap by TileCopy256, the next rider reuses it */
         g.bits[0] = *(const unsigned char **)((const char *)obj + 0x38);
+        { extern const unsigned char *rr_tileSprDst; extern int rr_tileSpr;   /* (road_view.c: the HiBob sprite of that copy) */
+          if (g.bits[0] == rr_tileSprDst) g.riderSprite = rr_tileSpr; }
         g.w = node[4]; g.h = node[5]; g.pitch = 256; g.levels = 1; g.flags |= RRG_SNAP;
         { extern int rr_rcTrueRow; if (rr_rcTrueRow >= 0 && *((const unsigned char *)node + 0x3c) == (unsigned)rr_rcTrueRow) g.flags |= RRG_TRUECOL; }   /* (template indices: race/rider.c) */
         if (g.w <= 0 || g.h <= 0 || g.w > 256) return;

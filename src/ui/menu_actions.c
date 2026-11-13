@@ -221,7 +221,6 @@ int __fastcall rr_MenuNextScreen(int advance)
     }
     switch (g_gameMode) {
     case 0: return 9;
-    case 1: return 10;
     case 2: return g_playerCharacter_as_char == 0 ? 14 : 15;
     case 3: UnusedNetFlagsUpdate(); return 11;
     default: return g_gameMode;

@@ -1,4 +1,4 @@
-/* GPU renderer, shim side (Video Options > Renderer = GPU; included by rrddraw.c).  The game side is src\render\gpu_scene.c, the interface src\platform\gpu_api.h.
+/* GPU renderer, shim side (included by rrddraw.c; every race is drawn by it).  The game side is src\render\gpu_scene.c, the interface src\platform\gpu_api.h.
  *
  * In a GPU race the game no longer rasterises its world into the 8-bit frame: its frame driver hands every polygon to RR_GpuQuad (sub-pixel vertices,
  * texture coordinates, the texture's bitmap), in its own painter's order.  At the next present the window shows three layers, all through the SDL renderer
@@ -8,14 +8,16 @@
  *               see GpuEmitQuad), bilinear filtering, a box-filtered RGBA mip chain per texture with the level picked per cell
  *   overlay     everything the game drew into the viewport after the scene began (HUD, messages): RR_GpuSceneBegin filled the viewport with a marker
  *               colour that no picture uses, so the pixels that are no longer that colour are the ones drawn on top
- * Nothing the game reads changes: the game state is the same as in a software race.
+ * Nothing the game reads changes: the game state is the same as the original game's.
  */
 #include "../gpu_api.h"
 
-static void W3Draw(int w, int h, const SDL_FRect *r); static void W3RaceEnd(void); static int W3Replaces(const RrGpuQuad *q); static void W3SceneBegin(void);   /* world3d.inc (true-3D world) */
+static void W3Blood(int fw, int fh); static void W3Draw(int w, int h, const SDL_FRect *r); static void W3RaceEnd(void); static int W3Replaces(const RrGpuQuad *q); static void W3SceneBegin(void);   /* world3d.inc (true-3D world) */
+static const PALETTEENTRY *volatile g_cdPal;   /* the race start countdown (weather.inc RR_RaceCountdown): its frames drawn with the race palette, not the dimmed one */
+static Pal *GpuCdPal(void){ static Pal p; const PALETTEENTRY *e=g_cdPal; if(!e) return g_primary?g_primary->pal:NULL; memcpy(p.e,e,sizeof p.e); return &p; }
+static void WxUpdate(void); static void WxBatchMod(SDL_Texture *t, int on); static void WxParticles(int fw, int fh); static void WxPanel(int w, int h);   /* weather.inc */
 static int g_gpuOn;                    /* this race is drawn by the GPU renderer (RR_GpuRace at the race start) */
 static int g_gpuScene;                 /* a scene (background + polygon list) is ready to compose */
-static int g_gpuForce = -1;            /* RR_RENDERER=gpu / soft (tests): overrides the Video Options setting */
 static BYTE *g_gpuBg; static int g_gpuBgW, g_gpuBgH, g_gpuBgCap; static int g_gpuClip[4];
 static int g_gpuMark = 255, g_gpuMarkPrev = -1;   /* marker colour of this scene / of the scene before (stale marker pixels in the background) */
 static unsigned g_gpuFrame;            /* scene counter (texture ages) */
@@ -46,8 +48,8 @@ static void GpuAddTri(int a,int b,int c){ GpuBatch *bt=&g_gb[g_gnb-1]; int base=
 /* one entry per distinct picture: the bitmap's address, size, pitch, colour key and a hash of its contents (the game streams new sprite sets into the
    same memory, and the rider tiles are recomposed for every rider), with an RGBA mip chain of SDL textures */
 #define GPU_TEXSLOTS 8192
-typedef struct GpuTex { const BYTE *bits; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with */
-static const DWORD *RcTrueLut(void);   /* ridercol.inc */
+typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with */
+static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
 static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
 static GpuTex g_gt2[GPU_TEXSLOTS]; static int g_gtN;
 static DWORD GpuPalSum(Pal *p){ DWORD s=0; int i; if(!p) return 0; for(i=0;i<256;i++) s=s*31+((DWORD)p->e[i].peRed<<16|(DWORD)p->e[i].peGreen<<8|p->e[i].peBlue); return s; }
@@ -98,13 +100,13 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
         if(!freeSlot && g_gpuFrame-e->used>600) freeSlot=e; }   /* not used for 600 scenes: reuse the slot */
     if(!freeSlot) return NULL;
     if(freeSlot->bits) GpuTexFree(freeSlot); else g_gtN++;
-    e=freeSlot; px=GpuExpand(q->bits[0],w,h,pitch,key&1,g_primary?g_primary->pal:NULL); if(!px) return NULL;
+    e=freeSlot; px=GpuExpand(q->bits[0],w,h,pitch,key&1,GpuCdPal()); if(!px) return NULL;
     if(key&2){ const DWORD *lut=RcTrueLut(); int x, y;   /* the player's tile in true-colour mode (ridercol.inc): template index -> the player's own colours */
         if(lut) for(y=0;y<h;y++){ const BYTE *r=q->bits[0]+(size_t)y*pitch; for(x=0;x<w;x++) if(px[y*w+x]&0xFF000000u) px[y*w+x]=lut[r[x]]; } }
     { static int dt=-1; static char dd[MAX_PATH]; if(dt<0){ char *s=getenv("RR_DUMP_TEX"); dt=(s && *s); if(dt){ strncpy(dd,s,MAX_PATH-1); CreateDirectoryA(dd,NULL); } }   /* RR_DUMP_TEX=<dir>: every new texture as <kind>_<w>x<h>_<hash>.raw (int w, int h, w*h ARGB) */
       if(dt){ char fn[MAX_PATH+64]; FILE *f; _snprintf(fn,sizeof fn-1,"%s\\%s_%dx%d_%08lx.raw",dd,q->objDepth>=0?"object":(q->world?"world":"other"),w,h,(unsigned long)hs); fn[sizeof fn-1]=0;
           if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
-    e->bits=q->bits[0]; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen;
+    e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen;
     if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch); DWORD *hx;   /* "slightly upscaled": the 4x picture (never the rider tiles) */
         if(getenv("RR_HDLOG")) LOG("hdtex scene %u: new '%.8s' %dx%d hash %08lx bits %p world %d -> %s", g_gpuFrame, q->name, w, h, (unsigned long)hs, q->bits[0], q->world, hp?"4x":"original");   /* test switch RR_HDLOG=1 */
         if(hp && (hx=(DWORD*)malloc((size_t)16*w*h*4))!=NULL){
@@ -188,12 +190,7 @@ static void GpuEmitFlat(const RrGpuQuad *q)
     g_gnv+=4; g_gb[g_gnb-1].nv+=4; GpuAddTri(base,base+1,base+2); GpuAddTri(base,base+2,base+3); }
 
 /* ---------------------------------------------------------------- exports */
-static int GpuWanted(void)
-{   int want; const char *nm;
-    if(g_gpuForce<0){ char *e=getenv("RR_RENDERER"); g_gpuForce = e && !_stricmp(e,"gpu") ? 1 : (e && !_stricmp(e,"soft") ? 0 : 2); }
-    want = g_gpuForce<2 ? g_gpuForce : (g_quiet ? 0 : g_vid.renderer==VR_GPU);   /* quiet test runs: software unless RR_RENDERER=gpu */
-    if(!want || !g_ren || g_gdi || g_headless) return 0;
-    nm=SDL_GetRendererName(g_ren); return nm && strcmp(nm,"software")!=0; }
+static int GpuWanted(void){ return g_ren && !g_headless; }   /* every race with a window (InitVideo accepts accelerated renderers only); RR_HEADLESS=1 has none: its races are not drawn */
 /* start of every race (after RR_RaceBegin): 1 = the game hands its world to RR_GpuQuad */
 __declspec(dllexport) int __stdcall RR_GpuRace(void)
 {   g_gpuOn=GpuWanted(); g_gpuScene=0; LOG("GPU renderer: %s",g_gpuOn?"on":"off"); return g_gpuOn; }
@@ -305,7 +302,7 @@ static void GpuRaceEnd(void){ W3RaceEnd(); if(g_gpuOn) LOG("GPU race end: %lu sc
 static int GpuCompose(Surf *s)
 {   DWORD lut[256], *bg, *ov; PALETTEENTRY black[256]; const PALETTEENTRY *pe; Pal *pal; int x, y, w, h, i; long hist[256]; SDL_Rect cr;
     if(!g_gpuOn || !g_gpuScene || !g_ren || !g_tex || !s || s->bpp!=8 || s->w!=g_gpuBgW || s->h!=g_gpuBgH) return 0;
-    w=s->w; h=s->h; pal=s->pal?s->pal:(g_primary?g_primary->pal:NULL); memset(black,0,sizeof black); pe=pal?pal->e:black;
+    w=s->w; h=s->h; pal=s->pal?s->pal:(g_primary?g_primary->pal:NULL); memset(black,0,sizeof black); pe=pal?pal->e:black; if(g_cdPal) pe=g_cdPal;
     for(i=0;i<256;i++) lut[i]=0xFF000000u|((DWORD)pe[i].peRed<<16)|((DWORD)pe[i].peGreen<<8)|pe[i].peBlue;
     bg=(DWORD*)malloc((size_t)w*h*4); ov=(DWORD*)malloc((size_t)w*h*4); if(!bg || !ov){ free(bg); free(ov); return 0; }
     memset(hist,0,sizeof hist);
@@ -317,12 +314,16 @@ static int GpuCompose(Surf *s)
     if(!g_gpuOv){ g_gpuOv=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h); if(g_gpuOv) SDL_SetTextureBlendMode(g_gpuOv,SDL_BLENDMODE_BLEND); }
     else { float tw, th; SDL_GetTextureSize(g_gpuOv,&tw,&th); if((int)tw!=w || (int)th!=h){ SDL_DestroyTexture(g_gpuOv); g_gpuOv=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h); if(g_gpuOv) SDL_SetTextureBlendMode(g_gpuOv,SDL_BLENDMODE_BLEND); } }
     if(g_gpuOv) SDL_SetTextureScaleMode(g_gpuOv,g_vid.filter?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
+    WxUpdate();                /* True 3D time of day / weather (weather.inc) */
     SDL_UpdateTexture(g_tex,NULL,bg,w*4); SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect);
     HsDraw(w,h);               /* HD sky over the panorama (hdsky.inc) */
     W3Draw(w,h,&g_fullRect);   /* the true-3D world (world3d.inc), between the background and the game's remaining polygons */
+    W3Blood(w,h);              /* blood from hit riders (world3d.inc) */
     for(i=0;i<g_gnb;i++){ GpuBatch *b=&g_gb[i]; cr.x=b->clip[0]; cr.y=b->clip[1]; cr.w=b->clip[2]-b->clip[0]; cr.h=b->clip[3]-b->clip[1]+1;
-        if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); }
+        if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); WxBatchMod(b->t,1); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); WxBatchMod(b->t,0); }
     SDL_SetRenderClipRect(g_ren,NULL);
+    WxParticles(w,h);          /* rain / snow in front of the world, under the HUD */
     if(g_gpuOv){ SDL_UpdateTexture(g_gpuOv,NULL,ov,w*4); SDL_RenderTexture(g_ren,g_gpuOv,NULL,&g_fullRect); }
+    WxPanel(w,h);              /* the Esc pause's settings */
     GpuDrawExtras(w,h);
     free(bg); free(ov); return 1; }

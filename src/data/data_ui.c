@@ -32,7 +32,6 @@ extern char RRT_UnusedNetFlagsUpdate[]; __pragma(comment(linker, "/alternatename
 extern char RRT_UnusedNetOptionItemA[]; __pragma(comment(linker, "/alternatename:_RRT_UnusedNetOptionItemA=UnusedNetOptionItemA"))
 extern char RRT_UnusedNetOptionItemB[]; __pragma(comment(linker, "/alternatename:_RRT_UnusedNetOptionItemB=UnusedNetOptionItemB"))
 extern char RRT_UnusedNetTick[]; __pragma(comment(linker, "/alternatename:_RRT_UnusedNetTick=UnusedNetTick"))
-extern char RRT_ThrashModePick[]; __pragma(comment(linker, "/alternatename:_RRT_ThrashModePick=ThrashModePick"))
 extern char RRT_BigGameModePick[]; __pragma(comment(linker, "/alternatename:_RRT_BigGameModePick=BigGameModePick"))
 extern char RRT_GameLoad[]; __pragma(comment(linker, "/alternatename:_RRT_GameLoad=GameLoad"))
 extern char RRT_RestroomBlankItem[]; __pragma(comment(linker, "/alternatename:_RRT_RestroomBlankItem=RestroomBlankItem"))
@@ -262,7 +261,7 @@ Rec_startCash rec_startCash = {
         200,500,1000,400,750,800,600,500
     }
 };
-struct L_tbl_gameModeMenu tbl_gameModeMenu = { { 0,0,0,0,10,0,0,0,2,0,0,0,0,0,0,0,164,1,0,0,160,0,0,0,60,0,0,0,3,1,0,0,1,3,0,0,4,0,0,0,1,0,0,0 }, (unsigned)RRT_ThrashModePick, { 3,0,0,0,80,72,0,0,0,0,0,0,14,0,0,0,4,0,0,0,160,0,0,0,164,1,0,0,160,0,0,0,60,0,0,0,0,2,1,1,2,0,0,0,4,0,0,0,1,0,0,0 }, (unsigned)RRT_BigGameModePick, { 5,0,0,0,80,72,0,0,0,0,0,0,11,0,0,0,13,0,0,0,64,1,0,0,164,1,0,0,160,0,0,0,60,0,0,0,1,3,2,2,3,1,0,0,4,0,0,0,1,0,0,0 }, (unsigned)RRT_UnusedNetFlagsUpdate, { 14,0,0,0,80,72,0,0,0,0,0,0,16,0,0,0,6,0,0,0,224,1,0,0,164,1,0,0,160,0,0,0,60,0,0,0,2,0,3,3,0,2,0,0,4,128,0,0,1,0,0,0,0,0,0,0,7,0,0,0,80,72,0,0 } };
+struct L_tbl_gameModeMenu tbl_gameModeMenu = { { 0,0,0,0,10,0,0,0,2,0,0,0,0,0,0,0,164,1,0,0,160,0,0,0,60,0,0,0,3,1,0,0,1,3,0,0,4,0,0,0,1,0,0,0 }, 0, { 3,0,0,0,80,72,0,0,0,0,0,0,14,0,0,0,4,0,0,0,160,0,0,0,164,1,0,0,160,0,0,0,60,0,0,0,0,2,1,1,2,0,0,0,4,0,0,0,1,0,0,0 }, (unsigned)RRT_BigGameModePick, { 5,0,0,0,80,72,0,0,0,0,0,0,11,0,0,0,13,0,0,0,64,1,0,0,164,1,0,0,160,0,0,0,60,0,0,0,1,3,2,2,3,1,0,0,4,0,0,0,1,0,0,0 }, (unsigned)RRT_UnusedNetFlagsUpdate, { 14,0,0,0,80,72,0,0,0,0,0,0,16,0,0,0,6,0,0,0,224,1,0,0,164,1,0,0,160,0,0,0,60,0,0,0,2,0,3,3,0,2,0,0,4,128,0,0,1,0,0,0,0,0,0,0,7,0,0,0,80,72,0,0 } };
 int tbl_menuItems1[14] = {
     0,25,48,426,450,214,30,67371267,1024,34821,1,0,49,18512
 };

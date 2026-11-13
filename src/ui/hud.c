@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "../race/rider_slots.h"
 
 RR_DATA(char, tbl_playerSlots);   /* the eight 32-byte player slots */
 RR_DATA(int,           g_playerRider);
@@ -209,6 +210,7 @@ unsigned __fastcall rr_RiderHudObject(int obj)
 {
     int rider = I32(obj, 0x1c4);
     if (I32(rider, 0x324) == -1) return (int)(&tbl_playerSlots + (int)*(char *)(rider + 0x328) * 32);   /* the AI rider's fixed slot (32-byte records) */
+    { const char *nm = RrRiderName((const char *)I32(obj, 0x1d8)); if (nm) return (unsigned)nm; }   /* (an extra rider: its own name, race\rider_slots.c) */
     return *(unsigned *)(g_configBlock + (&(*(int *)&rec_laneBikeIds.tbl_laneBikeIds))[*(char *)(I32(obj, 0x1d8) + 0x165)] * 4);
 }
 

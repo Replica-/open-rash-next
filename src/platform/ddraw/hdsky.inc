@@ -33,8 +33,8 @@ static int HsOn(void){ static int env=-2; if(env==-2){ const char *e=getenv("RR_
  * With an HD sky they pass behind the skyline: the picture is drawn again on top with its sky pixels transparent (g_hsFore). ---- */
 #define CL_NTEX 5
 #define CL_N 11
-static SDL_Texture *g_clTex[CL_NTEX], *g_hsFore; static int g_clInit;
-static int ClOn(void){ static int env=-2; if(env==-2){ const char *e=getenv("RR_CLOUDS"); env=(e && *e)?(*e!='0'):-1; } return env>=0?env:(g_vid.clouds && g_vid.hdtex && VidHdArt()); }   /* (Video Options: the clouds come with Sprites = Slightly upscaled, which needs the widescreen art folder) */
+static SDL_Texture *g_clTex[CL_NTEX], *g_hsFore, *g_hsFore2; static int g_clInit;   /* g_hsFore2: the same down to 92 % of the picture (True 3D time of day / weather: their sky covers all the sky; weather.inc) */
+static int ClOn(void){ static int env=-2; if(env==-2){ const char *e=getenv("RR_CLOUDS"); env=(e && *e)?(*e!='0'):-1; } return env>=0?env:VidHdArt(); }   /* (always with the widescreen art folder) */
 static float ClHash(int x,int y,int k){ unsigned h=(unsigned)x*374761393u+(unsigned)y*668265263u+(unsigned)k*2246822519u; h=(h^(h>>13))*1274126177u; return (float)((h^(h>>16))&0xffff)/65535.0f; }
 static float ClNoise(float x,float y,int k)   /* value noise */
 {   int xi=(int)floorf(x), yi=(int)floorf(y); float fx=x-xi, fy=y-yi, a, b, c, d, t, u;
@@ -66,12 +66,17 @@ static int ClPaleSky(DWORD p)   /* the very light blue just above the horizon (h
 {   int R=(p>>16)&255, G=(p>>8)&255, B=p&255; return B>=235 && B-R>=35 && B-G>=15; }
 static int ClCloudy(DWORD p)
 {   int R=(p>>16)&255, G=(p>>8)&255, B=p&255, lo=R<G?R:G, hi=R>G?R:G; if(B<lo) lo=B; if(B>hi) hi=B; return lo>=165 && hi-lo<=60 && B>=R-8; }
-static void ClMakeFore(SDL_Surface *sf)
+static void ClMakeFore(SDL_Surface *sf,float deep,SDL_Texture **out)
 {   SDL_Surface *c=SDL_ConvertSurface(sf,SDL_PIXELFORMAT_ARGB8888); int x, y, ymax, last, *col, i, j, m[9];
-    if(g_hsFore){ SDL_DestroyTexture(g_hsFore); g_hsFore=NULL; } if(!c) return;
-    ymax=(int)(c->h*0.55f); col=(int*)malloc(sizeof(int)*c->w); if(!col){ SDL_DestroySurface(c); return; }
+    if(*out){ SDL_DestroyTexture(*out); *out=NULL; } if(!c) return;
+    ymax=(int)(c->h*deep); col=(int*)malloc(sizeof(int)*c->w); if(!col){ SDL_DestroySurface(c); return; }
     for(x=0;x<c->w;x++){
-        for(last=-1,y=0;y<ymax;y++){ DWORD p=*(DWORD*)((BYTE*)c->pixels+(size_t)y*c->pitch+x*4); if(ClSkyBlue(p)>=0.5f || ClPaleSky(p)) last=y; else if(!ClCloudy(p)) break; }
+        int hz=-1; for(last=-1,y=0;y<ymax;y++){ DWORD p=*(DWORD*)((BYTE*)c->pixels+(size_t)y*c->pitch+x*4); int R=(p>>16)&255;
+            /* a sea horizon (PCH: the painted sea is sky blue too): low down, below pale haze (hz: its red), a much darker, bluer colour within a few
+               pixels - the sky ends there, the sea stays */
+            if(y>c->h*0.3f && hz>=0 && hz-R>45 && (int)(p&255)-R>40) break;
+            if(ClPaleSky(p) && R>=200) hz=R;
+            if(ClSkyBlue(p)>=0.5f || ClPaleSky(p)) last=y; else if(!ClCloudy(p)) break; }
         col[x]=last; }
     for(x=0;x<c->w;x++){   /* a lone column far off its neighbours (one odd pixel high in the sky, pale pixels down a hill) made a 1-pixel slit or bar: within 4 rows of the median of 9 */
         for(i=0;i<9;i++) m[i]=col[(x+i-4+c->w)%c->w];
@@ -80,7 +85,7 @@ static void ClMakeFore(SDL_Surface *sf)
         for(y=0;y<c->h;y++){ DWORD *q=(DWORD*)((BYTE*)c->pixels+(size_t)y*c->pitch+x*4); float sk=y<last ? 1.0f : (y<=last+2 && y<ymax ? ClSkyBlue(*q) : 0.0f);   /* soft edge from the colour */
             *q=(*q&0x00FFFFFFu)|((DWORD)((1.0f-sk)*255)<<24); } }
     free(col);
-    g_hsFore=SDL_CreateTextureFromSurface(g_ren,c); SDL_DestroySurface(c); if(g_hsFore) SDL_SetTextureBlendMode(g_hsFore,SDL_BLENDMODE_BLEND); }
+    *out=SDL_CreateTextureFromSurface(g_ren,c); SDL_DestroySurface(c); if(*out) SDL_SetTextureBlendMode(*out,SDL_BLENDMODE_BLEND); }
 /* columns u .. u+len of t (panorama units) at frame column dx: frame rows ya..yb show panorama rows pa..pb */
 static void HsPiece(SDL_Texture *t,float tw,float th,int P,int R,int u,int len,float dx,float ya,float yb,float pa,float pb)
 {   SDL_FRect src, dst; if(yb<=ya) return;
@@ -99,25 +104,31 @@ static void HsWrap(SDL_Texture *t,int P,int R,int y0,int y1)
         a=ym>y0?ym:(float)y0; b=(float)y1; HsPiece(t,tw,th,P,R,u,len,dx,a,b,a-g_hsTop-sh,b-g_hsTop-sh);
         s+=len; } }
 /* the clouds: panorama column u is frame column left + u + x (mod P); 2.25 : 1 panorama, so a cloud w columns wide is w * 0.4 rows high in panorama units */
+static int WxCloudMul(void);   /* weather.inc */
 static void ClDraw(int P,int R,int hd)
-{   int i, k; float t=(float)g_raceN/30.0f;   /* seconds of race time */
+{   int i, k, nc=CL_N*WxCloudMul(); float t=g_w3On?(float)WxSeconds():(float)g_raceN/30.0f;   /* seconds of race time (True 3D: its own clock, weather.inc); WxCloudMul: more of them in rain / snow (weather.inc) */
     if(!g_clInit) ClMake();
-    for(i=0;i<CL_N;i++){ SDL_Texture *tx=g_clTex[i%CL_NTEX]; float u0=ClHash(i,1,99)*P, sp=(1.5f+ClHash(i,2,99)*3.0f)*1.2f, w=P*(0.10f+0.12f*ClHash(i,3,99)), v, u; SDL_FRect d;
+    for(i=0;i<nc;i++){ SDL_Texture *tx=g_clTex[i%CL_NTEX]; float u0=ClHash(i,1,99)*P, sp=(1.5f+ClHash(i,2,99)*3.0f)*1.2f, w=P*(0.10f+0.12f*ClHash(i,3,99))*(i>=CL_N?1.5f:1.0f), v, u; SDL_FRect d;
         if(!tx) continue;
         v=(hd?0.03f:0.02f)+ClHash(i,4,99)*(hd?0.30f:0.20f);
         u=fmodf(u0+t*sp,(float)P);
         for(k=-1;k<=2;k++){ d.x=g_hsLeft+u+g_hsX+(float)k*P; d.w=w; d.y=g_hsTop+v*R; d.h=w*0.40f*R/((float)P/2.25f);
             if(d.x+d.w<g_gpuClip[0] || d.x>g_gpuClip[2]) continue; SDL_RenderTexture(g_ren,tx,NULL,&d); } } }
+/* True 3D time of day / weather (weather.inc, included after this file) */
+static void WxBolt(int P,int R,int y0,int y1); static int WxSkyOn(void); static void WxSky(int P,int R,int y0,int y1,int fore,const SDL_Rect *cr); static void WxCloudMod(int on); static void WxForeMod(SDL_Texture *t,int on);
 /* after the background layer of a GPU race (frame coordinates = logical coordinates): the HD sky over the panorama's area, inside the viewport, and the moving clouds */
 static void HsDraw(int fw, int fh)
-{   char want[MAX_PATH]; int P=g_hsPeriod, R=g_hsRows, y0, y1, hd; SDL_Rect cr; (void)fw; (void)fh;
+{   char want[MAX_PATH]; int P=g_hsPeriod, R=g_hsRows, y0, y1, hd, dn=WxSkyOn(); SDL_Rect cr; (void)fw; (void)fh;
     AcquireSRWLockShared(&g_hsLk); strcpy(want,(HsOn() && g_hsWant[0]) ? g_hsWant : (HdTexOn() ? g_hsWantUp : "")); ReleaseSRWLockShared(&g_hsLk);   /* HD picture first, else the upscaled panorama */
-    if(strcmp(want,g_hsCur)){ SDL_Surface *sf; if(g_hsTex){ SDL_DestroyTexture(g_hsTex); g_hsTex=NULL; } if(g_hsFore){ SDL_DestroyTexture(g_hsFore); g_hsFore=NULL; } strcpy(g_hsCur,want);
-        if(want[0]){ sf=SDL_LoadPNG(want); if(sf){ g_hsTex=SDL_CreateTextureFromSurface(g_ren,sf); ClMakeFore(sf); SDL_DestroySurface(sf); if(g_hsTex){ SDL_SetTextureBlendMode(g_hsTex,SDL_BLENDMODE_NONE); LOG("HD sky: %s",want); } } else LOG("HD sky: %s: %s",want,SDL_GetError()); } }
+    if(strcmp(want,g_hsCur)){ SDL_Surface *sf; if(g_hsTex){ SDL_DestroyTexture(g_hsTex); g_hsTex=NULL; } if(g_hsFore){ SDL_DestroyTexture(g_hsFore); g_hsFore=NULL; } if(g_hsFore2){ SDL_DestroyTexture(g_hsFore2); g_hsFore2=NULL; } strcpy(g_hsCur,want);
+        if(want[0]){ sf=SDL_LoadPNG(want); if(sf){ g_hsTex=SDL_CreateTextureFromSurface(g_ren,sf); ClMakeFore(sf,0.55f,&g_hsFore); ClMakeFore(sf,0.92f,&g_hsFore2); SDL_DestroySurface(sf); if(g_hsTex){ SDL_SetTextureBlendMode(g_hsTex,SDL_BLENDMODE_NONE); LOG("HD sky: %s",want); } } else LOG("HD sky: %s: %s",want,SDL_GetError()); } }
     hd=g_hsTex!=NULL;
-    if((!hd && !ClOn()) || P<=0 || R<=0) return;
+    if((!hd && !ClOn() && !dn) || P<=0 || R<=0) return;
     y0=g_hsTop+g_hsYoff; y1=g_hsTop+R; if(y0<g_gpuClip[1]) y0=g_gpuClip[1]; if(y1>g_gpuClip[3]+1) y1=g_gpuClip[3]+1; if(y1<=y0) return;
     cr.x=g_gpuClip[0]; cr.y=y0; cr.w=g_gpuClip[2]-g_gpuClip[0]; cr.h=y1-y0; SDL_SetRenderClipRect(g_ren,&cr);
     if(hd) HsWrap(g_hsTex,P,R,y0,y1);
-    if(ClOn()){ ClDraw(P,R,hd); if(hd && g_hsFore) HsWrap(g_hsFore,P,R,y0,y1); }
+    if(dn) WxSky(P,R,y0,y1,hd && g_hsFore2,&cr);   /* tinted, the sky graded, stars / sun / moon - behind the clouds and the skyline */
+    if(ClOn()){ WxCloudMod(1); ClDraw(P,R,hd); WxCloudMod(0); }
+    WxBolt(P,R,y0,y1);   /* a lightning bolt (rain) */
+    { SDL_Texture *fo=dn?g_hsFore2:g_hsFore; if(hd && fo && (ClOn() || dn)){ WxForeMod(fo,1); HsWrap(fo,P,R,y0,y1); WxForeMod(fo,0); } }
     SDL_SetRenderClipRect(g_ren,NULL); }

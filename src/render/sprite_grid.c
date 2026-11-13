@@ -139,7 +139,7 @@ void __fastcall rr_SpriteLook(int src, int dst)
             int w = I32(src, 0x38);
             int h = I32(src, 0x34);
             if ((-1 < w && -1 < h) && ((w != 0xde && w != 0xdf) || h < 0x2d) &&
-                ((g_riderCount - 1 <= w && w != 0xe0) || h < 0x146)) {
+                ((15 <= w && w != 0xe0) || h < 0x146)) {   /* (15: the colour scheme rows - the original wrote g_riderCount - 1, 15 with its 16 riders; more opponents keep 15: race\rider_slots.c) */
                 I32(dst, 4) = rec_spriteBank.g_spriteBank;
                 *(char *)(dst + 0x3c) = (char)w;
                 I32(dst, 0x38) = h;

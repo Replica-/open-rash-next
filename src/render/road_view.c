@@ -47,6 +47,8 @@ extern char rr_rvTabB[];  /* src\game\roadview.c: view-distance tables */
 /* ---- 256-wide bitmap tile copy ---- */
 /* copy tile #I32(o,0x38) into the 256-pixel-pitch bitmap of the object at +4; low tile ids are remapped through the 256-byte palette row U8(o,0x3c), the last ids 0xde..0xe0 come from three raw tile tables; the tile's width/height go to +0x10/+0x14 */
 extern int rr_rcTrueRow;   /* race/rider.c: the player's row in true-colour mode (-1 = off) */
+const unsigned char *rr_tileSprDst; int rr_tileSpr;   /* the last colour-row tile copy: which HiBob sprite and where it went (gpu_scene.c RrGpuQuad.riderSprite -
+                                                         the shim's hardcoded tail lamp of that sprite).  Drawing only */
 RR_REPLACE_FAST(TileCopy256, rr_TileCopy256, 4);
 void __fastcall rr_TileCopy256(int o)
 {
@@ -55,7 +57,8 @@ void __fastcall rr_TileCopy256(int o)
     unsigned char *src, *dst;
     unsigned h, w;
 
-    if ((int)row < g_riderCount - 1) {
+    if ((int)row < 15) {   /* (the 15 colour scheme rows of tbl_riderColourRemap: g_riderCount - 1 in the original, 15 with its 16 riders; more opponents keep 15) */
+        rr_tileSpr = tile;
         tile *= 8;
         src = *(unsigned char **)(&(*(unsigned char *)&rec_tilesB.tbl_tilesB) + tile);
         dst = *(unsigned char **)(I32(o, 4) + 0x38);
@@ -64,6 +67,7 @@ void __fastcall rr_TileCopy256(int o)
         I32(o, 0x10) = (&rec_tilesB.tbl_tileW)[tile];
         I32(o, 0x14) = (&(*(unsigned char *)&rec_tilesB.tbl_tileH))[tile];
         h = (&(*(unsigned char *)&rec_tilesB.tbl_tileH))[tile];
+        rr_tileSprDst = dst;
         if (h != 0) {
             do {
                 unsigned char *d = dst;
@@ -77,6 +81,7 @@ void __fastcall rr_TileCopy256(int o)
         }
     } else {
         unsigned char *ent;     /* { unsigned char *pixels; unsigned char w, h; } */
+        rr_tileSprDst = 0;   /* (raw tiles: not a HiBob sprite - RrGpuQuad.riderSprite stays -1) */
         if (row == 0xde)      ent = &tbl_tilesD + tile * 8;
         else if (row == 0xdf) ent = &tbl_tilesC + tile * 8;
         else if (row == 0xe0) ent = &tbl_tilesA + tile * 8;

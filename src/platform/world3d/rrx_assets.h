@@ -21,6 +21,8 @@ typedef struct RxTex {                         /* one texture object */
     int key;                                   /* index 0 transparent (colour-key flag 0x1000, or used as a sprite) */
     int alpha;                                 /* opacity of the visible texels (0 = 255): translucent textures (the sprite shadow) */
     int holes;                                 /* some texel has index 0 (see-through where the texture is colour-keyed) */
+    const unsigned *gen;                       /* a generated texture's RGBA (world3d.inc W3GenFacades; bits = NULL) */
+    int facade;                                /* used as a building facade (course3d.h C3_Building): its windows light up at night */
 } RxTex;
 
 typedef struct RxAssets {
@@ -33,6 +35,7 @@ typedef struct RxAssets {
     unsigned slot0[4];                         /* SLOT: the set in each slot at the race set-up (before a slot's first marker) */
     unsigned short (*bind)[2][4];              /* per piece, section source, slot: the sprite set id (RX_Bind) */
     unsigned char *file;                       /* the chunk payloads stay here */
+    int gen0, ngen;                            /* generated facades: tex[gen0 .. gen0 + ngen - 1] (course3d.h C3_FacadeVary) */
 } RxAssets;
 
 static void RX_Bind(RxAssets *a);
@@ -234,6 +237,7 @@ static int RX_ShadowTex(RxAssets *a)
 static unsigned *RX_Rgba(const RxAssets *a, const RxTex *t)
 {
     unsigned *o = (unsigned *)malloc((size_t)t->w * t->h * 4); int i, key = (t->flags & 0x1000) != 0 || t->key;
+    if (t->gen) { if (o) memcpy(o, t->gen, (size_t)t->w * t->h * 4); return o; }
     for (i = 0; i < t->w * t->h; i++) {
         unsigned c = a->pal[t->bits[i]];
         o[i] = (key && t->bits[i] == 0) ? 0 : ((unsigned)(t->alpha ? t->alpha : 255) << 24 | (c & 0xffffff));   /* PALETTEENTRY r, g, b = bytes 0, 1, 2 = RGBA in memory */

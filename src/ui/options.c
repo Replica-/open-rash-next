@@ -11,7 +11,6 @@
 
 RR_DATA(char,          s_SOFTWARE_Electronic_Arts_RoadRash_95);
 RR_DATA(char,          g_fileDialogNoDir);
-RR_DATA(char,          tbl_optGameMode);
 RR_DATA(char,          tbl_optLevel);
 RR_DATA(char,          tbl_menuEnable);
 RR_DATA(char,          tbl_optSub0);
@@ -53,7 +52,7 @@ RR_DATA(char,          g_playerFilePath);
 #define I32(p, o) (*(int *)((char *)(p) + (o)))
 
 unsigned int __fastcall fn_GameSave(int a1); __pragma(comment(linker, "/alternatename:@fn_GameSave@4=fn_GameSave"))
-extern char RRCODE_GameModeSwitch[]; __pragma(comment(linker, "/alternatename:_RRCODE_GameModeSwitch=GameModeSwitch"))  extern char RRCODE_LevelSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_LevelSet=LevelSet"))  extern char RRCODE_ResolutionSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_ResolutionSet=ResolutionSet"))  extern char RRCODE_HiResBikersSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_HiResBikersSet=HiResBikersSet"))  extern char RRCODE_VideoModeSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_VideoModeSet=VideoModeSet"))
+extern char RRCODE_LevelSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_LevelSet=LevelSet"))  extern char RRCODE_ResolutionSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_ResolutionSet=ResolutionSet"))  extern char RRCODE_HiResBikersSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_HiResBikersSet=HiResBikersSet"))  extern char RRCODE_VideoModeSet[]; __pragma(comment(linker, "/alternatename:_RRCODE_VideoModeSet=VideoModeSet"))
 int __cdecl sprintf(char *dst, const char *fmt, ...);
 int __fastcall MenuNextScreen(int advance);  __pragma(comment(linker, "/alternatename:@MenuNextScreen@4=MenuNextScreen"))
 
@@ -205,18 +204,12 @@ int __fastcall rr_MenuDoneAction(int item)
     return next == 0xf ? 0x19 : next;
 }
 
-/* closes the option page: calls the page's own cleanup (function pointer g_optionCleanup) with the item's value.  The Game Mode list: picking Big Game Mode
-   for a new game (no character yet) goes straight on to the character select, which a Big Game needs anyway (the Restroom has no Select Character item) */
+/* closes the option page: calls the page's own cleanup (function pointer g_optionCleanup) with the item's value */
 RR_REPLACE_FAST(OptionPageClose, rr_OptionPageClose, 4);
 int __fastcall rr_OptionPageClose(int *item)
 {
-    int modeList = g_optionCleanup == (int)RRCODE_GameModeSwitch;
     if (item[1]) ((void (__fastcall *)(int))g_optionCleanup)(item[1]);
     ModalLayerClose();
-    if (modeList && g_gameMode == 2 && rec_playerRecord.g_playerCharacter == 0) {
-        MenuGlobalSet(0xe, 0x10);   /* the character select, back to the Restroom (as the old Select Character item did) */
-        return 0xe;
-    }
     return 0;
 }
 
@@ -231,13 +224,17 @@ int __fastcall rr_RestroomMods(int *item)
     return 0;
 }
 
+/* the Restroom's "New Game" (was a popup list Thrash / Big Game; Big Game is the only mode now): after the save question of a game in play (Cancel = stay),
+   a fresh Big Game - player, level, bike record set reset (game_mode.c) - and straight on to the character select, back to the Restroom */
+void __fastcall rr_GameModeSwitch(int page);
 RR_REPLACE(GameModePageOpen, rr_GameModePageOpen);
 int __cdecl rr_GameModePageOpen(void)
 {
-    ExitConfirm();
-    g_optionCleanup = (int)RRCODE_GameModeSwitch;
-    ModalLayerOpen(3, (int)&tbl_optGameMode, g_gameMode);   /* the heading + Thrash / Big Game (the original's fourth record was Mano-A-Mano; Load Game is on the Game Mode page) */
-    return 0;
+    if ((char)ExitConfirm() == 0) return 0;
+    g_gameMode = 0;   /* (so the switch below starts over even from a Big Game) */
+    rr_GameModeSwitch(2);
+    MenuGlobalSet(0xe, 0x10);
+    return 0xe;
 }
 
 RR_REPLACE(LevelPageOpenList, rr_LevelPageOpenList);

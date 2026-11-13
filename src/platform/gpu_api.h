@@ -1,4 +1,4 @@
-/* Interface between the game's frame driver and the GPU renderer in the ddraw shim (Video Options > Renderer = GPU).
+/* Interface between the game's frame driver and the GPU renderer in the ddraw shim (every race).
  * Included by src\render\gpu_scene.c (game side) and src\platform\ddraw\gpuscene.inc (shim side): both must agree on this layout.
  *
  * Per race frame the game calls (all __stdcall exports of ddraw.dll):
@@ -34,6 +34,7 @@ typedef struct RrGpuQuad {
     float objYaw;                           /* RRO_CAR: its heading relative to the road, in turns (0 = along the road, 0.5 = oncoming) */
     float objLat;                           /* RRO_CAR: its lateral position (road units, record +0x50 / 256) */
     unsigned objId;                         /* the object (its record address): the polygons of one object share it */
+    int riderSprite;                        /* rider tile: the HiBob sprite it was made from (its tail lamp: ddraw\riderlamps.inc), -1 = none */
 } RrGpuQuad;
 
 /* object kinds (RrGpuQuad.objKind).  Traffic models (Video Options > Traffic = 3D models, GPU races with the 3D world): the game still runs every
@@ -42,6 +43,9 @@ typedef struct RrGpuQuad {
 #define RRO_NONE 0
 #define RRO_CAR  1                          /* traffic car: draw hook rr_ShadowMarkerDraw (src\render\rider_sprites.c); record +0x44 road position,
                                                +0x50 lateral (24.8), +0x48 height (24.8), +0x68 yaw (0x1000000 = a turn; the sprite angle, rr_CameraYawRate) */
+#define RRO_COP  2                          /* the police rider (g_copRider's object): flashing red / blue lights (world3d.inc) */
+#define RRO_RIDER 3                         /* an opponent's bike (draw hook rr_PlayerSpriteDraw; objLat = its lateral position, objYaw = its bike model 0..14, 10..14 = super bikes): headlights, tail / brake light, snow tracks (world3d.inc) */
+#define RRO_PLAYER 4                        /* the player's bike (the same) */
 
 /* Course map (Video Options > Course map, GPU races): the whole course, built once at the race start (src\road\road_build.c, rr_CourseMapBuild) and handed
  * to RR_GpuCourse; every frame RR_GpuCourseProgress gives the riders' places on it.  Segment i is road position start + i * 0x100. */
@@ -57,7 +61,7 @@ typedef struct RrCourseProgress {
     float player;                           /* player's distance to the finish line in segments (the game's own value, rider + 0x1f8) */
     float miles;                            /* the same in miles */
     int nRivals;
-    float rival[16];                        /* the other riders' distances to the finish line in segments */
+    float rival[64];                        /* the other riders' distances to the finish line in segments (up to 50 opponents + the police: race\rider_slots.c) */
 } RrCourseProgress;
 
 /* True-3D world (analysis\TRUE3D_PROJECT.md M4; game side src\render\world3d_feed.c, shim src\platform\ddraw\world3d.inc).

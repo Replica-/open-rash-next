@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "rider_slots.h"
 #include <string.h>
 #include <stdbool.h>
 
@@ -40,7 +41,8 @@ void __fastcall rr_RiderFinishRecord(int rider, int ticks)
         else if (rec_sndPlayerEngine.g_raceState == 5) lane = 1;
         else                        lane = 0;
     } else {
-        bike = I32(g_configBlock, *(int *)(&(*(char *)&rec_laneBikeIds.tbl_laneBikeIds) + *(char *)(I32(rider, 0x1d8) + 0x165) * 4) * 4);
+        { const char *nm = RrRiderName((const char *)I32(rider, 0x1d8));   /* (an extra rider: its own name, rider_slots.c) */
+          bike = nm ? (int)nm : I32(g_configBlock, *(int *)(&(*(char *)&rec_laneBikeIds.tbl_laneBikeIds) + *(char *)(I32(rider, 0x1d8) + 0x165) * 4) * 4); }
     }
     (void)place;
     ResultsInsert((int)*(char *)(I32(rider, 0x1c4) + 0x328), bike, lane, (int)t, 0);
@@ -50,7 +52,7 @@ RR_REPLACE_FAST(FinishOrderEstimate, rr_FinishOrderEstimate, 4);
 void __fastcall rr_FinishOrderEstimate(int now)
 {
     int *list = &(*(int *)&rec_roadTexStart.tbl_finishOrder);                 /* pairs: rider, eta */
-    int *src = &rec_riders.tbl_rankRiders;
+    int *src = RrRankRiders();   /* (every opponent, rider_slots.c) */
     int idx = 0, end, base, k;
     int *wp;                                   /* write position of the next entry */
     if (!(rec_roadTexStart.g_finishCount < 4 || g_raceFinished_as_char == 0)) return;
@@ -87,7 +89,7 @@ void __fastcall rr_FinishOrderEstimate(int now)
         }
         src++;
         idx++;
-    } while (src < &rec_riders.tbl_rankRiders + 15);
+    } while (src < RrRankRiders() + g_riderCount - 1);
     base = rec_roadTexStart.g_finishCount;
     if (base < end) {
         int *e = list + base * 2;

@@ -11,10 +11,13 @@
 #include "../data/records.h"
 #include "../road/road_ring.h"
 #include "../platform/gpu_api.h"
+#include "../race/rider_slots.h"
 
 RR_DATA(int, g_hiResRace);            /* hi-res race (640 x 480 frame) */
 RR_DATA(unsigned, g_roadRingBack);       /* the road ring's back (start - 48 segments) */
 RR_DATA(unsigned, g_drawPoolNext);       /* the draw pool's next free node */
+RR_DATA(int, g_copRider);                /* the police rider chasing now (0 = none; race/rider.c) */
+RR_DATA(int, g_playerRider);             /* the player's rider record */
 
 extern int rr_oneRoad;                 /* road\road_build.c: this race's road has no forks (True 3D) */
 int rr_world3d;                        /* this race's world is drawn in true 3D by the shim */
@@ -201,10 +204,23 @@ float rr_World3DObjDepth(const void *rec)
 /* what the object of the record rr_World3DObjDepth was last asked about is (gpu_api.h RRO_*), for RrGpuQuad: gpu_scene.c calls it right after
    (frame_draw.c passes W3_OBJ(node) as an argument, so the lookup has always just happened).  Cars are told by their draw hook (+0xdc) */
 void __fastcall rr_ShadowMarkerDraw(int *obj, int dst);   /* rider_sprites.c: the traffic cars' draw hook */
+void __fastcall rr_PlayerSpriteDraw(int p, int q);   /* rider_sprites.c: the bikes' draw hook (every rider's, not only the player's) */
+/* the bike model (0..14: Rat 0..4, Sport 5..9, Super 10..14, race_messages.c) of the rider whose object o is (a rider record points to its object at +0x2fc) */
+static int RrObjBike(const int *o)
+{   int i, lv = (*(char *)&rec_featureAccum1.g_raceLevel); if (lv > 0) lv--; if (lv > 4) lv = 4;
+    if (g_playerRider && o == (const int *)((const int *)g_playerRider)[0x2fc / 4]) return (unsigned char)rec_playerRecord.g_playerBike;
+    for (i = 0; i < rr_slots; i++) { const int *r = (const int *)RrRiderAt(i); if (r && (const int *)r[0x2fc / 4] == o) return RrSlotBike(i, lv); }
+    return 0; }
 int rr_World3DObjInfo(float *yaw, float *lat, unsigned *id)
 {
     const int *o = g_lastRec;
     *yaw = 0; *lat = 0; *id = (unsigned)o;
+    if (o && o[0xdc / 4] == (int)rr_PlayerSpriteDraw) {   /* a bike (the draw hook of every rider; a rider record points to its object at +0x2fc): its lateral position for
+                                                              the shim's lights (headlight cone, tail / brake light) and snow tracks - nothing here changes */
+        *lat = (float)(o[0x50 / 4] / 256.0); *yaw = (float)RrObjBike(o);   /* (bikes: objYaw = the bike model, gpu_api.h) */
+        if (g_copRider && o == (const int *)((const int *)g_copRider)[0x2fc / 4]) return RRO_COP;
+        if (g_playerRider && o == (const int *)((const int *)g_playerRider)[0x2fc / 4]) return RRO_PLAYER;
+        return RRO_RIDER; }
     if (!o || o[0xdc / 4] != (int)rr_ShadowMarkerDraw) return RRO_NONE;
     *yaw = (float)((o[0x68 / 4] & 0xffffff) / 16777216.0);   /* 0x1000000 = a turn */
     *lat = (float)(o[0x50 / 4] / 256.0);

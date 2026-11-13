@@ -1,12 +1,12 @@
 /* Menu trimming: MenuEnableBuild is the "which menu items are enabled" builder (hand-converted from the disassembly): for the restroom / game-mode / pub pages it walks a
  * Y/N string and sets the enable flag (+0x28 from tbl_menuEnable, i.e. dword 3 of each 0x38-byte menu record) of one record per character.  The Game Mode page's old Mano-A-Mano
- * item is Load Game (rr_MenuTrimInit); the Restroom's Game Mode list no longer shows it at all (options.c lists three records). */
+ * item is Load Game and its Thrash Mode item is gone (rr_MenuTrimInit); the Restroom's New Game starts a Big Game (options.c rr_GameModePageOpen). */
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
 
 RR_DATA(char, tbl_menuEnable);  RR_DATA(int, g_gameMode);  RR_DATA(char, g_playerFilePath);  
-RR_DATA(char *, g_menuEnableDefault);  RR_DATA(char *, g_menuEnablePage1);  RR_DATA(char *, g_menuEnableSavedPlayer);  RR_DATA(char *, g_menuEnableUnsavedPlayer);  RR_DATA(char *, g_menuEnableNoCharacter);
+RR_DATA(char *, g_menuEnableDefault);RR_DATA(char *, g_menuEnableSavedPlayer);  RR_DATA(char *, g_menuEnableUnsavedPlayer);  RR_DATA(char *, g_menuEnableNoCharacter);
 RR_DATA(char *, g_menuEnablePage3);  RR_DATA(char *, g_menuYesNo6);  RR_DATA(char *, g_menuYesNo7);
 
 /* start-up: Restroom record 2 (was "Save Game As...", then "Change clothes" - now on the Game Options screen, modscfg.inc) off and blank (strings.c); the Game Mode
@@ -17,12 +17,13 @@ RR_DATA(unsigned char, tbl_gameModeMenu);
 int __fastcall rr_GameModeLoad(int *item);
 int __fastcall rr_RestroomMods(int *item);
 
-/* the Restroom's order (user, 2026-11-10): Load Game, Save Game | New Game, Player Level, Player Name | Video Options, Game Options, Sound Mix, Configure Input,
-   (a blank row) Done, Go Home - "|" = half a row of space.  Each 0x38-byte record keeps its index (its action, text, enable flag); only its y (+0x10) and its
-   keyboard links change (+0x1e up, +0x1f down, +0x20 next, +0x21 previous: record indexes, wrapping round).  Record 2 (was Change clothes, now on Game Options)
-   and record 8 (Jukebox) are left out: below the screen, off, and no link leads to them */
-static const unsigned char g_rrOrder[] = { 0, 1, 3, 5, 6, 4, 7, 9, 10, 11, 12 };
-static const short g_rrY[] = { 114, 142, 184, 212, 240, 282, 310, 338, 366, 422, 450 };
+/* the Restroom's order (user, 2026-11-10; Player Level removed 2026-11-13): Load Game, Save Game | New Game, Player Name | Video Options, Game Options, Sound Mix,
+   Configure Input, (a blank row) Done, Go Home - "|" = half a row of space.  Each 0x38-byte record keeps its index (its action, text, enable flag); only its y (+0x10)
+   and its keyboard links change (+0x1e up, +0x1f down, +0x20 next, +0x21 previous: record indexes, wrapping round).  Record 2 (was Change clothes, now on Game
+   Options), record 5 (Player Level) and record 8 (Jukebox) are left out: below the screen, off, and no link leads to them */
+static const unsigned char g_rrOrder[] = { 0, 1, 3, 6, 4, 7, 9, 10, 11, 12 };
+static const short g_rrY[] = { 114, 142, 184, 212, 254, 282, 310, 338, 394, 422 };
+static const unsigned char g_rrGone[] = { 2, 5, 8 };   /* (off in every mode: rr_MenuEnableBuild) */
 static void RestroomLayout(void)
 {
     int n = (int)sizeof g_rrOrder, k;
@@ -32,9 +33,10 @@ static void RestroomLayout(void)
         r[0x1e] = r[0x21] = g_rrOrder[(k + n - 1) % n];
         r[0x1f] = r[0x20] = g_rrOrder[(k + 1) % n];
     }
-    *(int *)((char *)&tbl_menuEnable + 2 * 0x38 + 0x10) = 520;
-    *(int *)((char *)&tbl_menuEnable + 8 * 0x38 + 0x10) = 520;
-    *(&tbl_menuEnable + 8 * 0x38 + 0x28) = 0;
+    for (k = 0; k < (int)sizeof g_rrGone; k++) {
+        *(int *)((char *)&tbl_menuEnable + g_rrGone[k] * 0x38 + 0x10) = 520;
+        *(&tbl_menuEnable + g_rrGone[k] * 0x38 + 0x28) = 0;
+    }
 }
 
 void rr_MenuTrimInit(void)
@@ -43,6 +45,15 @@ void rr_MenuTrimInit(void)
     *(&tbl_menuEnable + 2 * 0x38 + 0x28) = 0;
     *(&tbl_gameModeMenu + 2 * 0x38 + 0x28) = 1;
     *(unsigned *)(&tbl_gameModeMenu + 2 * 0x38 + 0x2c) = (unsigned)rr_GameModeLoad;
+    {   /* the Game Mode row: Big Game Mode, Custom Race, Load Game, Restroom.  Thrash Mode is gone: record 0 (first, where the cursor starts) becomes
+           Big Game Mode (target +4 the character select, label +8, action +0x2c), record 1 Custom Race (ui\custom_race.c: the label / help strings were
+           Thrash Mode's, renamed in strings.c) */
+        int __fastcall rr_BigGameModePick(int item);
+        int __fastcall rr_CustomRacePick(int *item);
+        unsigned char *gm = &tbl_gameModeMenu;
+        *(int *)(gm + 4) = 14; *(int *)(gm + 8) = 4; *(int *)(gm + 0x30) = 5; *(unsigned *)(gm + 0x2c) = (unsigned)rr_BigGameModePick; gm[0x28] = 1;   /* (+0x30: the help string) */
+        *(int *)(gm + 0x38 + 4) = 0; *(int *)(gm + 0x38 + 8) = 2; *(int *)(gm + 0x38 + 0x30) = 3; *(unsigned *)(gm + 0x38 + 0x2c) = (unsigned)rr_CustomRacePick; gm[0x38 + 0x28] = 1;
+    }
     *(unsigned *)(&tbl_menuEnable + 7 * 0x38 + 4) = 0;   /* (no target screen: the action returns it) */
     *(unsigned *)(&tbl_menuEnable + 7 * 0x38 + 0x2c) = (unsigned)rr_RestroomMods;
     *(&tbl_menuEnable + 7 * 0x38 + 0x28) = 1;
@@ -57,8 +68,7 @@ unsigned __fastcall rr_MenuEnableBuild(int page)
 {
     char *flag = &tbl_menuEnable + 0x0;
     const char *yn;
-    if (page == 1) yn = g_menuEnablePage1;
-    else if (page == 2) {
+    if (page == 2) {
         if (rec_playerRecord.g_playerCharacter == 0) yn = g_menuEnableNoCharacter;
         else if (g_playerFilePath != 0) yn = g_menuEnableSavedPlayer;
         else yn = g_menuEnableUnsavedPlayer;
@@ -77,7 +87,8 @@ unsigned __fastcall rr_MenuEnableBuild(int page)
         *save = (char)(*save || *saveAs);
         *saveAs = 0;
         *(&tbl_menuEnable + 7 * 0x38 + 0x28) = 1;   /* record 7 = Game Options, in every mode */
-        *(&tbl_menuEnable + 8 * 0x38 + 0x28) = 0;   /* record 8 = Jukebox: not on the Restroom any more (RestroomLayout) */
+        *(&tbl_menuEnable + 5 * 0x38 + 0x28) = 0;   /* record 5 = Player Level, record 8 = Jukebox: not on the Restroom any more (RestroomLayout) */
+        *(&tbl_menuEnable + 8 * 0x38 + 0x28) = 0;
     }
     g_gameMode = page;
     return ((unsigned (__fastcall *)(int))RRCODE_DialogControlsRefresh)(0);
