@@ -23,7 +23,7 @@ typedef struct R3 {
     ID3D11Device *dev;
     ID3D11DeviceContext *imm, *ctx;     /* ctx = deferred context (or imm) */
     int deferred;
-    ID3D11VertexShader *vs; ID3D11PixelShader *ps, *psGlow; ID3D11InputLayout *il; ID3D11BlendState *bsAdd, *bsShadow; ID3D11DepthStencilState *dsShadow;
+    ID3D11VertexShader *vs; ID3D11PixelShader *ps, *psGlow, *psLens; ID3D11InputLayout *il; ID3D11BlendState *bsAdd, *bsShadow, *bsLens; ID3D11DepthStencilState *dsShadow;
     ID3D11Buffer *cb, *vbStatic, *vbDyn, *vbLive; int nStatic, capDyn, nLive;
     ID3D11RasterizerState *rs; ID3D11DepthStencilState *dsOn, *dsTest; ID3D11BlendState *bsOff, *bsAlpha; ID3D11SamplerState *smp;
     ID3D11Texture2D *depth; ID3D11DepthStencilView *dsv; int dw, dh;
@@ -116,7 +116,9 @@ static const char r3_hlsl[] =
     "  float f = Fog(i.d, i.w), fa = 1 - saturate((i.d - fad.x) * fad.y); c.rgb = lerp(c.rgb, fogc.rgb, f) * fogp.w;\n"   /* fogp.w = brightness (fades) */
     "  return float4(c.rgb * fa, fa); }\n"   /* towards the draw distance the world fades into the sky behind it (premultiplied: GpuCompose) - nothing pops in */
     "float4 psglow(VO i) : SV_Target { float4 c = T.Sample(S, i.t) * i.c; float f = Fog(i.d, i.w);\n"   /* light halos (batch alpha 3): added, the target's alpha kept */
-    "  return float4(c.rgb * c.a * (1 - f * 0.85) * fogp.w, 0); }\n";
+    "  return float4(c.rgb * c.a * (1 - f * 0.85) * fogp.w, 0); }\n"
+    "float4 pslens(VO i) : SV_Target { float4 c = T.Sample(S, i.t) * i.c; float f = Fog(i.d, i.w);\n"   /* a lamp lens (batch alpha 5): its own light, laid over (alpha blend), the target's alpha kept */
+    "  return float4(lerp(c.rgb, fogc.rgb, f * 0.85) * fogp.w, c.a); }\n";
 
 typedef HRESULT (WINAPI *R3Compile)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
 
@@ -218,6 +220,8 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     ID3D10Blob_Release(vsb); ID3D10Blob_Release(psb);
     if (!(psb = R3_Compile(r, cc, "psglow", "ps_4_0"))) return 0;
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb), NULL, &r->psGlow); ID3D10Blob_Release(psb);
+    if (!(psb = R3_Compile(r, cc, "pslens", "ps_4_0"))) return 0;
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb), NULL, &r->psLens); ID3D10Blob_Release(psb);
     memset(&bd, 0, sizeof bd); bd.ByteWidth = 264 * 4;   /* (R3_Render: the constants) */ bd.Usage = D3D11_USAGE_DYNAMIC; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Device_CreateBuffer(dev, &bd, NULL, &r->cb);
     memset(&rd, 0, sizeof rd); rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
@@ -235,6 +239,8 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     bl.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD; bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE; bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
     bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     ID3D11Device_CreateBlendState(dev, &bl, &r->bsAlpha);
+    bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO; bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;   /* the same, the target's alpha kept (lamp lenses) */
+    ID3D11Device_CreateBlendState(dev, &bl, &r->bsLens);
     bl.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE; bl.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;   /* added colour, alpha kept (GpuCompose: the target is premultiplied) */
     bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO; bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     ID3D11Device_CreateBlendState(dev, &bl, &r->bsAdd);
@@ -244,7 +250,7 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     sm.MaxLOD = D3D11_FLOAT32_MAX; sm.ComparisonFunc = D3D11_COMPARISON_NEVER;
     ID3D11Device_CreateSamplerState(dev, &sm, &r->smp);
     r->white = R3_MakeTexture(r, whitePx, 2, 2);
-    return r->vs && r->ps && r->psGlow && r->il && r->cb && r->bsAdd && r->white;
+    return r->vs && r->ps && r->psGlow && r->psLens && r->il && r->cb && r->bsAdd && r->white;
 }
 
 /* the translucent batches (alpha) after the opaque ones (they test the depth the opaque ones wrote, without writing it) - order kept otherwise */
@@ -330,10 +336,11 @@ static void R3_DrawPass(R3 *r, ID3D11Buffer *vb, const R3Batch *b, int nb, int p
         ID3D11DeviceContext_PSSetShaderResources(r->ctx, 0, 1, &t);
         if (b[i].alpha == 1) { ID3D11DeviceContext_OMSetBlendState(r->ctx, r->bsAlpha, NULL, 0xffffffff); ID3D11DeviceContext_OMSetDepthStencilState(r->ctx, r->dsTest, 0); }
         else if (b[i].alpha == 3) { ID3D11DeviceContext_OMSetBlendState(r->ctx, r->bsAdd, NULL, 0xffffffff); ID3D11DeviceContext_OMSetDepthStencilState(r->ctx, r->dsTest, 0); ID3D11DeviceContext_PSSetShader(r->ctx, r->psGlow, NULL, 0); }
+        else if (b[i].alpha == 5) { ID3D11DeviceContext_OMSetBlendState(r->ctx, r->bsLens, NULL, 0xffffffff); ID3D11DeviceContext_OMSetDepthStencilState(r->ctx, r->dsTest, 0); ID3D11DeviceContext_PSSetShader(r->ctx, r->psLens, NULL, 0); }
         else if (b[i].alpha == 4) { ID3D11DeviceContext_OMSetBlendState(r->ctx, r->bsShadow, NULL, 0xffffffff); ID3D11DeviceContext_OMSetDepthStencilState(r->ctx, r->dsShadow, 0); }
         else { ID3D11DeviceContext_OMSetBlendState(r->ctx, r->bsOff, NULL, 0xffffffff); ID3D11DeviceContext_OMSetDepthStencilState(r->ctx, r->dsOn, 0); }
         ID3D11DeviceContext_Draw(r->ctx, b[i].count, b[i].first);
-        if (b[i].alpha == 3) ID3D11DeviceContext_PSSetShader(r->ctx, r->ps, NULL, 0);
+        if (b[i].alpha == 3 || b[i].alpha == 5) ID3D11DeviceContext_PSSetShader(r->ctx, r->ps, NULL, 0);
     }
 }
 static void R3_Draw(R3 *r, ID3D11Buffer *vb, const R3Batch *b, int nb) { R3_DrawPass(r, vb, b, nb, -1); }

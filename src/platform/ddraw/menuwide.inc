@@ -41,6 +41,7 @@ static int MwIsShop(const char *pic)
 static void MwNoteOpen(const char *rel)
 {   char cand[MAX_PATH], pic[MAX_PATH], *p; size_t n=strlen(rel); int i; DWORD at;
     HsNoteOpen(rel);   /* horizon pictures: HD sky (hdsky.inc) */
+    HhNoteOpen(rel);   /* the race dashboard: HD picture (hdhud.inc) */
     if(g_mwNDir<0) MwDirs(); if(g_mwOff || n<5 || n>=sizeof pic || _stricmp(rel+n-4,".RRI")) return;
     memcpy(pic,rel,n-4); pic[n-4]=0; n-=4;
     if(n>=7 && !_stricmp(pic+n-7,"Credits") && (n==7 || pic[n-8]=='/' || pic[n-8]==0x5C)){ strcpy(pic+n-7,"Splash"); n--; }   /* the credits picture is the splash picture */

@@ -26,6 +26,7 @@ RR_ModsConfig=_RR_ModsConfig@0
 RR_RaceBegin=_RR_RaceBegin@0
 RR_HudBegin=_RR_HudBegin@8
 RR_HudEnd=_RR_HudEnd@12
+RR_HudNeedle=_RR_HudNeedle@24
 RR_DrawDistance=_RR_DrawDistance@0
 RR_World3DWanted=_RR_World3DWanted@0
 RR_ForkPick=_RR_ForkPick@0

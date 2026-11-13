@@ -464,6 +464,42 @@ static int W3LampTex(int spr)   /* a rider sprite's tail lamp as a picture: its 
             px[y * w + x] = on ? 0xFFFFFFFFu : 0x00FFFFFFu; }
         tex[spr] = R3_Texture(&g_w3r, px, w, h); gen[spr] = g_w3texGen + 1; }   /* (+1: 0 = never made) */
     return tex[spr]; }
+static void W3BoxBlur(float *p, int w, int h, int r)   /* separable box blur of radius r, in place */
+{   float *t=(float*)malloc(sizeof(float)*(w>h?w:h)); int x, y, k; if(!t) return;
+    for(y=0;y<h;y++){ for(x=0;x<w;x++){ float s=0; int n=0; for(k=-r;k<=r;k++) if(x+k>=0 && x+k<w){ s+=p[y*w+x+k]; n++; } t[x]=s/(2*r+1); (void)n; } for(x=0;x<w;x++) p[y*w+x]=t[x]; }
+    for(x=0;x<w;x++){ for(y=0;y<h;y++){ float s=0; for(k=-r;k<=r;k++) if(y+k>=0 && y+k<h) s+=p[(y+k)*w+x]; t[y]=s/(2*r+1); } for(y=0;y<h;y++) p[y*w+x]=t[y]; }
+    free(t); }
+static void W3TexDump(const char *what, int spr, const unsigned *px, int w, int h)   /* (RR_W3LENSDUMP: a lens picture once, as <dir>\lenstex_<sprite>_<what>.bmp, on black) */
+{   const char *dir = getenv("RR_W3LENSDUMP"); char fn[MAX_PATH]; FILE *o; BITMAPFILEHEADER bh; BITMAPINFOHEADER ih; int i;
+    if (!dir) return; _snprintf(fn, sizeof fn, "%s\\lenstex_%03d_%s.bmp", dir, spr, what); fn[sizeof fn - 1] = 0;
+    if ((o = fopen(fn, "wb")) == NULL) return;
+    memset(&bh, 0, sizeof bh); memset(&ih, 0, sizeof ih); bh.bfType = 0x4d42; bh.bfOffBits = sizeof bh + sizeof ih; bh.bfSize = bh.bfOffBits + w * h * 4;
+    ih.biSize = sizeof ih; ih.biWidth = w; ih.biHeight = -h; ih.biPlanes = 1; ih.biBitCount = 32; fwrite(&bh, sizeof bh, 1, o); fwrite(&ih, sizeof ih, 1, o);
+    for (i = 0; i < w * h; i++) { unsigned c = px[i], al = c >> 24, r = (c & 255) * al / 255, g = (c >> 8 & 255) * al / 255, bl = (c >> 16 & 255) * al / 255, q = (bl) | (g << 8) | (r << 16); fwrite(&q, 4, 1, o); }   /* (as added over black) */
+    fclose(o); }
+static int W3LampTex3D(int spr, int *core)   /* the lamp as a lens (8x its pixels): red, its rim bevelled - lit along the top with a glint, unlit along the bottom -; *core = its
+                                               white-hot middle while braking (soft, the rim left out, so the bevel still shows) */
+{   static int tex[RL_SPRITES], texc[RL_SPRITES], gen[RL_SPRITES]; const RlLamp *L;
+    *core = -1;
+    if (spr < 0 || spr >= RL_SPRITES || !(L = &g_rlLamp[spr])->w) return -1;
+    if (gen[spr] != g_w3texGen + 1) { const int S = 8; int w = (L->w + 2) * S, h = (L->h + 2) * S, x, y; float *cov = (float*)malloc(sizeof(float) * w * h), *ht = (float*)malloc(sizeof(float) * w * h), *cd = (float*)malloc(sizeof(float) * w * h), gmax = 1e-6f, hmax = 1e-6f;
+        unsigned *px = (unsigned*)malloc(sizeof(unsigned) * w * h), *pc = (unsigned*)malloc(sizeof(unsigned) * w * h);
+        if (!cov || !ht || !cd || !px || !pc) { free(cov); free(ht); free(cd); free(px); free(pc); return -1; }
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) { int lx = x / S - 1, ly = y / S - 1; cov[y * w + x] = (lx >= 0 && ly >= 0 && lx < L->w && ly < L->h && (g_rlRows[L->row + ly] >> lx & 1)) ? 1.0f : 0.0f; }
+        memcpy(ht, cov, sizeof(float) * w * h); W3BoxBlur(cov, w, h, S / 3); W3BoxBlur(ht, w, h, S); W3BoxBlur(ht, w, h, S / 2);   /* (edges smoothed; the "height": a soft dome rim) */
+        memcpy(cd, ht, sizeof(float) * w * h); W3BoxBlur(cd, w, h, S * 3 / 2); W3BoxBlur(cd, w, h, S * 3 / 2);   /* (the core: deeper inside, a soft hot middle) */
+        for (y = 1; y < h - 1; y++) for (x = 0; x < w; x++) { float gy = ht[(y + 1) * w + x] - ht[(y - 1) * w + x]; if (fabsf(gy) > gmax) gmax = fabsf(gy); if (cd[y * w + x] > hmax) hmax = cd[y * w + x]; }
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) { int xa = x > 0 ? x - 1 : x, xb = x < w - 1 ? x + 1 : x, ya = y > 0 ? y - 1 : y, yb = y < h - 1 ? y + 1 : y;
+            float gy = (ht[yb * w + x] - ht[ya * w + x]) / gmax, gx = (ht[y * w + xb] - ht[y * w + xa]) / gmax, sh = 0.80f + 0.30f * gy + 0.06f * gx + 0.16f * (0.5f - (float)y / h), sp = gy > 0.30f ? (gy - 0.30f) / 0.70f : 0, a = cov[y * w + x], hc;
+            int R, G, B; sp = sp * sp * 0.55f; if (sh > 1) sh = 1; if (sh < 0.05f) sh = 0.05f;
+            R = (int)(255 * (sh * 0.95f + sp)); G = (int)(255 * (sh * 0.09f + sp * 0.85f)); B = (int)(255 * (sh * 0.05f + sp * 0.75f)); if (R > 255) R = 255; if (G > 255) G = 255; if (B > 255) B = 255;
+            px[y * w + x] = ((unsigned)(a * 255) << 24) | ((unsigned)B << 16) | ((unsigned)G << 8) | (unsigned)R;
+            hc = cd[y * w + x] / hmax; hc = hc < 0.5f ? 0 : (hc - 0.5f) / 0.5f; hc = hc * hc * (3 - 2 * hc) * a;   /* (the core: the lens's middle, fading out before the rim) */
+            pc[y * w + x] = ((unsigned)(hc * 255) << 24) | 0xFFFFFFu; }
+        tex[spr] = R3_Texture(&g_w3r, px, w, h); texc[spr] = R3_Texture(&g_w3r, pc, w, h); gen[spr] = g_w3texGen + 1;
+        W3TexDump("lens", spr, px, w, h); W3TexDump("core", spr, pc, w, h);
+        free(cov); free(ht); free(cd); free(px); free(pc); }
+    *core = texc[spr]; return tex[spr]; }
 static R3Vert *W3ClipQuad(R3Vert *o, const float *qx, const float *qy, int w, int h, double d, unsigned rgba, const R3Frame *wf)   /* a picture on the screen corners qx / qy (its left/top, right/top, right/bottom, left/bottom) in the sprites pass */
 {   static const int o6[6] = { 0, 1, 2, 0, 2, 3 }; float z = (float)R3_Depth(d, W3_ZN, W3Far()), wp[3]; int j;
     W3Unproj(wf, (qx[0] + qx[2]) * 0.5f, (qy[0] + qy[2]) * 0.5f, d, wp);
@@ -1014,7 +1050,7 @@ static void W3Sprites(ID3D11Texture2D *target, int w, int h, int tw, int th, con
     }
     {   /* lights on the road users (halos, batch alpha 3): traffic head / tail lights after dark, the riders' tail lights after dark and brake lights
            always, a police rider's red / blue lights always */
-        typedef struct W3Lens { float x, y, rx, ry; double d; unsigned rgba, core; int tex; float qx[4], qy[4]; } W3Lens;   /* tex >= 0: the lamp's own pixels (W3LampTex) on the corners qx / qy */
+        typedef struct W3Lens { float x, y, rx, ry; double d; unsigned rgba, core, rgba3; int tex, tex3, texc; float qx[4], qy[4]; } W3Lens;   /* tex >= 0: the lamp's own pixels (W3LampTex) on the corners qx / qy, drawn as the lens tex3 (W3LampTex3D) */
         W3Lens lens[64]; int nr = 0;
         float dark = WxDark(); double now = WxSeconds(); int flash = W3CopFlash(now), first = nv, gt = W3GlowTex();
         for (i = 0; i < g_w3ns && gt >= 0 && nv + 24 <= 6 * cap + W3_HALOV; i++) {   /* (an object adds up to 4 halos) */
@@ -1045,6 +1081,7 @@ static void W3Sprites(ID3D11Texture2D *target, int w, int h, int tw, int th, con
                     W3Lens *L = &lens[nr++]; float sc2 = nl == 2 ? 0.6f : 1.0f; L->x = mx[e2]; L->y = my[e2]; L->rx = bw * (0.17f + 0.05f * br) * sc2; L->ry = bw * (0.075f + 0.025f * br); L->d = d;
                     L->rgba = W3Rgba(1.0f, 0.10f + 0.12f * br, 0.05f + 0.05f * br, a); L->core = br > 0.05f ? W3Rgba(1.0f, 0.6f, 0.5f, br) : 0; L->tex = -1;
                     if (lj >= 0 && g_w3s[lj].tx->rspr >= 0 && (L->tex = W3LampTex(g_w3s[lj].tx->rspr)) >= 0) {   /* a rider sprite: exactly its lamp's pixels, where the sprite is drawn */
+                        L->tex3 = W3LampTex3D(g_w3s[lj].tx->rspr, &L->texc); L->rgba3 = W3Rgba(1.0f, 1.0f, 1.0f, a);
                         const W3Spr *t = &g_w3s[lj]; const RlLamp *rl = &g_rlLamp[t->tx->rspr]; float u0 = (rl->x - 1.0f) / t->tx->w, u1 = (rl->x + rl->w + 1.0f) / t->tx->w, v0 = (rl->y - 1.0f) / t->tx->h, v1 = (rl->y + rl->h + 1.0f) / t->tx->h; int c;
                         for (c = 0; c < 4; c++) if (!W3TexToScreen(t->u, t->v, P + 8 * lj, P + 8 * lj + 4, c == 0 || c == 3 ? u0 : u1, c < 2 ? v0 : v1, &L->qx[c], &L->qy[c])) L->tex = -1; } }
                 if (nl && br > 0.05f && dark > 0.05f && nv + 18 <= 6 * cap + W3_HALOV) {   /* braking after dark: a strong red glow round it */
@@ -1060,12 +1097,13 @@ static void W3Sprites(ID3D11Texture2D *target, int w, int h, int tw, int th, con
         }
         if (nv > first && nb < cap) { b[nb].first = first; b[nb].count = nv - first; b[nb].tex = gt; b[nb].alpha = 3; nb++; }
         {   int rt = W3RectTex(), k2; first = nv;   /* the bikes' rectangular tail / brake light lenses, with a white-hot middle while braking */
-            for (k2 = 0; k2 < nr && nv + 12 <= 6 * cap + W3_HALOV && nb + 2 < cap; k2++) { const W3Lens *L = &lens[k2];
+            for (k2 = 0; k2 < nr && nv + 12 <= 6 * cap + W3_HALOV && nb + 3 < cap; k2++) { const W3Lens *L = &lens[k2];
                 if (L->tex >= 0) {   /* the lamp's own pixels: a batch of its own (its own picture) */
                     if (nv > first) { b[nb].first = first; b[nb].count = nv - first; b[nb].tex = rt; b[nb].alpha = 3; nb++; }
-                    first = nv; nv = (int)(W3ClipQuad(v + nv, L->qx, L->qy, w, h, L->d, L->rgba, wf) - v);
-                    if (L->core) nv = (int)(W3ClipQuad(v + nv, L->qx, L->qy, w, h, L->d, L->core, wf) - v);
-                    b[nb].first = first; b[nb].count = nv - first; b[nb].tex = L->tex; b[nb].alpha = 3; nb++; first = nv; continue; }
+                    first = nv; nv = (int)(W3ClipQuad(v + nv, L->qx, L->qy, w, h, L->d, L->tex3 >= 0 ? L->rgba3 : L->rgba, wf) - v);   /* the lens (bevelled, its colour in the picture) */
+                    if (L->tex3 >= 0) { b[nb].first = first; b[nb].count = nv - first; b[nb].tex = L->tex3; b[nb].alpha = 5; nb++; first = nv; }   /* (laid over: its shading shows) */
+                    if (L->core) nv = (int)(W3ClipQuad(v + nv, L->qx, L->qy, w, h, L->d, L->core, wf) - v);   /* braking: white-hot over the same pixels */
+                    if (nv > first) { b[nb].first = first; b[nb].count = nv - first; b[nb].tex = L->tex3 >= 0 && L->texc >= 0 ? L->texc : L->tex; b[nb].alpha = 3; nb++; } first = nv; continue; }
                 if (rt < 0) continue;
                 nv = (int)(W3ClipRect(v + nv, L->x, L->y, L->rx, L->ry, w, h, L->d, L->rgba, wf) - v);
                 if (L->core) nv = (int)(W3ClipRect(v + nv, L->x, L->y, L->rx * 0.7f, L->ry * 0.55f, w, h, L->d, L->core, wf) - v); }

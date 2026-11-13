@@ -48,6 +48,7 @@ static int g_gf0, g_gfLast; static unsigned long g_raceN; static int g_sceneThis
 
 static void MwNoteOpen(const char *rel);   /* menuwide.inc */
 static void HsNoteOpen(const char *rel); static void HsDraw(int fw, int fh);   /* hdsky.inc */
+static void HhNoteOpen(const char *rel); static void HhSceneBegin(void); static void HhDraw(const Surf *s, const DWORD *lut);   /* hdhud.inc */
 #include "inject.inc"
 static void StartController(void); static void IcTestHook(void); static void VcTestHook(void); static void McTestHook(void);
 static void StartJukebox(void); static void SgDraw(void); static void StartSongs(void); static int SgTickerUp(void); static void VpTestHook(void);   /* jukebox.inc, musicbox.inc, videoplay.inc */
@@ -103,6 +104,7 @@ static int ReadPixelsArgb(DWORD *px,int w,int h);   /* SDL3 read-back (defined b
 #include "world3d.inc"   /* true-3D world of GPU races (after gpuscene.inc: uses its state) */
 #include "menuwide.inc"   /* widescreen side strips of the menu pictures */
 #include "hdsky.inc"      /* GPU races: HD sky picture instead of the panorama */
+#include "hdhud.inc"      /* GPU races: HD dashboard picture */
 #include "weather.inc"    /* True 3D races: time of day, weather, the Esc pause panel */
 #include "weapons.inc"   /* the riders' weapon drawn as another object (True 3D) */
 static void SdTestHook(void); static void MbTestHook(void); static void FrameHashLog(Surf *s); static void StepsHook(void);
@@ -365,6 +367,7 @@ __declspec(dllexport) void __stdcall RR_HudEnd(IDirectDrawSurface *t, int top, i
     pad=WidePad(s); h=s->h-top; hud=(BYTE*)malloc(640*h); if(!hud) return;
     for(y=0;y<h;y++){ BYTE *row=s->bits+(top+y)*s->pitch+pad; memcpy(hud+y*640,row,640); memcpy(row,g_hudSnap+y*640,640); }   /* HUD out, scene back */
     w2=640*pct/100; h2=h*pct/100; x0=pad+(640-w2)/2; y0=s->h-h2;
+    if(g_hhSeen) HhNoteShrink(x0+(g_hhDst.left-pad)*w2/640,y0+(g_hhDst.top-top)*h2/h,(g_hhDst.right-g_hhDst.left)*w2/640,(g_hhDst.bottom-g_hhDst.top)*h2/h);   /* (the dashboard inside the strip) */
     for(y=0;y<h2;y++){ int sy=y*h/h2; BYTE *drow=s->bits+(y0+y)*s->pitch; const BYTE *hrow=hud+sy*640, *srow=g_hudSnap+sy*640;
         for(x=0;x<w2;x++){ int sx=x*640/w2; if(hrow[sx]!=srow[sx]) drow[x0+x]=hrow[sx]; } }
     free(hud); }
@@ -407,6 +410,7 @@ static HRESULT __stdcall S_BltFast(IDirectDrawSurface *t, DWORD x, DWORD y, LPDI
     d2.left=x; d2.top=y; d2.right=x+(s2.right-s2.left); d2.bottom=y+(s2.bottom-s2.top); o2=d2;
     if(d->w>640 && !d->isPrimary && s->w<=640){ int pad=WidePad(d); d2.left+=pad; d2.right+=pad; }
     { int key=(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK, tx=TxBltBegin(d,d2,s,s2); DoBlt(d,d2,s,s2,key,s->ckLo,s->ckHi); if(tx) TxBltEnd(d,d2,s,s2,key); }
+    if(!d->isPrimary) HhNoteBlt(s,s2,d2);   /* (the race dashboard: hdhud.inc) */
     WideWrap(d,&o2,s,s2,(f&DDBLTFAST_SRCCOLORKEY)&&s->hasCK); if(d->isPrimary) Present(d); return DD_OK; }
 static HRESULT __stdcall S_Flip(IDirectDrawSurface *t, LPDIRECTDRAWSURFACE o, DWORD f)
 {   Surf *p=(Surf*)t; Surf *b; TR("Flip",p); b=o?(Surf*)o:p->back[0]; if(g_trAll) LOG("Flip primary=%p bits=%p  from=%p (arg %p back[0]=%p) bits=%p",(void*)p,(void*)p->bits,(void*)b,(void*)o,(void*)p->back[0],b?(void*)b->bits:NULL); if(b && b->bpp==p->bpp){ int y; for(y=0;y<p->h;y++) memcpy(p->bits+y*p->pitch,b->bits+y*b->pitch,p->w*p->bytes); } Present(p); return DD_OK; }

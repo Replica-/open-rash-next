@@ -202,7 +202,7 @@ __declspec(dllexport) void __stdcall RR_GpuSceneBegin(unsigned char *frame, int 
     g_gpuBgW=w; g_gpuBgH=h; memcpy(g_gpuClip,clip,sizeof g_gpuClip);
     { int x0=clip[0]<0?0:clip[0], x1=clip[2]>w?w:clip[2], y0=clip[1]<0?0:clip[1], y1=clip[3]>=h?h-1:clip[3];   /* viewport -> marker colour */
       for(y=y0;y<=y1;y++) if(x1>x0) memset(frame+(size_t)y*pitch+x0,g_gpuMark,(size_t)(x1-x0)); }
-    g_gpuMarkPrev=g_gpuMark; g_gpuFrame++; GpuListReset(); W3SceneBegin(); g_gpuScene=1; if(g_gpuRiderQ) g_gpuRiderFrames++; g_gpuRiderQ=0; g_gpuFrames++;
+    g_gpuMarkPrev=g_gpuMark; g_gpuFrame++; GpuListReset(); W3SceneBegin(); HhSceneBegin(); g_gpuScene=1; if(g_gpuRiderQ) g_gpuRiderFrames++; g_gpuRiderQ=0; g_gpuFrames++;
     ps=GpuPalSum(g_primary?g_primary->pal:NULL); if(ps!=g_gpuPal){ GpuTexDropAll(); g_gpuPal=ps; }   /* palette fades: the textures are rebuilt */
     { float sx=g_wsSx, sy=g_wsSy; g_gpuOutScale=(float)sqrt(sx*sy); if(g_gpuOutScale<0.25f) g_gpuOutScale=0.25f; } }
 static int W3Sprite(const RrGpuQuad *q, const GpuTex *tx);   /* world3d.inc: into the 3D pass (with depth) */
@@ -324,6 +324,7 @@ static int GpuCompose(Surf *s)
     SDL_SetRenderClipRect(g_ren,NULL);
     WxParticles(w,h);          /* rain / snow in front of the world, under the HUD */
     if(g_gpuOv){ SDL_UpdateTexture(g_gpuOv,NULL,ov,w*4); SDL_RenderTexture(g_ren,g_gpuOv,NULL,&g_fullRect); }
-    WxPanel(w,h);              /* the Esc pause's settings */
+    HhDraw(s,lut);             /* the HD dashboard + the HUD over it (hdhud.inc) */
+    WxPanel(w,h);             /* the Esc pause's settings */
     GpuDrawExtras(w,h);
     free(bg); free(ov); return 1; }
