@@ -142,7 +142,7 @@ void __stdcall rr_SoundFlowTick(void)
     g_inputPool = (int)InputObjectCreate();
     g_defaultObject = (int)InputObjectCreate();
     if (g_inputInit == 0) {
-        DrawPoolAlloc(0xfa);
+        DrawPoolAlloc(0x1000);   /* (the original: 0xfa = 250 records - full, the pool is drawn mid-frame and starts again (DrawPoolSwitch), which breaks the far-to-near order; 4096 hold any field of riders, race\rider_slots.c) */
         ReciprocalTableBuild();
         g_inputInit = 1;
     }

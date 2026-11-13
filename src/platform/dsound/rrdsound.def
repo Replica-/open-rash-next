@@ -8,3 +8,6 @@ RR_MusicResume=_RR_MusicResume@0 @103
 RR_SndStep=_RR_SndStep@0 @104
 RR_MusicState=_RR_MusicState@0 @105
 RR_SetMixTable=_RR_SetMixTable@4 @106
+RR_Ambience=_RR_Ambience@8 @107
+RR_Thunder=_RR_Thunder@4 @108
+RR_Splash=_RR_Splash@8 @109

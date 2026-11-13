@@ -302,7 +302,7 @@ unsigned __fastcall rr_DrawPoolAlloc(int n)
     unsigned cnt;
     int i = 0;
     g_drawPoolFirst_as_up = NULL;
-    g_drawPoolFirst_as_up = (unsigned *)MemAlloc(n * 0xa8);
+    g_drawPoolFirst_as_up = (unsigned *)VirtualAlloc(NULL, (SIZE_T)n * 0xa8, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);   /* (the original: MemAlloc - its pools are too small for the larger pool, ui\input.c; made once, never freed) */
     if (g_drawPoolFirst_as_up == NULL) return 0;
     p = g_drawPoolFirst_as_up;
     for (cnt = (unsigned)(n * 0xa8) >> 2; cnt != 0; cnt--) *p++ = 0;

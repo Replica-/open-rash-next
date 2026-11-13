@@ -27,9 +27,3 @@ static DWORD WINAPI JbThread(LPVOID p)
     for(;;){ Sleep(30); for(i=0;i<3;i++){ int d=(g_inj[keys[i]]!=0) || ((GetAsyncKeyState(keys[i])&0x8000) && g_hwnd && GetForegroundWindow()==g_hwnd);
             if(d && !down[i]) JbKey(keys[i]); down[i]=d; } } return 0; }
 static void StartJukebox(void){ static int started; char *e=getenv("RR_JUKEBOX"); if(started) return; started=1; if(e && !_stricmp(e,"off")){ g_jbOff=1; return; } CreateThread(NULL,0,JbThread,NULL,0,NULL); }
-/* called by Present() with the window DC after the picture was drawn */
-static void JbDrawOverlay(HDC dc)
-{   RECT r; HFONT f,old; if(!g_jbText[0] || (int)(g_jbUntil-GetTickCount())<=0) return;
-    f=CreateFontA(18,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,"Arial"); old=(HFONT)SelectObject(dc,f); SetBkMode(dc,TRANSPARENT);
-    SetRect(&r,8,8,630,32); SetTextColor(dc,RGB(0,0,0)); TextOutA(dc,9,9,g_jbText,(int)strlen(g_jbText)); SetTextColor(dc,RGB(255,200,60)); TextOutA(dc,8,8,g_jbText,(int)strlen(g_jbText));
-    SelectObject(dc,old); DeleteObject(f); }

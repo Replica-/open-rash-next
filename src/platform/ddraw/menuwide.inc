@@ -8,7 +8,7 @@
  * like the frame's edge column on that side is drawn there (a strip file may hold only one side: the bulletin board / track page is Images\Postcard.RRI on the left +
  * a 397 px Images\Postcard\*.RRI on the right, so Postcard.png has the left strip and Postcard\<name>.png the right one).  The strips follow the frame's brightness
  * (fades, black loading frames) with one level for both whole strips, and nothing is drawn on a side no cached strip matches.
- * Menus only (not races), Video Options > Menus > Scaling = Keep 4:3 with Restroom > Game Options > Widescreen menus on; pictures without strips stay centred with black bars.  Images\Credits.RRI uses the Splash strips (same picture);
+ * Menus only (not races), whenever the widescreen mod is installed (automatic, no options); pictures without strips stay centred with black bars.  Images\Credits.RRI uses the Splash strips (same picture);
  * the bike shop's pictures (Images\Showroom\*, Images\Bikes\*) use the Street strips (MwIsShop), Olley's counter (Images\Olleys.RRI) has its own.
  * RR_WIDE=off disables. ---- */
 #define MW_W 854
@@ -30,8 +30,8 @@ static int VidHdArtInstalled(void)
 {   static int have=-1; int i; DWORD a;
     if(have<0){ if(g_mwNDir<0) MwDirs(); have=0; for(i=0;!g_mwOff && i<g_mwNDir;i++){ a=GetFileAttributesA(g_mwDir[i]); if(a!=INVALID_FILE_ATTRIBUTES && (a&FILE_ATTRIBUTE_DIRECTORY)) have=1; } }
     return have; }
-/* the widescreen mod is in use: installed and switched on (Restroom > Game Options > Widescreen mod) - the menu strips, upscaled sprites, HD skies and clouds all ask this */
-static int VidHdArt(void){ return g_vid.mods && VidHdArtInstalled(); }
+/* the widescreen mod is in use: installed (always on, no option) - the menu strips, upscaled sprites, HD skies and clouds all ask this */
+static int VidHdArt(void){ return VidHdArtInstalled(); }   /* (always on when the folder is there: not an option any more) */
 /* the bike shop's pictures (Images\Showroom\<class>\*, Images\Bikes\<class>\*; not Olley's counter, Images\Olleys.RRI, which has its own strips)
    use the street's strips (Images\Street.png). Queued as "*<picture path>": MwLoad takes the street strips but the shop picture's own edge for the match */
 static int MwIsShop(const char *pic)
@@ -41,6 +41,7 @@ static int MwIsShop(const char *pic)
 static void MwNoteOpen(const char *rel)
 {   char cand[MAX_PATH], pic[MAX_PATH], *p; size_t n=strlen(rel); int i; DWORD at;
     HsNoteOpen(rel);   /* horizon pictures: HD sky (hdsky.inc) */
+    HhNoteOpen(rel);   /* the race dashboard: HD picture (hdhud.inc) */
     if(g_mwNDir<0) MwDirs(); if(g_mwOff || n<5 || n>=sizeof pic || _stricmp(rel+n-4,".RRI")) return;
     memcpy(pic,rel,n-4); pic[n-4]=0; n-=4;
     if(n>=7 && !_stricmp(pic+n-7,"Credits") && (n==7 || pic[n-8]=='/' || pic[n-8]==0x5C)){ strcpy(pic+n-7,"Splash"); n--; }   /* the credits picture is the splash picture */

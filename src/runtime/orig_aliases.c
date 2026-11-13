@@ -128,7 +128,6 @@ __pragma(comment(linker, "/include:fn_RoadsideObjectDraw")) __pragma(comment(lin
 __pragma(comment(linker, "/include:fn_RoadsideObjectHit")) __pragma(comment(linker, "/alternatename:fn_RoadsideObjectHit=@rr_RoadsideObjectHit@4"))
 __pragma(comment(linker, "/include:fn_RoadsideObjectTick")) __pragma(comment(linker, "/alternatename:fn_RoadsideObjectTick=@rr_RoadsideObjectTick@4"))
 __pragma(comment(linker, "/include:fn_PedestrianTick")) __pragma(comment(linker, "/alternatename:fn_PedestrianTick=@rr_PedestrianTick@4"))
-__pragma(comment(linker, "/include:fn_ThrashModePick")) __pragma(comment(linker, "/alternatename:fn_ThrashModePick=@rr_ThrashModePick@4"))
 __pragma(comment(linker, "/include:fn_GameModeSwitch")) __pragma(comment(linker, "/alternatename:fn_GameModeSwitch=@rr_GameModeSwitch@4"))
 __pragma(comment(linker, "/include:fn_BigGameModePick")) __pragma(comment(linker, "/alternatename:fn_BigGameModePick=@rr_BigGameModePick@4"))
 __pragma(comment(linker, "/include:fn_GameLoad")) __pragma(comment(linker, "/alternatename:fn_GameLoad=_rr_GameLoad"))

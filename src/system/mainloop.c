@@ -44,7 +44,6 @@ static void CallObject(void *arg)
 
 void rr_RoadViewInit(void);
 void rr_StateLog(int frame);   /* statelog.c */
-void rr_QuadLogInit(void);   /* src\render\quad_log.c: RR_QUADLOG=<dir> dumps quads and textures */
 RR_DATA(char, tbl_gameState);   /* the game-mode variable is the int at +0x140 of this symbol (original address 0x47a660) */
 static int g_det;
 static volatile int g_sceneNow, g_sceneLast;   /* a 3D scene was drawn in this / the previous loop pass */
@@ -71,7 +70,6 @@ void __stdcall rr_MainLoop(void)
     { char e[4]; g_det = GetEnvironmentVariableA("RR_DETERMINISTIC", e, sizeof e) > 0 && e[0] == '1'; }
     { char e[12]; int i; if (GetEnvironmentVariableA("RR_SKIP_TO", e, sizeof e) > 0) for (i = 0; e[i] >= '0' && e[i] <= '9'; i++) skipTo = skipTo * 10 + (e[i] - '0'); }
     rr_RoadViewInit();   /* src\game\roadview.c: view distance tables */
-    rr_QuadLogInit();
     { HMODULE sh = GetModuleHandleA("ddraw.dll"); if (sh) { void (__stdcall *sp)(volatile int *) = (void (__stdcall *)(volatile int *))GetProcAddress(sh, "RR_SetFramePtr"); if (sp) sp((volatile int *)&g_frameCounter); }
       if (sh) { void (__stdcall *rp)(volatile int *, volatile int *, volatile int *) = (void (__stdcall *)(volatile int *, volatile int *, volatile int *))GetProcAddress(sh, "RR_SetRoadPosPtrs"); if (rp) rp((volatile int *)&rec_stepSaved.g_camRoadPos, (volatile int *)&rec_stepSaved.g_camLateral, (volatile int *)&(*(int *)&rec_demoPage.g_raceTrack)); }   /* RR_SHOW_POS overlay */
       if (sh) { void (__stdcall *rg)(unsigned **, int *) = (void (__stdcall *)(unsigned **, int *))GetProcAddress(sh, "RR_SetRingPtrs"); if (rg) rg(&rr_ring, &rr_ringN); }   /* the road ring (shim test switch RR_SHOT_LAYOUT: pictures at forks / joins) */

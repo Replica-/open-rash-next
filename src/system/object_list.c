@@ -4,6 +4,8 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "../race/rider_slots.h"
+RR_DATA(int, g_riderCount);
 #include <mmsystem.h>
 #include <string.h>
 #include <stdarg.h>
@@ -336,11 +338,11 @@ void __stdcall rr_VisibleObjectsSnapshot(void)
 RR_REPLACE_STD(NearestRiders, rr_NearestRiders, 0);
 void __stdcall rr_NearestRiders(void)
 {
-    int *slot = (int *)((char *)&rec_riders.tbl_riders + 4), *end = (int *)((char *)&rec_riders.tbl_riders + 0x40);
+    int i;
     int behindObj = 0, aheadObj = 0, behindDist = 0x20000000, aheadDist = 0x20000000;
     rec_riders.g_spawnedRider = g_copRider;
-    for (; slot < end; slot++) {
-        int *rider = (int *)*slot, d;
+    for (i = 1; i < g_riderCount; i++) {   /* (slots 1.. with the police last: race\rider_slots.c) */
+        int *rider = (int *)RrRiderAt(i), d;
         if (rider == 0) continue;
         rider = (int *)rider[0x2fc / 4];
         d = *(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1f8) - *(int *)((char *)rider + 0x1f8);

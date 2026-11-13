@@ -243,7 +243,7 @@ static BOOL SdRun(LPOPENFILENAMEA o,int saving)
     g_modalSurf=NULL; g_lastShown=g_primary; free(base.bits); FreeSurf(tmp); free(list);
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
     if(g_primary) Present(g_primary);
-    return ok?TRUE:FALSE; }
+    ModalEatClick(); return ok?TRUE:FALSE; }
 
 /* the game (ui/options.c Load / Save Game) calls this instead of comdlg32 GetOpenFileNameA / GetSaveFileNameA: same struct, same result */
 __declspec(dllexport) BOOL __stdcall RR_FileDialog(LPOPENFILENAMEA o, int saving) { return SdRun(o, saving); }

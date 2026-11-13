@@ -76,8 +76,6 @@ RR_REPLACE_STD(UnusedMidiParse, rr_dead_UnusedMidiParse, 0);
 int __stdcall rr_dead_UnusedMidiParse(void) { rr_dead_hit("UnusedMidiParse"); return 0; }
 RR_REPLACE_STD(UnusedMidiOpen, rr_dead_UnusedMidiOpen, 4);
 int __stdcall rr_dead_UnusedMidiOpen(int a1) { rr_dead_hit("UnusedMidiOpen"); return 0; }
-RR_REPLACE_STD(UnusedSoundsPauseAll, rr_dead_UnusedSoundsPauseAll, 0);
-int __stdcall rr_dead_UnusedSoundsPauseAll(void) { rr_dead_hit("UnusedSoundsPauseAll"); return 0; }
 RR_REPLACE_STD(UnusedNetPacketBuild, rr_dead_UnusedNetPacketBuild, 4);
 int __stdcall rr_dead_UnusedNetPacketBuild(int a1) { rr_dead_hit("UnusedNetPacketBuild"); return 0; }
 RR_REPLACE_STD(UnusedNetStateClear, rr_dead_UnusedNetStateClear, 0);

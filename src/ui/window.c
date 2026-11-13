@@ -589,7 +589,7 @@ keyup:
         case VK_MENU:    g_keyAlt = 0; return 0;
         case VK_PAUSE:
             if (g_frameRate == g_frameRateSet) return 0;
-            if (g_gameMode != 1 && g_gameMode != 2) return 0;
+            if (g_gameMode != 2) return 0;
             PromptKey(0, I32(g_configBlock, 0x4f4));
             return 0;
         case VK_PRIOR: case VK_NUMPAD9: g_paused = (char)0xff; return 0;

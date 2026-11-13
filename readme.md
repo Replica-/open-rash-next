@@ -8,15 +8,67 @@
 
 Open Rash does not include the game's content (graphics, sounds, music, videos, courses). You need your own copy of *Road Rash* for Windows 95;
 
+## New: time of day, weather and lighting (True 3D)
+
+True 3D races now have a sky that changes through the day, weather, and real lights. All of it is drawing and sound only: races play out exactly as before.
+Press **Esc** in a race to change it on the spot:
+
+| Setting | Choices |
+|---|---|
+| Time of day | Cycle (a full day every few race minutes) / Dawn / Day / Sunset / Night |
+| Weather | Clear / Rain / Heavy rain / Snow / Heavy snow |
+| Fog | Auto / Off / Haze / Light / Medium / Heavy / Pea soup / Ground mist |
+| Road | Original / New (fresh asphalt that shines in the sun) |
+
+Use the arrow keys or the mouse; **Close** rides on and **Exit Race** leaves the race. The world keeps moving behind the panel (rain falls, clouds drift, the sea rolls), so a change shows straight away; only the race and the clock of the day cycle stand still. The settings are saved in `video.ini`.
+
+![City at night: lit windows and shop signs, street lamps, a headlight beam and the brake light](docs/screenshots/true3d_night.jpg)
+
+- **Sky:** colours that follow the hour, a sun that crosses the sky, stars and a moon at night, more cloud in bad weather, lightning bolts with thunder.
+- **Lights after dark:** street and parking lamps light the road, buildings light some of their windows and their shop signs, police lights flash red and blue.
+- **Bikes and cars:** each bike has a headlight beam that turns with it (two on superbikes) and a rectangular tail light that flares when braking, in the right place at any resolution and with custom rider colours. Cars light the road in front of them after dark.
+
+![Night in the City: an oncoming car lights the road, the bike ahead brakes](docs/screenshots/true3d_night_cars.jpg)
+
+- **Shadows:** riders cast their own shadow along the road, away from the sun, in place of the game's black blob. It is long at dawn and dusk, short at noon, and gone under cloud and at night (a soft patch under the bike remains). Trees, lamp posts and street lights cast sun shadows too (the shadows painted into their pictures are removed). Building walls are lit by the same sun.
+- **New road surface (Esc > Road):** fresh asphalt with sealed cracks and the original lane paint, with a sheen toward the sun on clear days.
+
+![Day in the City: the new road surface and a tree's shadow on the pavement](docs/screenshots/true3d_new_road.jpg)
+
+![Dawn: a long shadow from the low sun](docs/screenshots/true3d_dawn_shadows.jpg)
+
+- **Rain:** steady streaks, puddles that faintly mirror the buildings, tiny splashes where drops hit the ground, and spray and a splash sound when a tyre goes through a puddle. No rain falls in tunnels.
+
+![Rain: puddles reflecting the buildings](docs/screenshots/true3d_rain.jpg)
+
+![Heavy rain at night](docs/screenshots/true3d_heavyrain_night.jpg)
+
+- **Snow:** falling flakes, snow on the road with drifts built up across parts of it and tyre-wide tracks behind every wheel, bumpy banks of snow along the curbs, and snow on the roofs.
+
+![Snow: snow on the road, banks along the curbs, tyre tracks](docs/screenshots/true3d_snow.jpg)
+
+- **Pacific Highway:** a real sea with rolling waves, sun glints and white caps, and rocky cliffs with ledges and cracks.
+
+![Pacific Highway by day: the sea and the cliffs](docs/screenshots/true3d_pacific_day.jpg)
+
+![Pacific Highway at sunset](docs/screenshots/true3d_pacific_sunset.jpg)
+
+- **Buildings:** new generated facades on every City and Peninsula building, in brick, stucco, concrete, stone, glass and painted wood, with shops, cafés, lobbies and garages at street level.
+- **Hits:** blood sprays back from a rider who is hit, and a hit close in front of you splatters the screen for a moment.
+
+![Blood on the screen after a hit close in front](docs/screenshots/true3d_blood.jpg)
+
+- **Sound:** rain, wind in the snow, thunder and puddle splashes are synthesised (no extra files needed), and a voice counts "Three, two, one, Go!" at the start.
+
 ![Widescreen race in the Sierra Nevada, upscaled art](docs/screenshots/race_sierra_widescreen.jpg)
 
 ## Features
 
 ### Hardware renderer (GPU)
 The race world is drawn by the graphics card (Direct3D 11) at your window's own resolution, with smooth, perspective-correct textures.
-The **widescreen** race view (the default) gives a wider field of view instead of stretching the picture, and a **course map** can be shown beside it.
-With the widescreen art mod installed (see below), Video Options > Upscaled Sprites adds **slightly upscaled** sprites and textures and
-**clouds drifting across the sky** (both off by default).
+Widescreen is automatic: in a window or on a screen wider than 4:3 the race shows a wider field of view instead of stretching the picture, and a
+**course map** can be shown beside it. With the widescreen art mod installed (see below), the races always get **slightly upscaled** sprites and
+textures and **clouds drifting across the sky**.
 
 ![Widescreen race in the City, upscaled art](docs/screenshots/race_city_widescreen.jpg)
 
@@ -27,16 +79,9 @@ Gameplay never depends on the view: races play out identically in every mode.
 
 ![True 3D on the Pacific Highway, widescreen with upscaled sprites and the course map](docs/screenshots/true3d_highway.jpg)
 
-### The original picture, exactly
-The **software** renderer reproduces the original 640 x 480 picture pixel for pixel, scaled to your window (sharp or smoothed).
-
-The same moment of a City race in both renderers: the software picture (left) and the GPU's widescreen view with the upscaled sprites and textures (right):
-
-![Software renderer and GPU renderer with upscaled sprites, side by side](docs/screenshots/software_vs_upscaled.jpg)
-
 ### Widescreen menus
-With Menu scaling set to *Widescreen*, the menu and story pictures fill a 16:9 window: each picture gets painted side panels that continue its scene,
-instead of black bars. The artwork is an optional mod, distributed separately: copy its `widescreen` folder into a `mod` folder next to `OpenRash.exe`
+With the widescreen art mod installed, the menu and story pictures fill a 16:9 window: each picture gets painted side panels that continue its scene,
+instead of black bars (automatic - there is no option for it). The artwork is an optional mod, distributed separately: copy its `widescreen` folder into a `mod` folder next to `OpenRash.exe`
 (`mod\widescreen\`). It also holds the slightly upscaled sprites, textures and skies. Without it, the menus keep black bars and the original art is used.
 
 ![Widescreen Game Mode screen](docs/screenshots/widescreen_gamemode.jpg)
@@ -45,20 +90,19 @@ instead of black bars. The artwork is an optional mod, distributed separately: c
 
 ### Video Options
 The Restroom's old "Graphics Options" became **Video Options**: window or fullscreen, window size, fullscreen resolution, smoothing, V-Sync,
-menu scaling, videos, renderer, Pseudo / True 3D, race view and FPS counter - all saved between sessions.
+videos, Pseudo / True 3D, FPS counter and segment tracker - all saved between sessions.
 F11 or Alt+Enter switches between window and fullscreen at any time.
 
 ![Video Options](docs/screenshots/video_options.png)
 
 ### Game Options
-Restroom > **Game Options** switches the widescreen art mod on or off and sets what uses it: widescreen menus, upscaled sprites and moving clouds.
-It also has the course map and Change clothes.
+Restroom > **Game Options** has the number of opponents, the course map and Change clothes, and shows whether the widescreen art mod is installed (everything in it is
+always on when it is).
 
 ![Game Options](docs/screenshots/game_options.png)
 
 ### Rider colours
-Restroom > Game Options > Change clothes: recolour your rider's helmet, jacket, stripes, trousers and bike, with a live preview from four sides
-(hardware renderer).
+Restroom > Game Options > Change clothes: recolour your rider's helmet, jacket, stripes, trousers and bike, with a live preview from four sides.
 
 ![Rider colours](docs/screenshots/rider_colours.png)
 
@@ -69,6 +113,15 @@ The **Jukebox** plays any song on request, and the music videos play again (both
 ![Now Playing](docs/screenshots/now_playing.png)
 
 ### And also
+- Sharp text: the menus' and option screens' text is drawn again at your window's own resolution, in the game's fonts, instead of being scaled up
+  with the 640 x 480 picture.
+- Big Game is the only game mode: Restroom > New Game starts one at the character select (Thrash Mode is gone). The Restroom's Player Level
+  option is gone too: you move up a level by winning.
+- Opponents (Game Options): race against 1 to 50 computer riders (14 is the original field); the extra riders get names of their own
+  and random colours.
+- Custom Race (Game Mode page): draw your own road - a straight line you bend with control points (drag from the road to add, drag, right-click to
+  remove), give each segment a ramp (uphill / downhill) and a type (smooth, rolling hills, jumps, chicanes), see its elevation profile, zoom in
+  (mouse wheel) - and race it on a level 1 track's scenery.
 - Settings live in `RoadRash.cfg` next to the exe
   (an existing Road Rash registry entry is imported once).
 - An in-game save / load screen instead of the Windows file box: every save is a tile with the rider, money, level, races, bike and date,
@@ -102,7 +155,7 @@ More options:
 ```powershell
 scripts\build_inc.ps1                 # quicker rebuild: only the changed source files (-Files a.c,b.c when a header changed)
 scripts\build_quick.ps1 -NoShim       # the game only, not the DLLs
-scripts\run_new.ps1 -Renderer soft    # force a renderer for this run (gpu | soft); -Track 1..5 goes straight into a race
+scripts\run_new.ps1 -World3D on       # force True 3D (on) or Pseudo 3D (off) for this run; -Track 1..5 goes straight into a race
 ```
 
 To play from another folder, put `OpenRash.exe`, `ddraw.dll`, `dsound.dll` and `SDL3.dll` together and start the exe with your
@@ -206,7 +259,6 @@ Higher denoise looks more like a real car but starts to change it: at 0.65 the T
 ### Trying a change
 - `RR_WIDE_DIR=<folder>` loads the mod from another folder.
 - `RR_HDTEX=1` / `RR_HDSKY=1` force the upscaled textures / sky on; `RR_WIDE=off` turns the whole mod off.
-- The upscaled sprites, textures and skies are drawn only by the GPU renderer.
 - A picture with the wrong size is skipped and logged.
 
 ### Scripts (local `analysis\` folder, not in this repository)

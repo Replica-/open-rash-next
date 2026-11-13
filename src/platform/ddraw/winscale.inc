@@ -13,29 +13,30 @@
  */
 enum { VM_WINDOW, VM_BORDERLESS, VM_EXCLUSIVE };
 enum { VS_ASPECT, VS_INTEGER, VS_STRETCH, VS_WIDE };   /* VS_WIDE = Keep 4:3 + the menu pictures' widescreen side strips where there are some (menuwide.inc) */
-enum { RV_WIDE, RV_BARS, RV_STRETCH };   /* race view: Widescreen (wider field of view, picture keeps its shape; GPU renderer only) / Black bars (4:3 picture) / Stretched (4:3 picture fills the window) */
-enum { VR_SOFT, VR_GPU };              /* renderer of the race world: the original software rasteriser / the GPU (gpuscene.inc) */
+enum { RV_WIDE, RV_BARS, RV_STRETCH };   /* race view: Widescreen (wider field of view, picture keeps its shape) / Black bars (4:3 picture) / Stretched (4:3 picture fills the window) */
 enum { DD_NORMAL = 33 };   /* the game's view: 33 road segments (Pseudo 3D always; test switch RR_DRAW_DIST=<n> on the game side, src\render\road_view_tables.c) */
 #define W3_FAR 150   /* True 3D: the 3D world drawn 150 segments ahead (Far distance) */
-typedef struct VidCfg { int mode, winW, winH, fsW, fsH, fsHz, scale, filter, vsync, fsPref, race, renderer, map, fps, true3d, clouds, hdtex, songs, videos, mods, widemenu, segpos; } VidCfg;   /* winW/winH 0 = automatic size; fsPref = the fullscreen kind Alt+Enter switches to */
-static VidCfg g_vid = { VM_WINDOW, 0,0, 0,0,0, VS_ASPECT, 0, 0, VM_BORDERLESS, RV_WIDE, VR_GPU, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0 };   /* map / fps = course map, FPS counter; true3d = Video Options > Race 3D (0 = Pseudo 3D); hdtex = slightly upscaled sprites (hdtex.inc); songs = Sound Mix > Music (musicbox.inc, default off); videos = Video Options > Videos (videoplay.inc, default off);
-   mods = Mods > Widescreen mod (the whole mod\widescreen folder, menuwide.inc VidHdArt; default on); widemenu = Game Options > Widescreen menus (Keep 4:3 menus with the pictures' side strips = VS_WIDE; default on); segpos = Video Options > Segment tracker (rrddraw.c ShowRoadPos, default off) */
+typedef struct VidCfg { int mode, winW, winH, fsW, fsH, fsHz, scale, filter, vsync, fsPref, race, map, fps, true3d, songs, videos, segpos, opp, tod, weather, dayMin, fog, road, weapon; } VidCfg;   /* winW/winH 0 = automatic size; fsPref = the fullscreen kind Alt+Enter switches to */
+static VidCfg g_vid = { VM_WINDOW, 0,0, 0,0,0, VS_ASPECT, 0, 0, VM_BORDERLESS, RV_WIDE, 1, 1, 0, 0, 0, 0, 14, 0, 0, 5, 0 };   /* map / fps = course map, FPS counter; true3d = Video Options > Race 3D (0 = Pseudo 3D); songs = Sound Mix > Music (musicbox.inc, default off); videos = Video Options > Videos (videoplay.inc, default off);
+   tod / weather / dayMin = True 3D time of day (0 Cycle, 1 Dawn, 2 Day, 3 Sunset, 4 Night), weather (0 Clear, 1 Rain, 2 Snow), race minutes per day of the Cycle (weather.inc; the race's Esc pause);
+   segpos = Video Options > Segment tracker (rrddraw.c ShowRoadPos, default off).  scale / race are not options (2026-11-11, user): widescreen is automatic - menus Keep 4:3 with the
+   widescreen mod's side strips (VS_WIDE) whenever the mod folder is there, races widescreen whenever the window is wider than 4:3 (RR_RaceBegin); only the test switches
+   RR_MENUSCALE / RR_SCALE / RR_RACEVIEW change them.  The widescreen mod, its upscaled sprites, HD skies and clouds are always on when the folder is there (VidHdArt) */
 static int GpuWanted(void);            /* gpuscene.inc: the race world will be drawn by the GPU */
 static int VidHdArt(void);            /* menuwide.inc: a widescreen art folder (mod\widescreen) was found - the upscaled sprites and the clouds need it */
-/* Video Options > Race 3D (GPU renderer only; software is always Pseudo 3D): True 3D = the race world as a real 3D world (world3d.inc) at Far distance, no road
+/* Video Options > Race 3D: True 3D = the race world as a real 3D world (world3d.inc) at Far distance, no road
    forks; Pseudo 3D = the game's own projection redrawn by the GPU (gpuscene.inc) at the original distance, with the game's forks.  The GPU extras (upscaled
    sprites, clouds, widescreen, course map ...) work with either.  Test switch RR_WORLD3D=0 / 1 overrides */
 static int W3Setting(void){ const char *e=getenv("RR_WORLD3D"); return (e && *e) ? *e!='0' : g_vid.true3d; }
-static int VidGpuInUse(void){ const char *e=getenv("RR_RENDERER"); if(e && !_stricmp(e,"soft")) return 0; if(e && !_stricmp(e,"gpu")) return 1; return g_vid.renderer==VR_GPU; }   /* the renderer races will really use (a launch can force it) */
 /* the game asks for the view distance at the start of every race (src\render\road_view_tables.c): always the original (True 3D draws its own distance) */
 __declspec(dllexport) int __stdcall RR_DrawDistance(void){ return DD_NORMAL; }
 static int g_inRace, g_seenRace, g_wideW;   /* g_inRace: a race is being shown (race view applies); g_wideW: width of the widened frame (0 = normal 640) */
 static void VcTarget(int *tw,int *th);
-/* the scaling rule in force now: menus use the Scaling option, races the Race view option */
+/* the scaling rule in force now: menus Keep 4:3 (with the widescreen strips when the mod is there), races widescreen (a frame wider than 640 when the window is) */
 static int VidScale(void)
-{   if(g_inRace){ if(g_vid.race==RV_STRETCH) return VS_STRETCH; if(g_vid.race==RV_WIDE || g_vid.scale==VS_STRETCH || g_vid.scale==VS_WIDE) return VS_ASPECT; }   /* Widescreen with the software renderer = black bars */
+{   if(g_inRace){ if(g_vid.race==RV_STRETCH) return VS_STRETCH; if(g_vid.race==RV_WIDE || g_vid.scale==VS_STRETCH || g_vid.scale==VS_WIDE) return VS_ASPECT; }
     { static int env = -2; if (env == -2) { const char *e = getenv("RR_SCALE"); env = (e && *e >= '0' && *e <= '3') ? *e - '0' : -1; } if (env >= 0) return env; }   /* test switch RR_SCALE=0..3 (tests do not read video.ini): 3 = Widescreen */
-    return (g_vid.scale==VS_ASPECT && g_vid.widemenu && VidHdArt()) ? VS_WIDE : g_vid.scale; }   /* (Mods > Widescreen menus) */
+    return (g_vid.scale==VS_ASPECT && VidHdArt()) ? VS_WIDE : g_vid.scale; }
 static int g_vidPersist, g_vidLegacy, g_vidExcl, g_vidCur=-1, g_vidHaveWinPos; static RECT g_vidWinPos; static char g_vidErr[96];
 static float g_wsSx=1.0f, g_wsSy=1.0f; static int g_wsOffX, g_wsOffY, g_wsCw=640, g_wsCh=480, g_wsDirty=1, g_wsAppF=-1, g_wsAppV=-1;
 #define VID_STYLE_WIN (WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS)
@@ -46,8 +47,8 @@ static int VidClamp(int v,int lo,int hi){ return v<lo?lo:(v>hi?hi:v); }
 static void VidSanitize(void)
 {   { const char *e=getenv("RR_DISPLAY"); if(e && *e) g_vid.mode=atoi(e); }   /* override of Display mode (0 window, 1 borderless fullscreen, 2 exclusive): the recording
                                                                               (launch.json "Play (debugger) + record video") needs 1 - window capture cannot follow exclusive fullscreen */
-    g_vid.mode=VidClamp(g_vid.mode,VM_WINDOW,VM_EXCLUSIVE); if(g_vid.scale==VS_WIDE){ g_vid.scale=VS_ASPECT; g_vid.widemenu=1; } g_vid.scale=VidClamp(g_vid.scale,VS_ASPECT,VS_STRETCH); g_vid.filter=VidClamp(g_vid.filter,0,1); g_vid.vsync=VidClamp(g_vid.vsync,0,1); g_vid.race=VidClamp(g_vid.race,RV_WIDE,RV_STRETCH); g_vid.renderer=VidClamp(g_vid.renderer,VR_SOFT,VR_GPU);
-    g_vid.map=VidClamp(g_vid.map,0,1); g_vid.fps=VidClamp(g_vid.fps,0,1); g_vid.true3d=VidClamp(g_vid.true3d,0,1); g_vid.clouds=VidClamp(g_vid.clouds,0,1); g_vid.hdtex=VidClamp(g_vid.hdtex,0,1); g_vid.songs=VidClamp(g_vid.songs,0,1); g_vid.videos=VidClamp(g_vid.videos,0,1); g_vid.mods=VidClamp(g_vid.mods,0,1); g_vid.widemenu=VidClamp(g_vid.widemenu,0,1); g_vid.segpos=VidClamp(g_vid.segpos,0,1);    g_vid.fsPref=(g_vid.fsPref==VM_EXCLUSIVE)?VM_EXCLUSIVE:VM_BORDERLESS;   /* (an older video.ini: scaling=3 = widescreen menus) */
+    g_vid.mode=VidClamp(g_vid.mode,VM_WINDOW,VM_EXCLUSIVE); g_vid.filter=VidClamp(g_vid.filter,0,1); g_vid.vsync=VidClamp(g_vid.vsync,0,1);
+    g_vid.map=VidClamp(g_vid.map,0,1); g_vid.fps=VidClamp(g_vid.fps,0,1); g_vid.true3d=VidClamp(g_vid.true3d,0,1); g_vid.songs=VidClamp(g_vid.songs,0,1); g_vid.videos=VidClamp(g_vid.videos,0,1); g_vid.segpos=VidClamp(g_vid.segpos,0,1); g_vid.opp=VidClamp(g_vid.opp,1,50); g_vid.tod=VidClamp(g_vid.tod,0,4); g_vid.weather=VidClamp(g_vid.weather,0,4); g_vid.dayMin=VidClamp(g_vid.dayMin,1,120); g_vid.fog=VidClamp(g_vid.fog,0,7); g_vid.road=VidClamp(g_vid.road,0,1); g_vid.weapon=VidClamp(g_vid.weapon,0,31);    g_vid.fsPref=(g_vid.fsPref==VM_EXCLUSIVE)?VM_EXCLUSIVE:VM_BORDERLESS;
     if(g_vid.winW<320 || g_vid.winH<240 || g_vid.winW>16384 || g_vid.winH>16384){ g_vid.winW=0; g_vid.winH=0; }
     if(g_vid.fsW<320 || g_vid.fsH<240 || g_vid.fsW>16384 || g_vid.fsH>16384){ g_vid.fsW=0; g_vid.fsH=0; g_vid.fsHz=0; }
     if(g_vid.fsHz<0 || g_vid.fsHz>1000) g_vid.fsHz=0; }
@@ -59,7 +60,7 @@ static void VidLoad(void)
         while(*k==' '||*k=='\t') k++; e=k+strlen(k); while(e>k && (e[-1]==' '||e[-1]=='\t')) *--e=0;
         if(!_stricmp(k,"mode")) g_vid.mode=v; else if(!_stricmp(k,"window_width")) g_vid.winW=v; else if(!_stricmp(k,"window_height")) g_vid.winH=v;
         else if(!_stricmp(k,"fullscreen_width")) g_vid.fsW=v; else if(!_stricmp(k,"fullscreen_height")) g_vid.fsH=v; else if(!_stricmp(k,"fullscreen_hz")) g_vid.fsHz=v;
-        else if(!_stricmp(k,"scaling")) g_vid.scale=v; else if(!_stricmp(k,"filter")) g_vid.filter=v; else if(!_stricmp(k,"vsync")) g_vid.vsync=v; else if(!_stricmp(k,"fullscreen_kind")) g_vid.fsPref=v; else if(!_stricmp(k,"race_view")) g_vid.race=v; else if(!_stricmp(k,"renderer")) g_vid.renderer=v; else if(!_stricmp(k,"course_map")) g_vid.map=v; else if(!_stricmp(k,"fps_counter")) g_vid.fps=v; else if(!_stricmp(k,"true_3d")) g_vid.true3d=v; else if(!_stricmp(k,"clouds")) g_vid.clouds=v; else if(!_stricmp(k,"sprites")) g_vid.hdtex=v; else if(!_stricmp(k,"music_songs")) g_vid.songs=v; else if(!_stricmp(k,"videos")) g_vid.videos=v; else if(!_stricmp(k,"widescreen_mod")) g_vid.mods=v; else if(!_stricmp(k,"widescreen_menus")) g_vid.widemenu=v; else if(!_stricmp(k,"segment_tracker")) g_vid.segpos=v; }
+        else if(!_stricmp(k,"filter")) g_vid.filter=v; else if(!_stricmp(k,"vsync")) g_vid.vsync=v; else if(!_stricmp(k,"fullscreen_kind")) g_vid.fsPref=v; else if(!_stricmp(k,"course_map")) g_vid.map=v; else if(!_stricmp(k,"fps_counter")) g_vid.fps=v; else if(!_stricmp(k,"true_3d")) g_vid.true3d=v; else if(!_stricmp(k,"music_songs")) g_vid.songs=v; else if(!_stricmp(k,"videos")) g_vid.videos=v; else if(!_stricmp(k,"segment_tracker")) g_vid.segpos=v; else if(!_stricmp(k,"opponents")) g_vid.opp=v; else if(!_stricmp(k,"time_of_day")) g_vid.tod=v; else if(!_stricmp(k,"weather")) g_vid.weather=v; else if(!_stricmp(k,"day_minutes")) g_vid.dayMin=v; else if(!_stricmp(k,"fog")) g_vid.fog=v; else if(!_stricmp(k,"road_texture")) g_vid.road=v; else if(!_stricmp(k,"weapon")) g_vid.weapon=v; }   /* (an older video.ini's scaling / race_view / clouds / sprites / widescreen_mod / widescreen_menus are ignored: not options any more) */
     fclose(f); VidSanitize(); }
 static void VidSave(void)
 {   FILE *f; if(!g_vidPersist) return; f=fopen("video.ini","w"); if(!f) return;
@@ -68,14 +69,15 @@ static void VidSave(void)
     fprintf(f,"# window size in pixels (0 = automatic: the largest whole multiple of 640x480 that fits the desktop)\nwindow_width=%d\nwindow_height=%d\n",g_vid.winW,g_vid.winH);
     fprintf(f,"# fullscreen display mode (mode 2); 0 = the desktop's current mode\nfullscreen_width=%d\nfullscreen_height=%d\nfullscreen_hz=%d\n",g_vid.fsW,g_vid.fsH,g_vid.fsHz);
     fprintf(f,"# what Alt+Enter / F11 switch to: 1 = borderless, 2 = fullscreen\nfullscreen_kind=%d\n",g_vid.fsPref);
-    fprintf(f,"# menu scaling: 0 = keep 4:3, 1 = whole pixels only, 2 = stretch to fill (widescreen menus: widescreen_menus below)\nscaling=%d\n# filter: 0 = sharp pixels, 1 = smooth\nfilter=%d\n# vsync: 0 / 1\nvsync=%d\n",g_vid.scale,g_vid.filter,g_vid.vsync);
-    fprintf(f,"# renderer of the race world: 0 = software (the original), 1 = GPU (window resolution, smooth textures, widescreen)\nrenderer=%d\n# GPU renderer extras: course map on the right of the race view, frames-per-second counter (0 / 1)\ncourse_map=%d\nfps_counter=%d\n# GPU races: 0 = Pseudo 3D (the game's own view, original distance, road forks), 1 = True 3D (a real 3D world, far distance, no road forks)\ntrue_3d=%d\n# GPU races: moving clouds drawn over the sky (1) or none (0)\nclouds=%d\n# GPU races: sprites, textures and skies slightly upscaled (widescreen\\hd\\..., 1) or the original pictures (0); riders always original\nsprites=%d\n",g_vid.renderer,g_vid.map,g_vid.fps,g_vid.true3d,g_vid.clouds,g_vid.hdtex);
-    fprintf(f,"# race view: 0 = widescreen (GPU renderer only: wider field of view, no stretching), 1 = black bars (4:3), 2 = stretched\nrace_view=%d\n",g_vid.race);
+    fprintf(f,"# filter: 0 = sharp pixels, 1 = smooth\nfilter=%d\n# vsync: 0 / 1\nvsync=%d\n",g_vid.filter,g_vid.vsync);
+    fprintf(f,"# race extras: course map on the right of the race view, frames-per-second counter (0 / 1)\ncourse_map=%d\nfps_counter=%d\n# races: 0 = Pseudo 3D (the game's own view, original distance, road forks), 1 = True 3D (a real 3D world, far distance, no road forks)\ntrue_3d=%d\n",g_vid.map,g_vid.fps,g_vid.true3d);
     fprintf(f,"# Sound Mix > Music: 0 = the game's own music, 1 = random songs from AUDIO\\MUSIC (*.RRA) in menus and races, with a now-playing title\nmusic_songs=%d\n",g_vid.songs);
     fprintf(f,"# Video Options > Videos: 1 = play the game's videos (VIDEO_UP\\*.mp4), 0 = skip them all\nvideos=%d\n",g_vid.videos);
-    fprintf(f,"# Restroom > Game Options > Widescreen mod: 1 = use the mod\\widescreen folder (menu side strips, upscaled sprites, HD skies, clouds), 0 = the game without it\nwidescreen_mod=%d\n",g_vid.mods);
-    fprintf(f,"# Restroom > Game Options > Widescreen menus: 1 = menus (menu scaling Keep 4:3) get the pictures' widescreen side strips, 0 = black bars\nwidescreen_menus=%d\n",g_vid.widemenu);
-    fprintf(f,"# Video Options > Segment tracker: 1 = the course position (track, road segment, lateral position) top left during races, 0 = off\nsegment_tracker=%d\n",g_vid.segpos);    fclose(f); }
+    fprintf(f,"# Video Options > Segment tracker: 1 = the course position (track, road segment, lateral position) top left during races, 0 = off\nsegment_tracker=%d\n",g_vid.segpos);
+    fprintf(f,"# Restroom > Game Options > Opponents: the computer riders in a race, 1..50 (14 = the original field)\nopponents=%d\n",g_vid.opp);
+    fprintf(f,"# True 3D races (Esc in a race): time_of_day 0 = cycle, 1 = dawn, 2 = day, 3 = sunset, 4 = night; weather 0 = clear, 1 = rain, 2 = snow, 3 = heavy rain, 4 = heavy snow; day_minutes = race minutes per day of the cycle; fog 0 = auto (with the weather), 1 = off, 2 = light, 3 = heavy, 4 = haze, 5 = medium, 6 = pea soup, 7 = ground mist\ntime_of_day=%d\nweather=%d\nday_minutes=%d\nfog=%d\n# road_texture 0 = the course's own road, 1 = new asphalt (a sheen in the sun)\nroad_texture=%d\n# weapon 0 = the game's own, 1 = hammer, 2.. = the pictures in mod\\weapons (alphabetical)\nweapon=%d\n",g_vid.tod,g_vid.weather,g_vid.dayMin,g_vid.fog,g_vid.road,g_vid.weapon);    fclose(f); }
+/* the opponents of the next race (src\race\rider_slots.c; Game Options > Opponents) */
+__declspec(dllexport) int __stdcall RR_Opponents(void){ return g_vid.opp; }
 
 /* ---------------------------------------------------------------- window modes */
 static int VidMonitor(MONITORINFOEXA *mi)
@@ -143,6 +145,12 @@ static void MsgFramePos(const MSG *m,int *x,int *y){ POINT p; p.x=(short)LOWORD(
 /* a button press: a quick second click arrives as ...BUTTONDBLCLK (the game's windows have CS_DBLCLKS) and must count as a click too */
 #define MSG_LDOWN(m) ((m).message==WM_LBUTTONDOWN || (m).message==WM_LBUTTONDBLCLK)
 #define MSG_RDOWN(m) ((m).message==WM_RBUTTONDOWN || (m).message==WM_RBUTTONDBLCLK)
+/* the shim's own screens act on a button press: before one closes, wait for the release (at most 2 s) and drop the mouse messages still queued, so the
+   release does not reach the game's menu button under the cursor (a click on Done would open the Restroom item there again) */
+static void ModalEatClick(void)
+{   MSG m; DWORD t0=GetTickCount();
+    while(((GetAsyncKeyState(VK_LBUTTON)|GetAsyncKeyState(VK_RBUTTON))&0x8000) && GetTickCount()-t0<2000) Sleep(10);
+    while(PeekMessageA(&m,NULL,WM_MOUSEFIRST,WM_MOUSELAST,PM_REMOVE)) {} }
 static void WsApplyRenderer(void)
 {   int sc=VidScale(), integer=(sc==VS_INTEGER && g_wsSx>=1.0f);
     /* SDL3: one logical presentation mode replaces SDL2's logical size + integer-scale flag */

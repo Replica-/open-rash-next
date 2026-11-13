@@ -1,9 +1,9 @@
-/* Rider colours (included by rrddraw.c before videocfg.inc): hardware mode only.  Restroom > Game Options > Change clothes opens this screen: the player's rider
+/* Rider colours (included by rrddraw.c before videocfg.inc).  Restroom > Game Options > Change clothes opens this screen: the player's rider
  * is recoloured per body part by borrowing that part's shades from one of the game's 15 colour schemes (the remap rows of tbl_riderColourRemap, analysis\
  * RIDER_COLOURS.md: a sprite byte = brightness (index >> 5) * 32 + slot (index & 31); helmet = slots 2..5, jacket 8..13, stripes 14..15, trousers 16..19, bike 20..25: read off tools/rider_slots.ps1).
  * Borrowing whole slot groups keeps the original shading.  Saved in rider_colours.ini (cwd, not in tests).  The game asks RR_RiderRow at every race start
- * (race/rider.c RiderColoursApply) and puts the returned row in for the player's row - only when the race uses the GPU renderer, so software mode is
- * always the original.  The game hands the original rows over at start-up (RR_SetRiderTable). ---- */
+ * (race/rider.c RiderColoursApply) and puts the returned row in for the player's row (tests: never a custom row,
+ * so always the original).  The game hands the original rows over at start-up (RR_SetRiderTable). ---- */
 #define RC_PARTS 5
 #define RC_OWN (-1)
 #define RC_CUSTOM 15                                          /* g_rcPart value: the part's own colour g_rcRGB (true colour, GPU renderer) */
@@ -33,7 +33,7 @@ static void RcLoad(void)
 static void RcSave(void)
 {   FILE *f; int i;
     if (!g_vidPersist || !(f = fopen("rider_colours.ini", "w"))) return;
-    fprintf(f, "# Rider colours (Restroom > Game Options > Change clothes, GPU renderer only): per body part -1 = the rider's own, 0..14 = that colour scheme's shades,\n# 15 = the part's own colour <part>_rgb (RRGGBB; the original shading is kept: each pixel keeps its lightness and takes the colour's hue / saturation)\n");
+    fprintf(f, "# Rider colours (Restroom > Game Options > Change clothes): per body part -1 = the rider's own, 0..14 = that colour scheme's shades,\n# 15 = the part's own colour <part>_rgb (RRGGBB; the original shading is kept: each pixel keeps its lightness and takes the colour's hue / saturation)\n");
     for (i = 0; i < RC_PARTS; i++) fprintf(f, "%s=%d\n%s_rgb=%06x\n", g_rcKey[i], g_rcPart[i], g_rcKey[i], g_rcRGB[i]);
     fprintf(f, "# the player's colour scheme in the last race (the editor's preview)\nlast_row=%d\n", g_rcRow);
     fclose(f); }
@@ -71,17 +71,19 @@ static void RcLut(int row, unsigned *lut)
         avg /= n; if (avg < 0.1) avg = 0.1; if (avg > 0.9) avg = 0.9; if (L < 0.08) L = 0.08; if (L > 0.92) L = 0.92;
         G[p] = log(L) / log(avg); }
     for (t = 0; t < 256; t++) { int slot = t & 31; lut[t] = g_rcPal[sch[t]];
+        if (slot == 8 && (t >> 5) >= 3) continue;   /* (slot 8 in brightness blocks 3..7 is the tail lamp's rim - red in every row - not the jacket: analysis\tools\rider_lamps.ps1) */
         for (p = 0; p < RC_PARTS; p++) if (g_rcPart[p] == RC_CUSTOM && slot >= g_rcLo[p] && slot <= g_rcHi[p]) {
             double h, s2, l; RcToHSL(g_rcPal[g_rcTab[row * 256 + t]], &h, &s2, &l); lut[t] = RcFromHSL(H[p], S[p], pow(l, G[p])); } } }
 
 __declspec(dllexport) void __stdcall RR_SetRiderTable(const unsigned char *t) { g_rcTab = t; }
 /* the game, at a race start: the player's colour row -> 0 = the original, 1 + out = the row to use (schemes only), 2 = true colour: the player's
    tiles reach the GPU as template indices (RRG_TRUECOL) and are coloured from RcTrueLut */
-static DWORD g_rcTrue[256]; static int g_rcTrueOk;
+static DWORD g_rcTrue[256], g_rcOrig[256]; static int g_rcTrueOk;   /* g_rcOrig: the same template indices in the player's original colours (no custom parts) */
 __declspec(dllexport) int __stdcall RR_RiderRow(int row, unsigned char *out)
 {   if (!g_rcLoaded) RcLoad();
     g_rcTrueOk = 0;
     if (!g_rcTab || row < 0 || row >= 15) return 0;
+    if (RcAnyCustom()) { int i; RcAssets(); for (i = 0; i < 256; i++) g_rcOrig[i] = g_rcPal[g_rcTab[row * 256 + i]]; }
     if (row != g_rcRow && g_vidPersist) { g_rcRow = row; RcSave(); }
     if (!GpuWanted() || !RcAny()) return 0;
     if (!RcAnyCustom()) { RcCompose(row, out); return 1; }
@@ -89,6 +91,11 @@ __declspec(dllexport) int __stdcall RR_RiderRow(int row, unsigned char *out)
         for (i = 0; i < 256; i++) g_rcTrue[i] = 0xFF000000u | lut[i];
         g_rcTrueOk = 1; }
     return 2; }
+/* world3d.inc W3RedSpots: 0x00RRGGBB per template index in the colours the player's row has without the custom parts (the tail lamp is found in those:
+   it is never recoloured, but a custom red helmet / orange jacket would look like it); NULL = not in true-colour mode */
+static const DWORD *RcOrigLut(void) { return g_rcTrueOk ? g_rcOrig : NULL; }
+/* world3d.inc W3RedSpots: the race palette as stored in the game's files (0x00RRGGBB) - not the live one, which fades in and out; NULL = not found */
+static const DWORD *RcRacePal(void) { RcAssets(); return g_rcPalOk ? g_rcPal : NULL; }
 /* gpuscene.inc GpuTexFor: ARGB per template index for an RRG_TRUECOL tile, darkened with the live palette during fades (textures are remade when the
    palette changes); NULL = none */
 static const DWORD *RcTrueLut(void)
@@ -214,7 +221,7 @@ static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
     SelectObject(dc, fSm); IcBox(dc, 18, 394, 614, 48, RGB(16, 16, 34), RGB(90, 90, 130), 8);
     IcText(dc, 28, 400, pc >= 0 ? "Palette: arrows try a colour on the rider, Enter keeps it, Esc goes back to what it was.  The shading of the clothes stays."
                                 : "Left/Right: own colours, one of the game's 15 schemes or a custom colour.  Enter or click: the palette.  Outfit: ready-made sets.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
-    IcText(dc, 28, 417, g_rcRow >= 0 ? "GPU renderer only; applies from the next race.  Preview: your colour scheme of the last race." : "GPU renderer only; applies from the next race.  The preview uses scheme 1 until you have raced.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
+    IcText(dc, 28, 417, g_rcRow >= 0 ? "Applies from the next race.  Preview: your colour scheme of the last race." : "Applies from the next race.  The preview uses scheme 1 until you have raced.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
     IcText(dc, 18, 462, pc >= 0 ? "Arrows: colour   Enter / click: keep   Esc: back" : "Up/Down: part   Left/Right: change   Enter: palette (parts), Outfit / Done   Esc: done", RGB(150, 150, 175), TA_LEFT | TA_TOP);
     SelectObject(dc, old); DeleteObject(title); DeleteObject(rowf); DeleteObject(fSm); DeleteObject(fMid); GdiFlush(); }
 static int RcRowAt(int x, int y) { int i; if (x < 0 || x >= 400) return -1; for (i = 0; i < RC_ROWS; i++) { int yy = RcRowY(i); if (y >= yy && y < yy + RC_DY - 6) return i; } return -1; }
@@ -265,4 +272,4 @@ __declspec(dllexport) int __stdcall RR_RiderColours(void)
     g_modalSurf = prevModal; g_lastShown = g_primary; free(base.bits); FreeSurf(tmp);
     if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
     if (g_primary && !prevModal) Present(g_primary);   /* (back to the screen it was opened from) */
-    LOG("rider colours: closed"); return 1; }
+    ModalEatClick(); LOG("rider colours: closed"); return 1; }

@@ -1389,6 +1389,7 @@ void __fastcall rr_RoadRingBuild(int *course, int start)
     unsigned i, next;
     int pos, n, t;
 
+    { void rr_CustomCoursePatch(int *course); rr_CustomCoursePatch(course); }   /* a custom race: the editor's road into the course (ui\custom_race.c) */
     g_courseLength = 0;
     g_roadScene = course;
     RingSelect(); ring = rr_ring;

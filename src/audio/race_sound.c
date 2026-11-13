@@ -243,6 +243,24 @@ void __stdcall rr_SoundsStopAll(void)
         } while (e < &g_musicPlaying_as_int);
     }
 }
+/* the race's Esc prompt answered "ride on" (race_session.c rr_PromptKey): play again what rr_SoundsStopAll stopped (slot 0x30 = Play, with the entry's
+   own flags at +0xc: the engines loop), unmark it.  Was a dead stub (rr_dead_UnusedSoundsPauseAll): the engine stayed silent after the pause until
+   the rider got back on his bike */
+RR_REPLACE_STD(UnusedSoundsPauseAll, rr_SoundsResumeAll, 0);
+void __stdcall rr_SoundsResumeAll(void)
+{
+    if (g_raceSoundOn != 0) {
+        int *e = &rec_sndPlayerEngine.g_sndPlayerEngine;
+        do {
+            if (*e && I32(*e, 0x14) != 0) {
+                int *obj = *(int **)(*e + 0x24);
+                ((int (__stdcall *)(int *, int, int, int))*(void **)(*obj + 0x30))(obj, 0, 0, I32(*e, 0xc));
+                I32(*e, 0x14) = 0;
+            }
+            e++;
+        } while (e < &g_musicPlaying_as_int);
+    }
+}
 
 static const int g_volCurve[101] = {
     

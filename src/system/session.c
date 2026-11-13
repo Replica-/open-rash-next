@@ -88,6 +88,7 @@ int __cdecl rr_GameQuit(void)
         return 0xb;
     }
     ((unsigned char *)&g_playerBike_as_int)[2] = (*(char *)&rec_sndPlayerEngine.g_lapIndex);   /* network flags are compiled out */
+    { int rr_CustomRaceEnd(void); if (rr_CustomRaceEnd()) return 9; }   /* a custom race (ui\custom_race.c): back to the Game Mode page, the game as it was */
     if (g_gameMode == 0) return 9;
     if (rec_sndPlayerEngine.g_raceState == 2) return 0x1e;
     if (rec_sndPlayerEngine.g_raceState == 3) return 0x1f;

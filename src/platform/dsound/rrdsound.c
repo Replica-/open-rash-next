@@ -46,8 +46,45 @@ static double MusicGain(void)
     if(t[0*24+20] || t[4*24+20]) return 0.0;
     mv=*(const int*)(t+0*24+16); gv=*(const int*)(t+4*24+16); if(mv<0) mv=0; if(mv>100) mv=100; if(gv<0) gv=0; if(gv>100) gv=100;
     return (mv/100.0)*(gv/100.0); }
+/* weather ambience of True 3D races (the ddraw shim's weather.inc): RR_Ambience(kind 0 none / 1 rain / 2 snow, volume 0..1) and RR_Thunder(strength) after a
+ * lightning flash.  Synthesised here (no sound files): rain = band-limited hiss + random drop ticks, snow = gusting wind (filtered brown noise), thunder =
+ * a long low rumble.  Faded in / out; scaled by the Sound Mix master volume.  Nothing plays unless the shim asks (Pseudo 3D, tests: never). */
+static volatile int g_ambKind; static volatile float g_ambVol, g_ambThunder;
+__declspec(dllexport) void __stdcall RR_Ambience(int kind,float vol){ g_ambKind=kind; g_ambVol=vol<0?0:(vol>1?1:vol); }
+__declspec(dllexport) void __stdcall RR_Thunder(float strength){ if(strength>g_ambThunder) g_ambThunder=strength; }
+static volatile float g_ambSplash, g_ambSplashPan=0.5f;   /* a tyre through a puddle (RR_Splash: strength 0..1, pan 0 left .. 1 right) */
+__declspec(dllexport) void __stdcall RR_Splash(float strength,float pan){ if(strength>g_ambSplash){ g_ambSplash=strength>1?1:strength; g_ambSplashPan=pan<0?0:(pan>1?1:pan); } }
+static double MasterGain(void)
+{   const BYTE *t=g_mixTab; int gv; if(!t) return 1.0; if(t[4*24+20]) return 0.0; gv=*(const int*)(t+4*24+16); if(gv<0) gv=0; if(gv>100) gv=100; return gv/100.0; }
+static void AmbMix(float *acc,int frames)
+{   static unsigned s=12345; static float lvl[3], lpL, lpR, lp2L, lp2R, drop, dropPan, br[2], bl[2], gust, gustT, th, thLp, thLp2, thEnv; static int curKind;
+    float want[3]; double mg=MasterGain(); int i, k; static float spEnv, spPan, spA, spB, spC;
+    want[0]=0; want[1]=g_ambKind==1?g_ambVol:0; want[2]=g_ambKind==2?g_ambVol:0; (void)curKind;
+    if(g_ambThunder>0){ thEnv+=g_ambThunder; if(thEnv>1.2f) thEnv=1.2f; g_ambThunder=0; }
+    if(g_ambSplash>0){ if(g_ambSplash>spEnv) spEnv=g_ambSplash; spPan=g_ambSplashPan; g_ambSplash=0; }
+    if(lvl[1]<0.0005f && lvl[2]<0.0005f && want[1]==0 && want[2]==0 && thEnv<0.001f && spEnv<0.001f) return;
+    for(i=0;i<frames;i++){ float wl, wr, l=0, r=0;
+        for(k=1;k<3;k++) lvl[k]+=(want[k]-lvl[k])*0.00004f;   /* ~0.5 s fades */
+        s=s*1664525u+1013904223u; wl=((s>>9)&0xffff)/32768.0f-1; s=s*1664525u+1013904223u; wr=((s>>9)&0xffff)/32768.0f-1;
+        if(lvl[1]>0.0005f){   /* rain: hiss between ~300 Hz and ~5 kHz, plus drops */
+            lpL+=(wl-lpL)*0.5f; lpR+=(wr-lpR)*0.5f; lp2L+=(lpL-lp2L)*0.04f; lp2R+=(lpR-lp2R)*0.04f;
+            if(((s>>7)&4095)<3){ drop=0.5f+((s>>3)&255)/400.0f; dropPan=((s>>13)&255)/255.0f; }
+            drop*=0.9965f;
+            l+=lvl[1]*((lpL-lp2L)*0.32f+wl*drop*0.10f*(1-dropPan)); r+=lvl[1]*((lpR-lp2R)*0.32f+wr*drop*0.10f*dropPan); }
+        if(lvl[2]>0.0005f){   /* snow: wind - brown noise through a soft band, slow gusts */
+            if((i&255)==0){ gustT+=256.0f/OUT_RATE; gust=0.55f+0.45f*(float)sin(gustT*0.7)*(float)sin(gustT*0.23+1.3); }
+            br[0]=br[0]*0.998f+wl*0.02f; br[1]=br[1]*0.998f+wr*0.02f; bl[0]+=(br[0]-bl[0])*0.08f; bl[1]+=(br[1]-bl[1])*0.08f;
+            l+=lvl[2]*bl[0]*1.6f*gust; r+=lvl[2]*bl[1]*1.6f*gust; }
+        if(thEnv>0.001f){   /* thunder: a low rumble that dies away over ~3 s */
+            th=th*0.999f+wl*0.03f; thLp+=(th-thLp)*0.01f; thLp2+=(thLp-thLp2)*0.02f;
+            l+=thLp2*thEnv*5.0f; r+=thLp2*thEnv*5.0f; thEnv*=0.99996f; }
+        if(spEnv>0.001f){   /* a splash: noise in a ~0.6 .. 3 kHz band, quick swell, ~0.2 s tail, with a soft low slosh */
+            spA+=(wl-spA)*0.35f; spB+=(spA-spB)*0.08f; spC+=(wr-spC)*0.004f;
+            { float v=((spA-spB)*0.9f+spC*2.5f)*spEnv; l+=v*(1.2f-spPan); r+=v*(0.2f+spPan); } spEnv*=0.99988f; }
+        acc[i*2]+=(float)(l*mg); acc[i*2+1]+=(float)(r*mg); } }
 static void MixBlock(short *out,int frames)
 {   static float acc[BLOCK*2]; Buf *b; int i; memset(acc,0,sizeof(float)*frames*2);
+    AmbMix(acc,frames);
     EnterCriticalSection(&g_cs);
     for(b=g_bufs;b;b=b->next){
         if(!b->playing||b->primary||!b->data||!b->bytes) continue;

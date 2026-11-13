@@ -135,11 +135,11 @@ void __cdecl rr_RaceSetup(void)
     g_raceResLoaded = 1;
     (&g_cheatSpeed)[0] = 0; (&g_cheatSpeed)[1] = 0; (&g_cheatSpeed)[2] = 0; (&g_cheatSpeed)[3] = 0;
     TrackResourcesLoad();
-    {   /* Video Options > Race view: the shim widens the frame for "Widescreen" (returns its width, 0 = normal 640); the projection centre / culling limit g_projWidth is the frame width in half-pixels (hi-res frames only) */
+    {   /* widescreen races (automatic when the window is wider than 4:3): the shim widens the frame (returns its width, 0 = normal 640); the projection centre / culling limit g_projWidth is the frame width in half-pixels (hi-res frames only) */
         int (__stdcall *rb)(void) = g_hiResRace ? (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("ddraw.dll"), "RR_RaceBegin") : 0;
         int ws = rb ? rb() : 0;
         rec_Controls.g_screenMidX = rec_Controls.g_projWidth = ws ? ws / 2 : 320;
-        rr_GpuRaceBegin();   /* Video Options > Renderer = GPU: the world is drawn by the shim's GPU renderer (src\render\gpu_scene.c) */
+        rr_GpuRaceBegin();   /* the world is drawn by the shim's GPU renderer (src\render\gpu_scene.c) */
     }
     obj = (int *)rr_RaceResourcesLoad();
     if (obj && obj[4] && *(int *)(obj[4] + 0xc)) AssetSystemStart(*(int *)(obj[4] + 0xc));
@@ -229,6 +229,12 @@ unsigned __fastcall rr_FramePump(int step)
                 VCALL(g_ddPalette_as_int, 0x18)(g_ddPalette_as_int, 0, 0, 0x100, &tbl_gamePalette_as_int);   /* palette SetEntries */
                 g_frameRateSet = 0;
             }
+            {   /* the shim (weather.inc RR_RaceCountdown): the start countdown's ticks left and the race palette - it shows the countdown undimmed
+                   (drawing only: the frame and the game state stay the original's) and says "3, 2, 1, Go!" */
+                static void (__stdcall *cd)(int, const void *); static int init;
+                if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; cd = m ? (void (__stdcall *)(int, const void *))GetProcAddress(m, "RR_RaceCountdown") : 0; }
+                if (cd) cd(g_frameRateSet, &tbl_gamePalette);
+            }
         } else GameTicks(step);
     }
     return (unsigned char)g_raceStartDone;
@@ -239,6 +245,7 @@ int __cdecl rr_PromptKey(int escCancels, char *fmt, ...)
 {
     MSG msg;
     int result = 4;
+    int (__stdcall *pause)(int), (__stdcall *pauseMouse)(const MSG *), pk;
     va_list ap;
     va_start(ap, fmt);
     crt_vsprintf(&(*(char *)&rec_sndPlayerEngine.g_logBuf), fmt, ap);
@@ -247,16 +254,33 @@ int __cdecl rr_PromptKey(int escCancels, char *fmt, ...)
     SoundsStopAll();
     g_raceRunning = 1;
     if (g_frameRateSet == 0) ((HRESULT (__stdcall *)(void *, int, int, int, void *))((int *)*g_ddPalette)[0x18 / 4])(g_ddPalette, 0, 0, 0x100, &(*(char *)&rec_featureAccum1.g_targetPalette));
+    {   /* the Esc prompt in a True 3D race also shows the shim's time of day / weather panel (weather.inc RR_PauseKey / RR_PauseMouse): the arrow keys
+           and the mouse change those settings there instead of answering the prompt, and its Close / Exit Race buttons answer it; Pseudo 3D (the
+           shim says no) is the original prompt */
+        static int (__stdcall *pkf)(int); static int (__stdcall *pmf)(const MSG *); static int init;
+        if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; pkf = m ? (int (__stdcall *)(int))GetProcAddress(m, "RR_PauseKey") : 0;
+                     pmf = m ? (int (__stdcall *)(const MSG *))GetProcAddress(m, "RR_PauseMouse") : 0; }
+        pause = escCancels && pkf ? pkf : 0;
+        pauseMouse = pause ? pmf : 0;
+        if (pause) pause(-1);
+    }
     do {
         GameFrameDraw();
         while (PeekMessageA(&msg, 0, 0, 0, 1)) {
+            if (pauseMouse && msg.message >= WM_MOUSEFIRST && msg.message <= WM_MOUSELAST) {   /* (2 = Close: ride on, 3 = Exit Race) */
+                pk = pauseMouse(&msg);
+                if (pk >= 2) { result = pk == 3 ? 1 : 2; break; }
+                continue;
+            }
             if (msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP) {
+                if (pause && (pk = pause((int)msg.wParam)) != 0) { if (pk >= 2) { result = pk == 3 ? 1 : 2; break; } continue; }
                 if (msg.wParam == 0x79) { if (++(*(char *)&rec_fadeFactors.g_hudMode) > 2) (*(char *)&rec_fadeFactors.g_hudMode) = 0; }
                 else if (msg.wParam == 0x2c) rec_sndPlayerEngine.g_modeChangePending = 1;
                 else { result = 2; if (escCancels) result = (msg.wParam == 0x1b) ? 1 : 2; break; }
             }
         }
     } while (result == 4);
+    if (pause) pause(-2);
     g_raceRunning = 0;
     if (result == 2) {
         if (g_frameRateSet == 0) ((HRESULT (__stdcall *)(void *, int, int, int, void *))((int *)*g_ddPalette)[0x18 / 4])(g_ddPalette, 0, 0, 0x100, &tbl_gamePalette);

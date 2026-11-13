@@ -9,15 +9,12 @@ RR_DATA(int,  g_gameMode);
 
 void __fastcall rr_GameModeSwitch(int page);
 
-/* the "Thrash Mode" / "Big Game Mode" items of the page: select the mode, return the item's target page */
-RR_REPLACE_FAST(ThrashModePick, rr_ThrashModePick, 4);
-int __fastcall rr_ThrashModePick(int item) { rr_GameModeSwitch(1); return ((int *)item)[1]; }
-
-/* switches the game mode page (1 = Thrash, 2 = Big Game): a different mode starts with a fresh character (player, level, bike record set) before the page's items are rebuilt */
+/* switches the game mode (2 = Big Game, the only one left: Thrash Mode and Mano-A-Mano are removed): a different mode starts with a fresh character
+   (player, level, bike record set) before the page's items are rebuilt */
 RR_REPLACE_FAST(GameModeSwitch, rr_GameModeSwitch, 4);
 void __fastcall rr_GameModeSwitch(int page)
 {
-    if (page == 3) return;   /* Mano-A-Mano (network mode) is removed */
+    if (page != 2) return;
     if (g_gameMode != page) {
         rec_playerRecord.g_playerLevel = 0; rec_playerRecord.g_tracksWonMask = 0; rec_playerRecord.g_playerCharacter = 0; rec_fadeFactors.g_selectedRecordSet = 0;
         SkillTablesRegenerate();
@@ -38,5 +35,6 @@ int __fastcall rr_GameModeLoad(int *item)
     return (g_gameMode == 2 && rec_playerRecord.g_playerCharacter != 0) ? g_bigGameHub : 0;
 }
 
+/* the "Big Game Mode" item of the Game Mode page: select the mode, return the item's target page */
 RR_REPLACE_FAST(BigGameModePick, rr_BigGameModePick, 4);
 int __fastcall rr_BigGameModePick(int item) { rr_GameModeSwitch(2); return ((int *)item)[1]; }

@@ -3,12 +3,12 @@
  * Walks the linked list of draw nodes (head g_drawNode; node[0] = next node, node[1] = the object to draw, node[2..5] = its texture rectangle left/top/right/bottom,
  * node[6..13] = the four screen vertices x0,y0,x1,y1,x2,y2,x3,y3, byte at +0x3d / +0x3e = mirror texture horizontally / vertically).
  * For every node: compute the screen bounding box (g_nodeBounds min x, 5d64 min y, 5d68 max x, 5d6c max y) and skip nodes completely outside the viewport; then
- *   - ordinary polygons (object flags & g_billboardFlags == 0):  QuadShapeClassify (clip/subdivide), copy the clipped quad into the quad registers g_quadVerts.. (x, y, u, v for 4 vertices;
- *     u/v are the texture rectangle corners, one pixel inside) and rasterise it with DrawQuad
- *   - sprites/billboards: QuadFill (object type 0x10 uses the node's byte at +0x3c, otherwise the object's byte at +0x2c)
+ *   - ordinary polygons (object flags & g_billboardFlags == 0):  QuadShapeClassify (clip/subdivide), then the textured polygon goes to the GPU renderer
+ *   - sprites/billboards: the same shape fix, then a flat polygon (object type 0x10 uses the node's byte at +0x3c, otherwise the object's byte at +0x2c)
  * The first call per frame locks the frame buffer surface g_frameSurface and derives the frame buffer pitch/base (g_fbPitch, g_fbOrigin).
  *
- * GPU races (rr_gpuRace, gpu_scene.c): the same walk, but each polygon goes to the GPU renderer instead of the rasterisers, with sub-pixel vertices.
+ * The world is always drawn by the GPU renderer (gpu_scene.c), with sub-pixel vertices; the original's software rasterisers are gone.  Without the shim's
+ * renderer (rr_gpuRace = 0: RR_HEADLESS=1 test runs have no window) the walk is the same, only nothing is drawn.
  */
 #include "../rr.h"
 #include "../data/records.h"
@@ -27,10 +27,6 @@ unsigned int __fastcall QuadShapeClassify(int *vertices, unsigned int flags);
 #pragma comment(linker, "/alternatename:@QuadShapeClassify@8=QuadShapeClassify")
 void __fastcall TileCopy256(int node);
 #pragma comment(linker, "/alternatename:@TileCopy256@4=TileCopy256")
-void __stdcall DrawQuad(void);
-#pragma comment(linker, "/alternatename:_DrawQuad@0=DrawQuad")
-void __fastcall QuadFill(int *vertices, unsigned char variant);
-#pragma comment(linker, "/alternatename:@QuadFill@8=QuadFill")
 
 extern int rr_gpuRace;                 /* gpu_scene.c */
 void rr_GpuSceneBegin(void);
@@ -75,7 +71,7 @@ unsigned int __stdcall rr_DrawListFlush(void)
             g_frameLocked = 1;
             rec_featureAccum1.g_fbOrigin = (int)desc.lPitch * g_fbOffsetY + (int)desc.lpSurface + g_fbOffsetX;
             if (rec_featureAccum1.g_viewportRight > (int)desc.dwWidth) rec_featureAccum1.g_viewportRight = (int)desc.dwWidth;   /* never draw past the right edge of the frame (a widescreen viewport on a frame that went back to 640) */
-            if (rr_gpuRace) rr_GpuSceneBegin();           /* GPU: the frame so far (sky) becomes the background layer */
+            if (rr_gpuRace) rr_GpuSceneBegin();           /* the frame so far (sky) becomes the background layer */
         }
         node = (*(int * *)&rec_sndPlayerEngine.g_drawNode);
         if (g_frameLocked == 0)
@@ -103,35 +99,14 @@ unsigned int __stdcall rr_DrawListFlush(void)
                                 if ((char)QuadShapeClassify(v, flags) != 0) {
                                     if ((flags & 0x2000) != 0)
                                         TileCopy256((int)(*(int * *)&rec_sndPlayerEngine.g_drawNode));
-                                    if (rr_gpuRace) {
-                                        rr_NoteQuad();
+                                    rr_NoteQuad();
+                                    if (rr_gpuRace)
                                         rr_GpuTextured((*(int * *)&rec_sndPlayerEngine.g_drawNode), v, rr_quadHv, obj, W3_WORLD((*(int * *)&rec_sndPlayerEngine.g_drawNode)), W3_DEPTH((*(int * *)&rec_sndPlayerEngine.g_drawNode)), W3_OBJ((*(int * *)&rec_sndPlayerEngine.g_drawNode)));
-                                    } else {
-                                        short *q = &rec_sndPlayerEngine.g_quadVerts;
-                                        char mirrorX = *((char *)(*(int * *)&rec_sndPlayerEngine.g_drawNode) + 0x3d);
-                                        char mirrorY = *((char *)(*(int * *)&rec_sndPlayerEngine.g_drawNode) + 0x3e);
-                                        q[0]  = (short)v[0];  q[1]  = (short)node[7];
-                                        q[2]  = (short)(mirrorX == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[2] + 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[4] - 1);
-                                        q[3]  = (short)(mirrorY == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[3] + 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[5] - 1);
-                                        q[4]  = (short)node[8];  q[5]  = (short)node[9];
-                                        q[6]  = (short)(mirrorX == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[4] - 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[2] + 1);
-                                        q[7]  = (short)(mirrorY == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[3] + 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[5] - 1);
-                                        q[8]  = (short)node[10]; q[9]  = (short)node[11];
-                                        q[10] = (short)(mirrorX == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[4] - 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[2] + 1);
-                                        q[11] = (short)(mirrorY == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[5] - 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[3] + 1);
-                                        q[12] = (short)node[12]; q[13] = (short)node[13];
-                                        q[14] = (short)(mirrorX == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[2] + 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[4] - 1);
-                                        q[15] = (short)(mirrorY == 0 ? (*(int * *)&rec_sndPlayerEngine.g_drawNode)[5] - 1 : (*(int * *)&rec_sndPlayerEngine.g_drawNode)[3] + 1);
-                                        DrawQuad();
-                                    }
                                 }
                             } else {
                                 unsigned char colour = obj[0] == 0x10 ? *((unsigned char *)node + 0x3c) : (unsigned char)obj[0xb];   /* average-colour stand-in */
-                                if (rr_gpuRace) {
-                                    if ((char)QuadShapeClassify(v, 0) != 0)
-                                        rr_GpuFlat(v, rr_quadHv, colour, W3_WORLD(node), W3_DEPTH(node), W3_OBJ(node));   /* the shape fix QuadFill applies */
-                                } else
-                                    QuadFill(v, colour);
+                                if ((char)QuadShapeClassify(v, 0) != 0 && rr_gpuRace)   /* (the shape fix the original's flat filler applied) */
+                                    rr_GpuFlat(v, rr_quadHv, colour, W3_WORLD(node), W3_DEPTH(node), W3_OBJ(node));
                             }
                             rr_quadHv = NULL;
                         }

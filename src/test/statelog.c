@@ -10,6 +10,8 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../data/data_index.h"
+#include "../race/rider_slots.h"
+extern int g_riderCount;
 
 /* the logger's own variables live in a section that is not hashed */
 #pragma section(".nodet", read, write)
@@ -34,7 +36,11 @@ static const char *const g_ignNames[] = {
     "g_tabLock", "g_currentPage", "g_fontDialog", "g_itemHotkey", "g_fontTitle", "g_lineBuffer", "g_keyShift", "g_creditKeysWanted", "g_clickedWindow", "g_menuTextBuf",
     "tbl_keyPages", "g_controlCount", "g_clipRegion", "tbl_controlRecords", "g_creditsLines", "g_creditsText", "g_slotCount", "tbl_slotTexts",
     "tbl_hudPens", "g_loaderEvent", "g_courseBuffer", "g_loaderThread", "g_songSemaphore",
-    "g_viewBase1", "g_viewBase2", "g_viewCounter", "g_fontBig", "g_fontSymbols", "g_cheatSpeed", "g_fontMedium", "g_fontCourierSmall", "g_hudFont", "g_scrollStarted", "g_scrollY" };
+    "g_viewBase1", "g_viewBase2", "g_viewCounter", "g_fontBig", "g_fontSymbols", "g_cheatSpeed", "g_fontMedium", "g_fontCourierSmall", "g_hudFont", "g_scrollStarted", "g_scrollY",
+    /* values Windows hands out at start-up that stay the same for a whole boot but not across reboots (found 2026-11-11 after a restart): the registered window
+       message ids of the song messages (startup.c RegisterWindowMessageA) and the screen saver setting (SPI_GETSCREENSAVEACTIVE) */
+    "g_msgSongStart", "g_msgSongNext", "g_msgSongChanged", "g_msgScreenClosed", "g_msgSong10", "g_msgSong14", "g_msgVolume", "g_msgSong1c", "g_soundMessage",
+    "g_msgSongResume", "g_screenSaverWasOn" };
 /* RR_STATE_NORING=1: the original road ring's table and records (unused when a GPU race has a bigger ring: src\road\road_ring.h) */
 static const char *const g_ringNames[] = { "tbl_ringSlots", "tbl_ringRecords" };
 /* RR_STATE_NORASTER=1: the software rasteriser's scratch, which GPU races never fill: right / left edge tables (EdgeTableFill) with the span routine between them, texture,
@@ -110,7 +116,7 @@ static void SemLog(int frame)
         if (GetEnvironmentVariableA("RR_SEM_EVERY", e, sizeof e) > 0 && ToInt(e) > 0) g_semEvery = ToInt(e); }
     if (g_semLog == INVALID_HANDLE_VALUE || frame % g_semEvery) return;
     len = wsprintfA(b, "%d seed %08x time %d", frame, (unsigned)_getptd()[5], rec_featureAccum1.g_raceTime);
-    for (i = 0; i < 16; i++) { const unsigned *r = (const unsigned *)(&rec_riders.tbl_riders)[i]; unsigned h = 2166136261u; int j;
+    for (i = 0; i < g_riderCount; i++) { const unsigned *r = (const unsigned *)RrRiderAt(i); unsigned h = 2166136261u; int j;   /* (16 slots, more with more opponents: race\rider_slots.c) */
         if (!r) continue;
         for (j = 0; j < 0x32c / 4; j++) h = (h ^ (IsPtr(r[j]) ? 0u : r[j])) * 16777619u;
         len += wsprintfA(b + len, " %08x", h); k++; }

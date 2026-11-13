@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "../race/rider_slots.h"
 
 RR_DATA(char, tbl_playerSlots);   /* the eight 32-byte player slots */
 RR_DATA(int,           g_playerRider);
@@ -209,6 +210,7 @@ unsigned __fastcall rr_RiderHudObject(int obj)
 {
     int rider = I32(obj, 0x1c4);
     if (I32(rider, 0x324) == -1) return (int)(&tbl_playerSlots + (int)*(char *)(rider + 0x328) * 32);   /* the AI rider's fixed slot (32-byte records) */
+    { const char *nm = RrRiderName((const char *)I32(obj, 0x1d8)); if (nm) return (unsigned)nm; }   /* (an extra rider: its own name, race\rider_slots.c) */
     return *(unsigned *)(g_configBlock + (&(*(int *)&rec_laneBikeIds.tbl_laneBikeIds))[*(char *)(I32(obj, 0x1d8) + 0x165)] * 4);
 }
 
@@ -257,6 +259,19 @@ static void hud_wide(int end)
         return;
     if (!end && begin) begin(g_frameSurface, 0x1e0 - g_hudPicture);
     if (end && finish) finish(g_frameSurface, 0x1e0 - g_hudPicture, HUD_WIDE_PCT);
+}
+
+/* the speedometer (0) / tachometer (1) needle just drawn, from x0, y0 to x1, y1 (DC pixels of dc): the shim draws its own over the HD dashboard (hdhud.inc) */
+static void hud_needle(HDC dc, int which, int x0, int y0, int x1, int y1)
+{
+    static void (__stdcall *fn)(HDC, int, int, int, int, int);
+    static int looked;
+    if (!looked) {
+        HMODULE m = GetModuleHandleA("ddraw.dll");
+        looked = 1;
+        if (m) fn = (void (__stdcall *)(HDC, int, int, int, int, int))GetProcAddress(m, "RR_HudNeedle");
+    }
+    if (fn) fn(dc, which, x0, y0, x1, y1);
 }
 
 RR_REPLACE_STD(HudDraw, rr_HudDraw, 0);
@@ -333,9 +348,11 @@ unsigned __stdcall rr_HudDraw(void)
             AngleVector(g_hudSpeed, (int)&hx, (int)&hy);
             MoveToEx(dc, LI(0x5c) + ORGX, LI(0x60) + ORGY, 0);
             LineTo(dc, LI(0x5c) + ORGX + mulhi(hx, LI(0x64)), (LI(0x60) - mulhi(hy, LI(0x68))) + ORGY);
+            hud_needle(dc, 0, LI(0x5c) + ORGX, LI(0x60) + ORGY, LI(0x5c) + ORGX + mulhi(hx, LI(0x64)), (LI(0x60) - mulhi(hy, LI(0x68))) + ORGY);
             AngleVector(g_hudHeading, (int)&hx, (int)&hy);
             MoveToEx(dc, LI(0x48) + ORGX, LI(0x4c) + ORGY, 0);
             LineTo(dc, LI(0x48) + mulhi(hx, LI(0x50)) + ORGX, (LI(0x4c) - mulhi(hy, LI(0x54))) + ORGY);
+            hud_needle(dc, 1, LI(0x48) + ORGX, LI(0x4c) + ORGY, LI(0x48) + mulhi(hx, LI(0x50)) + ORGX, (LI(0x4c) - mulhi(hy, LI(0x54))) + ORGY);
             SelectObject(dc, oldPen);
         } else {
             if ((*(char *)&g_songMessages.tbl_cheatFlags) == 0)
