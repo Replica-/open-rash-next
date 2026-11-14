@@ -35,6 +35,7 @@ typedef struct C3Course {
     int hide;                   /* C3_BuildRange: 1 + the split-road half left out where it is far from the other one (0 = both; C3_HideHalf) */
     int darkStrip;              /* C3_Strip: this cross-section span is drawn darker (-1 none): the median wedge under the rails at a fork */
     int skirts;                 /* C3_BuildRange: build the skirts (C3_Skirt) - only the live stretch round the camera, never the whole course */
+    int skirtEnd;               /* C3_BuildRange: > 0 = skirts only on the pieces before it (the game's ring: the far part of the one mesh has none, as the course file's had not) */
     int forkPick;               /* 1 = forks off: a split is only its left road A, built as an ordinary road (no B / rails / median); 0 = both */
     int noGround;               /* 1 = no rocks, fallen leaves (Video Options > True 3D detail > Ground detail off: C3_Leaves, C3_DirtRocks) */
     unsigned char *bdead;       /* per piece: 1 = carriageway B has already rejoined A (its real end is earlier than A's: C3_BTail); not built */
@@ -1346,7 +1347,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 C3_Point(c, k, e0, 1, a); C3_Point(c, k, e0 + w, 1, b); C3_Point(c, k + 1, e1 + w, 1, cc); C3_Point(c, k + 1, e1, 1, d);
                 C3_Quad(c, a, b, cc, d, 0xffe8e8e8u); }
             if (ra && !h && p0->layout == 2 && C3_NearForkJoin(c, k, 0)) C3_Median(c, k, ra);   /* the ground between the carriageways (built once, with A) */
-            if (ra && c->skirts && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
+            if (ra && c->skirts && (c->skirtEnd <= 0 || k < c->skirtEnd) && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
             if (ra && s0->kind >= SEC_WALL1 && s0->kind <= SEC_WALL_SPLIT) C3_Sea(c, k, s0, o0, s1, o1, ra);
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) C3_Tunnel(c, k, h, s0, o0, s1, o1, ra, tex[2]);   /* (Peninsula 385..413, 475..499; the rock: the left cliff face's texture) */
             {   int nr0 = c->nv, j; C3_Lanes(c, k, s0, o0, s1, o1, ra);   /* the road surface: vertex alpha 248 (render3d.h: Video / Esc "Road" = new asphalt, a sheen in the sun) */

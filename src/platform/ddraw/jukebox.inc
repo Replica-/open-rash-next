@@ -25,5 +25,5 @@ static void JbKey(int vk)
 static DWORD WINAPI JbThread(LPVOID p)
 {   static const int keys[3]={VK_F9,VK_F10,VK_F11}; int down[3]={0,0,0}, i; (void)p;
     for(;;){ Sleep(30); for(i=0;i<3;i++){ int d=(g_inj[keys[i]]!=0) || ((GetAsyncKeyState(keys[i])&0x8000) && RrOurFocus());
-            if(d && !down[i]) JbKey(keys[i]); down[i]=d; } } return 0; }
+            if(d && !down[i] && !(keys[i]==VK_F10 && g_w3On)) JbKey(keys[i]); down[i]=d; } } return 0; }   /* (F10 in a True 3D race: the grass panel, world3d.inc W3GrPanel) */
 static void StartJukebox(void){ static int started; char *e=getenv("RR_JUKEBOX"); if(started) return; started=1; if(e && !_stricmp(e,"off")){ g_jbOff=1; return; } CreateThread(NULL,0,JbThread,NULL,0,NULL); }

@@ -149,14 +149,14 @@ static int VcListKey(VcState *s,int vk)
    options like all distance rendering options ... a preset for '3080 GPU' vs 'Steam deck'"): one page of the True 3D detail settings (winscale.inc
    VidGfxPreset - the values, what they change: world3d.inc / render3d.h), a preset row on top, Back.  Left / Right change a row, Enter opens / leaves */
 enum { GD_PRESET, GD_DIST, GD_GRASS, GD_GDIST, GD_OSHADOW, GD_REFL, GD_INTERIOR, GD_GROUND, GD_HALOS, GD_WXFX, GD_GLARE, GD_SPRAY, GD_SCALE, GD_BACK, GD_ROWS };
-static const char *const g_gdLabel[GD_ROWS] = { "Preset","Draw distance","Grass","Effects distance","Object shadows","Puddle reflections","Window interiors","Ground detail","Light halos","Weather particles","Sun glare","Spray and splashes","3D resolution","Back" };
+static const char *const g_gdLabel[GD_ROWS] = { "Preset","Draw distance","Grass density","Effects distance","Object shadows","Puddle reflections","Window interiors","Ground detail","Light halos","Weather particles","Sun glare","Spray and splashes","3D resolution","Back" };
 static const char *const g_gdHelp[GD_ROWS][2] = {
     [GD_PRESET]={ "High (RTX 3080): everything on, the far view.  Steam Deck: the near view with every optional effect off",
       "- turn on what the Deck can afford.  Changing any row below makes it Custom." },
     [GD_DIST]={ "How far ahead the 3D world is drawn: near 70, medium 105, far 150 road segments.  The biggest cost: buildings,",
       "trees and traffic out to there.  The world fades into the sky at the end either way." },
-    [GD_GRASS]={ "Tufts of grass on the green ground, thickest by the road.  Low draws 40 % of them (14000 at most), high 35000.",
-      "" },
+    [GD_GRASS]={ "Tufts of grass on the green ground, thickest in a strip along the road.  High: 8000 at most; medium and low fewer, thinner",
+      "and not as far." },
     [GD_GDIST]={ "How far out the effects reach - all of them alike: the grass, the rooms behind the windows, the windows' depth,",
       "the walls' relief, rain on the road." },
     [GD_HALOS]={ "The soft glow round street lamps, lit windows and headlights at night and in fog.",
@@ -184,7 +184,7 @@ static void GdValue(int row,char *b,size_t n)
     switch(row){
     case GD_PRESET: _snprintf(b,n,"%s",pn[VidGfxWhich()]); break;
     case GD_DIST: _snprintf(b,n,"%s",dn[g_vid.dist]); break;
-    case GD_GRASS: _snprintf(b,n,"%s",gn[g_vid.grass]); break;
+    case GD_GRASS: { static const char *const g4[4]={"Off","Low","Medium","High"}; _snprintf(b,n,"%s",g4[g_vid.grass&3]); } break;
     case GD_GDIST: _snprintf(b,n,"%s",dn[g_vid.gdist]); break;
     case GD_HALOS: _snprintf(b,n,"%s",g_vid.halos?"On":"Off"); break;
     case GD_WXFX: _snprintf(b,n,"%s",gn[g_vid.wxfx]); break;
@@ -200,7 +200,7 @@ static void GdAdjust(int row,int dir)
 {   switch(row){
     case GD_PRESET: { int p=VidGfxWhich(); VidGfxPreset(p==2 ? (dir>0?0:1) : !p); } break;   /* (High <-> Steam Deck; from Custom: High right, Steam Deck left) */
     case GD_DIST: g_vid.dist=(g_vid.dist+dir+3)%3; break;
-    case GD_GRASS: g_vid.grass=(g_vid.grass+dir+3)%3; break;
+    case GD_GRASS: g_vid.grass=(g_vid.grass+dir+4)%4; break;
     case GD_GDIST: g_vid.gdist=(g_vid.gdist+dir+3)%3; break;
     case GD_HALOS: g_vid.halos^=1; break;
     case GD_WXFX: g_vid.wxfx=(g_vid.wxfx+dir+3)%3; break;

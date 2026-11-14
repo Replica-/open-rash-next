@@ -68,7 +68,9 @@ static const char r3_hlsl[] =
     "  if (right.w > 0) { float2 tc = i.t * sz; float m = max(length(dx * sz), length(dy * sz));\n"   /* right.w = crisp: a magnified texel (bigger than a pixel) */
     "    uv = lerp(i.t, (floor(tc) + 0.5) / sz, saturate((1 - m) * 4)); dx *= 0.4; dy *= 0.4; }\n"       /* in its own colour, as the game draws (unfiltered); minified: a sharper mip (the game */
                                                                                                        /* has none: its ground's grain is the full texture's) */
-    "  float4 c = T.SampleGrad(S, uv, dx, dy) * i.c; if (c.a < 0.5 || (rfl.y > 0 && (i.w.y < rfl.x - 40 || abs(normalize(n).y) > 0.8))) discard;\n"   /* (the mirror pass: only what stands up above the mirror - buildings, hillsides; not the road / ground) */
+    "  float4 c = T.SampleGrad(S, uv, dx, dy) * i.c;\n"
+    "  if (abs(i.c.a - 0.9294) < 0.0015) c.a = min(c.a * (1 + opt.w * max(0, log2(max(length(dx * sz), length(dy * sz))))), i.c.a);\n"   /* grass tufts (vertex alpha 237): far off the smaller mips average the thin blades with the gaps between them and the cut-out lost them - the tufts thinned out with distance until the rider came near (user, 2026-11-15); alpha raised by the mip level */
+    "  if (c.a < 0.5 || (rfl.y > 0 && (i.w.y < rfl.x - 40 || abs(normalize(n).y) > 0.8))) discard;\n"   /* (the mirror pass: only what stands up above the mirror - buildings, hillsides; not the road / ground) */
     "  float y = dot(c.rgb, float3(0.299, 0.587, 0.114)); float3 a = tint.rgb; int k; c.rgb = lerp(y.xxx, c.rgb, tint.w);\n"   /* time of day / weather: saturation, then the light */
     "  bool road = abs(i.c.a - 0.9725) < 0.0015;\n"   /* the road surface (vertex alpha 248, course3d.h C3_Lanes) */
     "  if (abs(i.c.a - 0.9333) < 0.0015) { float3 rn2 = normalize(n); if (dot(rn2, eye.xyz - i.w) < 0) rn2 = -rn2; float3 ld = sun.w > 0 ? sun.xyz : normalize(float3(0.3, 1, 0.2));\n"   /* a rock (vertex alpha 238, */

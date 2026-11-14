@@ -184,6 +184,7 @@ static void WxWorld(R3Frame *f)
     f->fadeStart = (float)(W3Far() * 0.62); f->fadeEnd = (float)(W3Far() * 0.97);   /* the far world fades into the sky: no pop-in at the draw distance */
     f->opt[0] = 1.0f;   /* the improved street textures: road, sidewalk, curb (render3d.h) - always on (user, 2026-11-14: no option) */
     f->opt[1] = g_vid.interior ? 1.0f : 0.0f;   /* True 3D detail > Window interiors: the rooms behind the City set's windows (render3d.h) */
+    f->opt[3] = g_grMip;   /* the grass tufts' far alpha boost (render3d.h; the F10 panel) */
     f->opt[2] = (float)W3FxDist();   /* True 3D detail > Effects distance: how far the windows' rooms and depth, the walls' relief, rain on the road reach (as the grass) */
     f->puddles = w->rain * (WxTorrent() ? 2.0f : WxHeavy() ? 1.6f : 1.0f); f->time = (float)fmod(g_wxTime, 3600.0); f->water[0] = w->hor[0]; f->water[1] = w->hor[1]; f->water[2] = w->hor[2]; f->water[3] = w->glint;
     if (getenv("RR_W3WATERDBG")) { f->water[0] = 1; f->water[1] = f->water[2] = 0; } }   /* test switch: the water red */
