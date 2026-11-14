@@ -53,6 +53,7 @@ static void GpuAddTri(int a,int b,int c){ GpuBatch *bt=&g_gb[g_gnb-1]; int base=
 typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with */
 static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
 static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
+static int g_hdTrackHint;   /* hdtex.inc HdTrack: the track to look in instead of the game's (world3d.inc W3Tex, around its look-ups; 0 = the game's) */
 static GpuTex g_gt2[GPU_TEXSLOTS]; static int g_gtN;
 static DWORD GpuPalSum(Pal *p){ DWORD s=0; int i; if(!p) return 0; for(i=0;i<256;i++) s=s*31+((DWORD)p->e[i].peRed<<16|(DWORD)p->e[i].peGreen<<8|p->e[i].peBlue); return s; }
 static void GpuTexFree(GpuTex *e){ int i; for(i=0;i<e->nl;i++) if(e->lv[i]) SDL_DestroyTexture(e->lv[i]); memset(e,0,sizeof *e); }

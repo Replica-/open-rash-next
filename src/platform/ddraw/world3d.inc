@@ -18,6 +18,7 @@
 static double W3Far(void) { const char *e = getenv("RR_W3DIST"); int n = e ? atoi(e) : g_vid.dist == 0 ? 70 : g_vid.dist == 1 ? 105 : W3_FAR; if (n < DD_NORMAL) n = W3_FAR; return n * W3_L; }   /* (Video Options > True 3D detail > Draw distance: near 70 / medium 105 / far 150) */
 
 static C3Course g_w3c; static RxAssets g_w3a; static R3 g_w3r;
+static int g_w3hdTrack;   /* the course file's track (t<n>_...): W3Tex looks for the hd\t<n> pictures there - the game's own track number is not set yet (or is the last race's) when the textures are made */
 static R3Batch g_w3b[4096]; static int g_w3nb; static C3Batch g_w3cb[4096];
 /* the stretch of the game's road ring (RrWorld3DCam.ring): a copy of the course with the ring's live decoration (wall corners, terrain heights - the
    file's differ: they come from time-animated records), its mesh rebuilt whenever that stretch or its decoration changes and drawn instead of the
@@ -330,7 +331,9 @@ static int W3GpuTex(int t)
 {   RxTex *x;
     if (t < 0 || t >= g_w3a.ntex) return -1;
     x = &g_w3a.tex[t];
-    if (x->gpu < 0) { const DWORD *hp = HdTexOn() && !x->gen ? HdTexFind(x->name, x->w, x->h, x->bits, x->w) : NULL;   /* "slightly upscaled" (hdtex.inc): the 4x picture, same palette as the file */
+    if (x->gpu < 0) { const DWORD *hp; g_hdTrackHint = g_w3hdTrack;   /* (the course's track: hdtex.inc HdTrack) */
+        hp = HdTexOn() && !x->gen ? HdTexFind(x->name, x->w, x->h, x->bits, x->w) : NULL;   /* "slightly upscaled" (hdtex.inc): the 4x picture, same palette as the file */
+        g_hdTrackHint = 0;
         unsigned seed = 2166136261u; { const char *c; for (c = x->name; *c; c++) seed = (seed ^ (unsigned char)*c) * 16777619u; }   /* (a facade's lit windows: W3WindowMask) */
         if (hp) { unsigned *rgba = (unsigned *)malloc((size_t)16 * x->w * x->h * 4); int j;
             if (rgba) { for (j = 0; j < 16 * x->w * x->h; j++) { DWORD p = hp[j]; rgba[j] = (p & 0xFF00FF00u) | ((p >> 16) & 0xFF) | ((p & 0xFF) << 16); }   /* ARGB -> ABGR */
@@ -1066,7 +1069,8 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork; g_w3c.noGround = !g_vid.ground;   /* (True 3D detail > Ground detail: rocks, fallen leaves) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
-        W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex(); }
+        W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex();
+        g_w3hdTrack = b[0] == 0x74 && b[1] >= 0x31 && b[1] <= 0x35 ? b[1] - 0x30 : 0; }
     g_w3compiled = 0;
     if (g_w3fork) {   /* forks off: the compiled race when there is one (or it is being compiled: RR_W3COMPILE=1), else built on the fly as ever */
         unsigned long long key = W3MeshKey(path);

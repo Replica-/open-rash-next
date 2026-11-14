@@ -10,7 +10,7 @@ static int g_hdGen = 1;   /* +1 when the setting changes: GpuTexFor rebuilds its
 static int HdTexOn(void)
 {   static int env = -2; if (env == -2) { const char *e = getenv("RR_HDTEX"); env = (e && *e) ? (*e != '0') : -1; }
     return (env >= 0 ? env : VidHdArt()) && GpuWanted(); }   /* (always with a widescreen art folder: the pictures live there) */
-static int HdTrack(void) { int t = g_posTrack ? *g_posTrack : 0; return t >= 1 && t <= 5 ? t : 0; }
+static int HdTrack(void) { int t = g_hdTrackHint ? g_hdTrackHint : g_posTrack ? *g_posTrack : 0; return t >= 1 && t <= 5 ? t : 0; }
 
 typedef struct HdEntry { int track; char name[9]; int w, h; DWORD hash; DWORD *px; } HdEntry;   /* px = 4w x 4h ARGB, NULL = no picture; hash = of the original's indices (HdTexFind) */
 #define HD_CACHE 4096
