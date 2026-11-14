@@ -1,0 +1,21 @@
+{
+    // Open Rash Next: its own window colours, so this project's VS Code window is told apart from the others at a glance
+    "workbench.colorCustomizations": {
+        "titleBar.activeBackground": "#8c1d12",
+        "titleBar.activeForeground": "#ffe9d6",
+        "titleBar.inactiveBackground": "#5e1a12",
+        "titleBar.inactiveForeground": "#e8c9b8",
+        "activityBar.background": "#6b170f",
+        "activityBar.foreground": "#ffd9b8",
+        "activityBar.inactiveForeground": "#d79b80",
+        "activityBarBadge.background": "#ff8a2a",
+        "activityBarBadge.foreground": "#1a0a05",
+        "statusBar.background": "#b4361c",
+        "statusBar.foreground": "#fff1e6",
+        "statusBar.debuggingBackground": "#ff8a2a",
+        "statusBarItem.remoteBackground": "#ff6a1a",
+        "window.activeBorder": "#ff6a1a",
+        "window.inactiveBorder": "#5e1a12"
+    },
+    "window.title": "OPEN RASH NEXT - ${activeEditorShort}${separator}${rootName}"
+}

@@ -37,7 +37,8 @@ __pycache__/
 /backup/
 /RoadRash.cfg
 /.claude/
-/.vscode/
+/.vscode/*
+!/.vscode/settings.json
 Thumbs.db
 desktop.ini
 
