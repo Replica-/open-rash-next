@@ -31,7 +31,7 @@ static IDirectDrawVtbl ddvt; static IDirectDrawSurfaceVtbl svt; static IDirectDr
 static HWND g_hwnd; static int g_w=640,g_h=480,g_bpp=8; static Surf *g_primary;
 /* a window of the game has the focus: its own window or another of this process (the SDL window it draws into) - on the Steam Deck under Proton / Gamescope the
    foreground window need not be the main one (user: "on steam deck i couldnt use the native controls"); every focus-gated input checks this */
-static int RrOurFocus(void){ HWND fg=GetForegroundWindow(); DWORD pid=0; if(!fg || !g_hwnd) return 0; if(fg==g_hwnd) return 1; GetWindowThreadProcessId(fg,&pid); return pid==GetCurrentProcessId(); }
+static int RrOurFocus(void){ HWND fg=GetForegroundWindow(); DWORD pid=0; if(!g_hwnd) return 0; if(!fg || fg==g_hwnd) return 1; GetWindowThreadProcessId(fg,&pid); return pid==GetCurrentProcessId(); }   /* (no foreground window at all: under Gamescope / Proton that is the normal state - only ever a moment on Windows) */
 static SDL_Window *g_win; static SDL_Renderer *g_ren; static SDL_Texture *g_tex; static int g_headless; static int g_quiet; static char g_dumpGpu[MAX_PATH];   /* g_quiet = RR_HEADLESS=2: off-screen, never takes the focus, but renders through the real SDL (GPU) renderer; RR_DUMP_GPU=<dir> then dumps what the renderer drew */
 static WNDPROC g_origProc, g_sdlProc; static SDL_FRect g_fullRect={0,0,640,480};   /* the whole frame in logical coordinates: with the stretch scaling mode a NULL destination would not be the whole picture */
 static FILE *g_log; static volatile int g_trAll;   /* RR_LOG_PRESENTS: log every surface call for a few race frames */

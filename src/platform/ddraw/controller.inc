@@ -102,6 +102,8 @@ static DWORD WINAPI CtlThread(LPVOID unused)
     for(;;)
     {   BYTE want[256]; int on[PI_N], vk, race; DWORD now;
         memset(want,0,sizeof want); Sleep(8); now=GetTickCount(); race=CtlInRace();
+        if(g_log){ static DWORD lastLog; if(now-lastLog>5000){ int tmp[PI_N], pads=CtlPadRead(tmp), held=0, i; HWND fg=GetForegroundWindow(); DWORD pid=0; lastLog=now; for(i=0;i<PI_N;i++) held+=tmp[i]; if(fg) GetWindowThreadProcessId(fg,&pid);   /* (RR_LOG: what the pad thread sees - the Steam Deck: user, "steam deck controls didnt work") */
+            LOG("controller: pad %s, %d inputs held, foreground %p (process %lu, ours %lu, game window %p) -> %s", pads ? "connected" : "none", held, (void*)fg, (unsigned long)pid, (unsigned long)GetCurrentProcessId(), (void*)g_hwnd, RrOurFocus() ? "reading" : "ignored (not focused)"); } }
         if(g_hwnd && RrOurFocus() && !g_icPadCapture)
         {   CtlPadRead(on);
             if(race)
