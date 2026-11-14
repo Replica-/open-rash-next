@@ -28,7 +28,7 @@ static float g_wxBolt = 6, g_wxFlashT = 9, g_wxThunderIn, g_wxThunderAmp;   /* s
 /* the weather's sound (dsound.dll RR_Ambience / RR_Thunder, synthesised there): kind 0 / 1 rain / 2 snow with a volume, or kind -1 = a thunder of strength v */
 static void WxSound(int kind, float v)
 {   static void (__stdcall *amb)(int, float); static void (__stdcall *thu)(float); static int init, lastK = -9; static float lastV = -1;
-    if (!init) { HMODULE m = GetModuleHandleA("dsound.dll"); init = 1; if (m) { amb = (void (__stdcall *)(int, float))GetProcAddress(m, "RR_Ambience"); thu = (void (__stdcall *)(float))GetProcAddress(m, "RR_Thunder"); } }
+    if (!init) { HMODULE m = GetModuleHandleA("rrdsound.dll"); init = 1; if (m) { amb = (void (__stdcall *)(int, float))GetProcAddress(m, "RR_Ambience"); thu = (void (__stdcall *)(float))GetProcAddress(m, "RR_Thunder"); } }
     if (kind < 0) { if (thu) thu(v); return; }
     if (amb && (kind != lastK || fabsf(v - lastV) > 0.01f)) { amb(kind, v); lastK = kind; lastV = v; } }
 
@@ -183,6 +183,8 @@ static void WxWorld(R3Frame *f)
     f->snow = w->snow; f->night = w->dark;
     f->fadeStart = (float)(W3Far() * 0.62); f->fadeEnd = (float)(W3Far() * 0.97);   /* the far world fades into the sky: no pop-in at the draw distance */
     f->opt[0] = 1.0f;   /* the improved street textures: road, sidewalk, curb (render3d.h) - always on (user, 2026-11-14: no option) */
+    f->opt[1] = g_vid.interior ? 1.0f : 0.0f;   /* True 3D detail > Window interiors: the rooms behind the City set's windows (render3d.h) */
+    f->opt[2] = (float)W3FxDist();   /* True 3D detail > Effects distance: how far the windows' rooms and depth, the walls' relief, rain on the road reach (as the grass) */
     f->puddles = w->rain * (WxTorrent() ? 2.0f : WxHeavy() ? 1.6f : 1.0f); f->time = (float)fmod(g_wxTime, 3600.0); f->water[0] = w->hor[0]; f->water[1] = w->hor[1]; f->water[2] = w->hor[2]; f->water[3] = w->glint;
     if (getenv("RR_W3WATERDBG")) { f->water[0] = 1; f->water[1] = f->water[2] = 0; } }   /* test switch: the water red */
 /* the game's remaining 2D polygons of the race picture */
@@ -206,6 +208,14 @@ static void WxSpot(float x, float y, float r, float cr, float cg, float cb, floa
     SDL_SetTextureBlendMode(g_wxGlow, m); SDL_SetTextureColorModFloat(g_wxGlow, cr, cg, cb); SDL_SetTextureAlphaModFloat(g_wxGlow, a); SDL_RenderTexture(g_ren, g_wxGlow, NULL, &d); }
 /* panorama column u (0..P) -> every frame column it shows at inside the viewport (like ClDraw) */
 #define WX_NSTAR 420
+/* the sun / the moon: ONE copy (user, 2026-11-15: "when the sky wraps i see the moon / sun twice" - the panorama repeats every P, narrower than a wide
+   view).  True 3D: where its bearing from the view's forward puts it (b, radians, + = right; nothing when it is behind), else the panorama column u's copy
+   nearest the view's centre.  X = its frame column, or < -1e8 for none */
+static float WxOnce(float u, int P, int threeD, float b)
+{   float c = (g_gpuClip[0] + g_gpuClip[2]) * 0.5f, best = -1e9f; int k;
+    if (threeD) { float F = (float)(W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1)); return fabsf(b) < 1.45f ? (float)g_w3cam.centreX + tanf(b) * F : -1e9f; }
+    for (k = -1; k <= 2; k++) { float X = g_hsLeft + u + g_hsX + (float)k * P; if (fabsf(X - c) < fabsf(best - c)) best = X; }
+    return best; }
 #define WX_WRAP(u, ...) { int kk_; for (kk_ = -1; kk_ <= 2; kk_++) { float X = g_hsLeft + (u) + g_hsX + (float)kk_ * P; if (X < g_gpuClip[0] - 64 || X > g_gpuClip[2] + 64) continue; __VA_ARGS__ } }
 static void WxSky(int P, int R, int y0, int y1, int fore, const SDL_Rect *cr)
 {   const WxState *w = &g_wx; SDL_Rect vr; SDL_FRect fr; SDL_Vertex v[6]; static const int ix[12] = { 0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4 };
@@ -235,12 +245,13 @@ static void WxSky(int P, int R, int y0, int y1, int fore, const SDL_Rect *cr)
             if (tt < 0) tt = 0; if (tt > 1) tt = 1; if (el > 1) el = 1;
             u = (0.22f + 0.56f * tt) * P; y = hr - el * R * 0.74f;
             if (g_w3On && g_wxHdOn) { u = (float)g_w3cam.centreX + WxSunBear(tt, P) / 6.2831853f * P - g_hsLeft - g_hsX; u = (float)fmod(u, (float)P); if (u < 0) u += P; }   /* (True 3D: where the shadows say it is) */ gr = R * WxL(0.70f, 0.55f, low); gl = WxL(0.30f, 0.55f, low);
-            WX_WRAP(u, { WxSpot(X, y, gr, 1.0f, WxL(0.95f, 0.55f, low), WxL(0.78f, 0.30f, low), gl * vis, SDL_BLENDMODE_ADD);
+            { float X = WxOnce(u, P, g_w3On && g_wxHdOn, WxSunBear(tt, P)); if (X > -1e8f) { WxSpot(X, y, gr, 1.0f, WxL(0.95f, 0.55f, low), WxL(0.78f, 0.30f, low), gl * vis, SDL_BLENDMODE_ADD);
                          WxSpot(X, y, R * WxL(0.06f, 0.075f, low), 1.0f, WxL(1.0f, 0.75f, low), WxL(0.92f, 0.5f, low), 1.0f * vis, SDL_BLENDMODE_BLEND);
-                         WxSpot(X, y, R * WxL(0.06f, 0.075f, low), 1.0f, 1.0f, 0.9f, 0.9f * vis, SDL_BLENDMODE_ADD); }) }
+                         WxSpot(X, y, R * WxL(0.06f, 0.075f, low), 1.0f, 1.0f, 0.9f, 0.9f * vis, SDL_BLENDMODE_ADD); } } }
         if (w->stars > 0.2f) {   /* the moon */
             float u = 0.55f * P, y = g_hsTop + R * 0.22f, a = WxS(0.2f, 0.6f, w->stars);
-            WX_WRAP(u, { WxSpot(X, y, R * 0.42f, 0.55f, 0.62f, 0.85f, 0.4f * a, SDL_BLENDMODE_ADD); WxSpot(X, y, R * 0.075f, 0.95f, 0.96f, 1.0f, a, SDL_BLENDMODE_BLEND); WxSpot(X, y, R * 0.065f, 1, 1, 1, 0.85f * a, SDL_BLENDMODE_ADD); }) } }
+            float X = WxOnce(u, P, g_w3On && g_wxHdOn, WxWrapPi(WX_SUNAZ + 3.14159265f - (float)g_wxHd));   /* (True 3D: across the sky from the noon sun) */
+            if (X > -1e8f) { WxSpot(X, y, R * 0.42f, 0.55f, 0.62f, 0.85f, 0.4f * a, SDL_BLENDMODE_ADD); WxSpot(X, y, R * 0.075f, 0.95f, 0.96f, 1.0f, a, SDL_BLENDMODE_BLEND); WxSpot(X, y, R * 0.065f, 1, 1, 1, 0.85f * a, SDL_BLENDMODE_ADD); } } }
     if (g_wxGlow) { SDL_SetTextureBlendMode(g_wxGlow, SDL_BLENDMODE_BLEND); SDL_SetTextureColorModFloat(g_wxGlow, 1, 1, 1); SDL_SetTextureAlphaModFloat(g_wxGlow, 1); }
     SDL_SetRenderClipRect(g_ren, cr); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); }
 /* the moving clouds / the HD skyline drawn again over them: in the light of the hour (on = 0: back to normal) */
@@ -302,7 +313,7 @@ static void WxGlare(int fw, int fh)
 {   static float g; static double lastT; const WxState *w = &g_wx; float el, s = WxSunUp(&el), bear, len, X, Y, R = (float)g_hsRows, want = 0, edge, dt, dir[3];
     int P = g_hsPeriod, k;
     dt = (float)(WxSeconds() - lastT); lastT = WxSeconds(); if (dt < 0 || dt > 0.5f) dt = 0.5f;
-    if (s > 0 && R > 0 && P > 0 && !getenv("RR_NOGLARE")) {   /* (test switch RR_NOGLARE=1) */
+    if (s > 0 && R > 0 && P > 0 && g_vid.glare && !getenv("RR_NOGLARE")) {   /* (test switch RR_NOGLARE=1) */
         float tt = (w->t - 0.25f) / 0.5f, e2 = (w->e + 0.04f) * 1.6f; if (tt < 0) tt = 0; if (tt > 1) tt = 1; if (e2 > 1) e2 = 1;
         WxSunShadow(&bear, &len);
         X = (float)g_w3cam.centreX + bear / 6.2831853f * P; Y = g_hsTop + R * 0.80f - e2 * R * 0.74f;   /* where WxSky draws it */
@@ -344,6 +355,7 @@ static void WxParticles(int fw, int fh)
 {   static double lastT = -1; static int lastPos; static double lastHd; static SDL_Vertex *vx; static int *ix, cap;
     int kind = WxWeather(), n = kind == 1 ? (WxTorrent() ? 9600 : WxHeavy() ? 3200 : 1400) : (WxHeavy() ? 2800 : 1200), i, nq = 0; float dt, F, cx, hy, ground, fall, speed, dh, ca, sa; double hd;
     (void)fw; (void)fh;
+    if (!g_vid.wxfx) { g_wxpKind = -1; return; } if (g_vid.wxfx == 1) n = n * 2 / 5;   /* (True 3D detail > Weather particles: off / low 40 % / high) */
     if (!g_w3On || !g_w3HaveCam || !kind) { g_wxpKind = -1; return; }
     if (!g_wxGlow) WxGlowMake();
     F = (float)(W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1)); cx = (float)g_w3cam.centreX; hy = (float)g_w3cam.horizonY;
@@ -404,11 +416,11 @@ static void IcBox(HDC dc, int x, int y, int w, int h, COLORREF fill, COLORREF fr
 static void IcPoly(HDC dc, const POINT *pt, int n, COLORREF fill, COLORREF frame);
 static SDL_Texture *g_ppTex; static char g_ppKey[96]; static SDL_FRect g_ppRect; static int g_wxBtn, g_wxHot = -1, g_wxCur;   /* panel: where it is drawn; the button row's choice (0 ride on, 1 exit race); the item under the mouse; cursor shown */
 /* the panel's picture (W x H, drawn at half size): the setting rows (y 66 + 58 r, arrows boxes at WX_LA / WX_RA), then the button row */
-enum { WX_NROW = 5, WX_PW = 900, WX_LA = 552, WX_RA = 834, WX_BY = 66 + WX_NROW * 58 + 12, WX_BH = 56, WX_B0 = 50, WX_B1 = 470, WX_BW = 380, WX_PH = WX_BY + WX_BH + 64 };   /* (setting rows, then the buttons) */
+enum { WX_NROW = 4, WX_PW = 900, WX_LA = 552, WX_RA = 834, WX_BY = 66 + WX_NROW * 58 + 12, WX_BH = 56, WX_B0 = 50, WX_B1 = 470, WX_BW = 380, WX_PH = WX_BY + WX_BH + 64 };   /* (setting rows, then the buttons) */
 static void WxText(HDC dc, int x, int y, const char *t, COLORREF c, UINT al) { SetTextColor(dc, c); SetTextAlign(dc, al); TextOutA(dc, x, y, t, (int)strlen(t)); SetTextAlign(dc, TA_LEFT | TA_TOP); }
 static void WxPanelMake(const char *const *val)
 {   enum { W = WX_PW, H = WX_PH }; BITMAPINFO bi; void *bits = NULL; HDC dc; HBITMAP bm; HGDIOBJ ob, of; HFONT ft, fr, fh; int i, r; DWORD *px;
-    static const char *lab[WX_NROW] = { "TIME OF DAY", "WEATHER", "FOG", "WEAPON", "BUILDING SHADOWS" };
+    static const char *lab[WX_NROW] = { "TIME OF DAY", "WEATHER", "FOG", "WEAPON" };   /* (BUILDING SHADOWS removed - user, 2026-11-15) */
     memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
     if (!(dc = CreateCompatibleDC(NULL))) return;
     if (!(bm = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0)) || !bits) { DeleteDC(dc); return; }
@@ -443,7 +455,7 @@ static void WxPanel(int w, int h)
     char v0[48], key[96]; SDL_FRect d; (void)h;
     if (!g_w3On || !g_wxPause || !g_ren) return;
     if (!WxTod()) { int m = (int)(WxT() * 1440) % 1440; _snprintf(v0, sizeof v0, "Cycle %02d:%02d", m / 60, m % 60); } else strcpy(v0, tods[WxTod()]); v0[sizeof v0 - 1] = 0;
-    {   const char *vals[WX_NROW]; vals[0] = v0; vals[1] = wxs[WxWeatherRaw()]; vals[2] = fogs[WxFog()]; vals[3] = WpRowName(); vals[4] = g_vid.bldgShadow ? "On" : "Off";
+    {   const char *vals[WX_NROW]; vals[0] = v0; vals[1] = wxs[WxWeatherRaw()]; vals[2] = fogs[WxFog()]; vals[3] = WpRowName();
         _snprintf(key, sizeof key, "%d|%d|%d|%s|%s|%s|%s|%s", g_wxSel, g_wxBtn, g_wxHot, vals[0], vals[1], vals[2], vals[3], vals[4]); key[sizeof key - 1] = 0;
         if (!g_ppTex || strcmp(key, g_ppKey)) { WxPanelMake(vals); strcpy(g_ppKey, key); } }
     if (!g_ppTex) return;
@@ -453,7 +465,6 @@ static void WxPanel(int w, int h)
 static void WxChange(int row, int d)   /* a setting row one step on (d = 1) or back (-1) */
 {   if (row == 0) g_vid.tod = (g_vid.tod + d + 5) % 5;
     else if (row == 1) { static const int ord[6] = { 0, 1, 3, 5, 2, 4 }; int k; for (k = 0; k < 6 && ord[k] != g_vid.weather; k++) {} g_vid.weather = ord[((k < 6 ? k : 0) + d + 6) % 6]; }   /* clear, rain, heavy rain, snow, heavy snow */
-    else if (row == 4) g_vid.bldgShadow ^= 1;   /* the buildings' shadows (world3d.inc W3BldgShadows; off by default) */
     else if (row == 3) WpRowStep(d);   /* the weapon (weapons.inc: a Big Game's owned weapons, else the pictures) */
     else { int k; for (k = 0; k < WX_NFOG && g_wxFogOrd[k] != g_vid.fog; k++) {} g_vid.fog = g_wxFogOrd[((k < WX_NFOG ? k : 0) + d + WX_NFOG) % WX_NFOG]; }
     g_wxDirty = 1; WxCompute(0); }

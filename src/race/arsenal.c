@@ -50,13 +50,13 @@ static void ArsLog(const char *t)
 
 static int ShimCall(const char *name)
 {
-    HMODULE sh = GetModuleHandleA("ddraw.dll");
+    HMODULE sh = GetModuleHandleA("rrddraw.dll");
     int (__stdcall *f)(void) = sh ? (int (__stdcall *)(void))GetProcAddress(sh, name) : 0;
     return f ? f() : 0;
 }
 static int Ask(const char *text, const char *title, unsigned type)   /* the shim's message box (msgbox.inc): IDYES / IDNO / IDOK */
 {
-    HMODULE sh = GetModuleHandleA("ddraw.dll");
+    HMODULE sh = GetModuleHandleA("rrddraw.dll");
     int (__stdcall *f)(const char *, const char *, unsigned, unsigned) = sh ? (int (__stdcall *)(const char *, const char *, unsigned, unsigned))GetProcAddress(sh, "RR_MessageBox") : 0;
     return f ? f(text, title, type, 0) : IDNO;
 }
@@ -71,7 +71,7 @@ static const char *Money(char *b, int v)
 /* start-up (shutdown.c rr_WinMainLoop): the shim gets the state */
 void rr_ArsenalInit(void)
 {
-    HMODULE sh = GetModuleHandleA("ddraw.dll");
+    HMODULE sh = GetModuleHandleA("rrddraw.dll");
     void (__stdcall *bind)(RrArsenal *) = sh ? (void (__stdcall *)(RrArsenal *))GetProcAddress(sh, "RR_ArsenalBind") : 0;
     g_arsenal.cash = &rec_playerRecord.g_playerCash;
     if (bind) bind(&g_arsenal);
@@ -217,7 +217,7 @@ void rr_ArsenalPlayerTick(int self)
     static int (__stdcall *pw)(void); static int init, last = -2, lastSelf; static unsigned lastT;
     unsigned t = (*(unsigned *)&rec_featureAccum1.g_raceTime);
     int start = self != lastSelf || t < lastT, w;
-    if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; pw = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_PlayerWeapon") : 0; }
+    if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; pw = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_PlayerWeapon") : 0; }
     if (start) RaceBegin();
     if (BigGame()) w = g_rraWeapons[g_arsenal.s.equipped < RRA_N ? g_arsenal.s.equipped : 0].cls;
     else { w = pw ? pw() : 0; if (w <= 0) w = -1; }

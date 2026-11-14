@@ -13,11 +13,11 @@ static int JbScan(void)
     return g_jbN; }
 static void JbShow(const char *s){ strncpy(g_jbText,s,sizeof g_jbText-1); g_jbText[sizeof g_jbText-1]=0; g_jbUntil=GetTickCount()+3000; }
 static void JbPlayIndex(int idx)
-{   HMODULE m=GetModuleHandleA("dsound.dll"); JbPlayFn play=m?(JbPlayFn)GetProcAddress(m,"RR_MusicPlay"):NULL; char path[MAX_PATH], title[96], *dot;
+{   HMODULE m=GetModuleHandleA("rrdsound.dll"); JbPlayFn play=m?(JbPlayFn)GetProcAddress(m,"RR_MusicPlay"):NULL; char path[MAX_PATH], title[96], *dot;
     if(!play || idx<0 || idx>=g_jbN) return; _snprintf(path,sizeof path,"mods\\Jukebox\\%s",g_jbList[idx]);
     if(play(path,1)){ g_jbCur=idx; g_jbPaused=0; strcpy(title,g_jbList[idx]); dot=strrchr(title,46); if(dot) *dot=0; { char line[120]; _snprintf(line,sizeof line,"Now playing (%d/%d): %s",idx+1,g_jbN,title); JbShow(line); LOG("jukebox: %s",line); } } }
 static void JbKey(int vk)
-{   HMODULE m=GetModuleHandleA("dsound.dll"); JbVoidFn pause=m?(JbVoidFn)GetProcAddress(m,"RR_MusicPause"):NULL, resume=m?(JbVoidFn)GetProcAddress(m,"RR_MusicResume"):NULL;
+{   HMODULE m=GetModuleHandleA("rrdsound.dll"); JbVoidFn pause=m?(JbVoidFn)GetProcAddress(m,"RR_MusicPause"):NULL, resume=m?(JbVoidFn)GetProcAddress(m,"RR_MusicResume"):NULL;
     if(g_jbOff) return; if(!JbScan()){ JbShow("Jukebox: put .wav files in mods\\Jukebox (wav, mp3, m4a, mp4, aac, flac, wma)"); LOG("jukebox: no tracks"); return; }
     if(vk==VK_F11) JbPlayIndex(g_jbCur<0?0:(g_jbCur+1)%g_jbN);
     else if(vk==VK_F9) JbPlayIndex(g_jbCur<0?g_jbN-1:(g_jbCur+g_jbN-1)%g_jbN);

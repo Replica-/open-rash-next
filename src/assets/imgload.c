@@ -37,7 +37,7 @@ void __fastcall rr_RriLoad(const char *file, int unusedEdx, unsigned short *dest
 
     (void)unusedEdx;
     if (file == NULL) return;
-    shim = GetModuleHandleA("ddraw.dll");
+    shim = GetModuleHandleA("rrddraw.dll");
     decode = shim ? (DecodeFn)GetProcAddress(shim, "RR_DecodeJpeg") : NULL;
     release = shim ? (FreeFn)GetProcAddress(shim, "RR_FreeImage") : NULL;
     if (!decode || !release) { RriLog(shim, "no decoder in the shim", file, shim != NULL, decode != NULL); return; }

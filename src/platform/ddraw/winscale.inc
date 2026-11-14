@@ -16,7 +16,8 @@ enum { VS_ASPECT, VS_INTEGER, VS_STRETCH, VS_WIDE };   /* VS_WIDE = Keep 4:3 + t
 enum { RV_WIDE, RV_BARS, RV_STRETCH };   /* race view: Widescreen (wider field of view, picture keeps its shape) / Black bars (4:3 picture) / Stretched (4:3 picture fills the window) */
 enum { DD_NORMAL = 33 };   /* the game's view: 33 road segments (Pseudo 3D always; test switch RR_DRAW_DIST=<n> on the game side, src\render\road_view_tables.c) */
 #define W3_FAR 150   /* True 3D: the 3D world drawn 150 segments ahead (Far distance) */
-typedef struct VidCfg { int mode, winW, winH, fsW, fsH, fsHz, scale, filter, vsync, fsPref, race, map, fps, true3d, songs, videos, segpos, opp, tod, weather, dayMin, fog, road, weapon, bldgShadow; } VidCfg;   /* winW/winH 0 = automatic size; fsPref = the fullscreen kind Alt+Enter switches to */
+typedef struct VidCfg { int mode, winW, winH, fsW, fsH, fsHz, scale, filter, vsync, fsPref, race, map, fps, true3d, songs, videos, segpos, opp, tod, weather, dayMin, fog, road, weapon, bldgShadow,
+    dist, grass, oshadow, refl, interior, ground, rscale, gdist, halos, wxfx, glare, spray; } VidCfg;   /* winW/winH 0 = automatic size; fsPref = the fullscreen kind Alt+Enter switches to */
 static VidCfg g_vid = { VM_WINDOW, 0,0, 0,0,0, VS_ASPECT, 0, 0, VM_BORDERLESS, RV_WIDE, 1, 1, 0, 0, 0, 0, 14, 0, 0, 5, 0 };   /* map / fps = course map, FPS counter; true3d = Video Options > Race 3D (0 = Pseudo 3D); songs = Sound Mix > Music (musicbox.inc, default off); videos = Video Options > Videos (videoplay.inc, default off);
    tod / weather / dayMin = True 3D time of day (0 Cycle, 1 Dawn, 2 Day, 3 Sunset, 4 Night), weather (0 Clear, 1 Rain, 2 Snow), race minutes per day of the Cycle (weather.inc; the race's Esc pause);
    segpos = Video Options > Segment tracker (rrddraw.c ShowRoadPos, default off).  scale / race are not options (2026-11-11, user): widescreen is automatic - menus Keep 4:3 with the
@@ -46,22 +47,52 @@ static float g_wsSx=1.0f, g_wsSy=1.0f; static int g_wsOffX, g_wsOffY, g_wsCw=640
 static int VidClamp(int v,int lo,int hi){ return v<lo?lo:(v>hi?hi:v); }
 static void VidSanitize(void)
 {   { const char *e=getenv("RR_DISPLAY"); if(e && *e) g_vid.mode=atoi(e); }   /* override of Display mode (0 window, 1 borderless fullscreen, 2 exclusive): the recording
+    g_vid.dist=VidClamp(g_vid.dist,0,2); g_vid.grass=VidClamp(g_vid.grass,0,2); g_vid.oshadow=VidClamp(g_vid.oshadow,0,1); g_vid.refl=VidClamp(g_vid.refl,0,1); g_vid.interior=VidClamp(g_vid.interior,0,1);
+    g_vid.ground=VidClamp(g_vid.ground,0,1); g_vid.rscale=VidClamp(g_vid.rscale,0,2); g_vid.bldgShadow=VidClamp(g_vid.bldgShadow,0,1);
+    g_vid.gdist=VidClamp(g_vid.gdist,0,2); g_vid.halos=VidClamp(g_vid.halos,0,1); g_vid.wxfx=VidClamp(g_vid.wxfx,0,2); g_vid.glare=VidClamp(g_vid.glare,0,1); g_vid.spray=VidClamp(g_vid.spray,0,1);
                                                                               (launch.json "Play (debugger) + record video") needs 1 - window capture cannot follow exclusive fullscreen */
     g_vid.mode=VidClamp(g_vid.mode,VM_WINDOW,VM_EXCLUSIVE); g_vid.filter=VidClamp(g_vid.filter,0,1); g_vid.vsync=VidClamp(g_vid.vsync,0,1);
-    g_vid.map=VidClamp(g_vid.map,0,1); g_vid.fps=VidClamp(g_vid.fps,0,1); g_vid.true3d=VidClamp(g_vid.true3d,0,1); g_vid.songs=VidClamp(g_vid.songs,0,1); g_vid.videos=VidClamp(g_vid.videos,0,1); g_vid.segpos=VidClamp(g_vid.segpos,0,1); g_vid.opp=VidClamp(g_vid.opp,1,50); g_vid.tod=VidClamp(g_vid.tod,0,4); g_vid.weather=VidClamp(g_vid.weather,0,5); g_vid.dayMin=VidClamp(g_vid.dayMin,1,120); g_vid.fog=VidClamp(g_vid.fog,0,7); g_vid.weapon=VidClamp(g_vid.weapon,0,31); g_vid.bldgShadow=VidClamp(g_vid.bldgShadow,0,1);    g_vid.fsPref=(g_vid.fsPref==VM_EXCLUSIVE)?VM_EXCLUSIVE:VM_BORDERLESS;
+    g_vid.map=VidClamp(g_vid.map,0,1); g_vid.fps=VidClamp(g_vid.fps,0,1); g_vid.true3d=1;   /* (True 3D always: Pseudo 3D is not a player option - user, 2026-11-15; the tests pick it with RR_WORLD3D=0) */ g_vid.songs=VidClamp(g_vid.songs,0,1); g_vid.videos=VidClamp(g_vid.videos,0,1); g_vid.segpos=VidClamp(g_vid.segpos,0,1); g_vid.opp=VidClamp(g_vid.opp,1,50); g_vid.tod=VidClamp(g_vid.tod,0,4); g_vid.weather=VidClamp(g_vid.weather,0,5); g_vid.dayMin=VidClamp(g_vid.dayMin,1,120); g_vid.fog=VidClamp(g_vid.fog,0,7); g_vid.weapon=VidClamp(g_vid.weapon,0,31); g_vid.bldgShadow=VidClamp(g_vid.bldgShadow,0,1);    g_vid.fsPref=(g_vid.fsPref==VM_EXCLUSIVE)?VM_EXCLUSIVE:VM_BORDERLESS;
     if(g_vid.winW<320 || g_vid.winH<240 || g_vid.winW>16384 || g_vid.winH>16384){ g_vid.winW=0; g_vid.winH=0; }
     if(g_vid.fsW<320 || g_vid.fsH<240 || g_vid.fsW>16384 || g_vid.fsH>16384){ g_vid.fsW=0; g_vid.fsH=0; g_vid.fsHz=0; }
     if(g_vid.fsHz<0 || g_vid.fsHz>1000) g_vid.fsHz=0; }
+/* True 3D detail (Video Options > True 3D detail, videocfg.inc RR_Video3D; user, 2026-11-14: "Optimised for Steam Deck" ... a preset for "3080 GPU" vs "Steam deck"):
+   dist 0 Near / 1 Medium / 2 Far (W3Far: 70 / 105 / 150 segments), grass 0 Off / 1 Low / 2 High, oshadow = trees', lamps', poles' shadows, refl = puddles mirror
+   the world (rain), interior = rooms behind the City's windows, ground = rocks, fallen leaves, dry scrub (from the next race: built with the course), rscale
+   0 / 1 / 2 = the 3D picture at 50 / 75 / 100 % of the window's pixels, stretched to it; bldgShadow = the buildings' sun shadows.  Presets: 0 High (an RTX 3080:
+   everything), 1 Steam Deck (medium distance, light grass, no building shadows, no puddle mirror); the default is the Steam Deck one where Steam says
+   it runs on a Deck (SteamDeck=1), else High */
+static void VidGfxPreset(int p)
+{   if(p==1){ g_vid.dist=0; g_vid.grass=0; g_vid.bldgShadow=0; g_vid.oshadow=0; g_vid.refl=0; g_vid.interior=0; g_vid.ground=0; g_vid.rscale=2; g_vid.gdist=0; g_vid.halos=0; g_vid.wxfx=0; g_vid.glare=0; g_vid.spray=0; }   /* (Steam Deck: everything optional off - user, 2026-11-15) */
+    else { g_vid.dist=2; g_vid.grass=2; g_vid.bldgShadow=0; g_vid.oshadow=1; g_vid.refl=1; g_vid.interior=1; g_vid.ground=1; g_vid.rscale=2; g_vid.gdist=2; g_vid.halos=1; g_vid.wxfx=2; g_vid.glare=1; g_vid.spray=1; } }
+static int VidGfxWhich(void)   /* 0 High, 1 Steam Deck, 2 Custom */
+{   VidCfg k=g_vid; int p; for(p=0;p<2;p++){ VidGfxPreset(p); if(g_vid.dist==k.dist && g_vid.grass==k.grass && g_vid.bldgShadow==k.bldgShadow && g_vid.oshadow==k.oshadow && g_vid.refl==k.refl
+        && g_vid.interior==k.interior && g_vid.ground==k.ground && g_vid.rscale==k.rscale && g_vid.gdist==k.gdist && g_vid.halos==k.halos && g_vid.wxfx==k.wxfx && g_vid.glare==k.glare && g_vid.spray==k.spray){ g_vid=k; return p; } g_vid=k; } return 2; }
+/* running on a Steam Deck (user, 2026-11-15: "detect steam deck automatically ... and set the video preset to steamdeck"): Steam's SteamDeck=1, or - under
+   Proton, whose Z: drive is the Linux file system - the board's name the Linux kernel reports, Jupiter (the LCD Deck) or Galileo (the OLED one).  Once */
+static int VidOnDeck(void)
+{   static int deck=-1;
+    if(deck<0){ const char *e=getenv("SteamDeck"); FILE *f; char nm[64]; deck=e && *e=='1';
+        if(!deck && (f=fopen("Z:\\sys\\devices\\virtual\\dmi\\id\\product_name","r"))!=NULL){ if(fgets(nm,sizeof nm,f) && (strstr(nm,"Jupiter") || strstr(nm,"Galileo"))) deck=1; fclose(f); } }
+    return deck; }
 static void VidLoad(void)
 {   FILE *f; char line[160];
+    int iniDeck=-1;   /* (video.ini's gfx_device: the machine its True 3D detail settings were made on - 0 a PC, 1 a Steam Deck) */
+    VidGfxPreset(VidOnDeck());   /* (the detail defaults; video.ini overrides them) */
     g_vidPersist = !(getenv("RR_HEADLESS") || getenv("RR_SCRIPT"));
     if(!g_vidPersist || !(f=fopen("video.ini","r"))) return;
     while(fgets(line,sizeof line,f)){ char *eq,*k=line,*e; int v; if(line[0]=='#'||line[0]==';') continue; eq=strchr(line,'='); if(!eq) continue; *eq=0; v=atoi(eq+1);
         while(*k==' '||*k=='\t') k++; e=k+strlen(k); while(e>k && (e[-1]==' '||e[-1]=='\t')) *--e=0;
         if(!_stricmp(k,"mode")) g_vid.mode=v; else if(!_stricmp(k,"window_width")) g_vid.winW=v; else if(!_stricmp(k,"window_height")) g_vid.winH=v;
         else if(!_stricmp(k,"fullscreen_width")) g_vid.fsW=v; else if(!_stricmp(k,"fullscreen_height")) g_vid.fsH=v; else if(!_stricmp(k,"fullscreen_hz")) g_vid.fsHz=v;
-        else if(!_stricmp(k,"filter")) g_vid.filter=v; else if(!_stricmp(k,"vsync")) g_vid.vsync=v; else if(!_stricmp(k,"fullscreen_kind")) g_vid.fsPref=v; else if(!_stricmp(k,"course_map")) g_vid.map=v; else if(!_stricmp(k,"fps_counter")) g_vid.fps=v; else if(!_stricmp(k,"true_3d")) g_vid.true3d=v; else if(!_stricmp(k,"music_songs")) g_vid.songs=v; else if(!_stricmp(k,"videos")) g_vid.videos=v; else if(!_stricmp(k,"segment_tracker")) g_vid.segpos=v; else if(!_stricmp(k,"opponents")) g_vid.opp=v; else if(!_stricmp(k,"time_of_day")) g_vid.tod=v; else if(!_stricmp(k,"weather")) g_vid.weather=v; else if(!_stricmp(k,"day_minutes")) g_vid.dayMin=v; else if(!_stricmp(k,"fog")) g_vid.fog=v; else if(!_stricmp(k,"weapon")) g_vid.weapon=v; else if(!_stricmp(k,"building_shadows")) g_vid.bldgShadow=v; }   /* (an older video.ini's scaling / race_view / clouds / sprites / widescreen_mod / widescreen_menus are ignored: not options any more) */
-    fclose(f); VidSanitize(); }
+        else if(!_stricmp(k,"filter")) g_vid.filter=v; else if(!_stricmp(k,"vsync")) g_vid.vsync=v; else if(!_stricmp(k,"fullscreen_kind")) g_vid.fsPref=v; else if(!_stricmp(k,"course_map")) g_vid.map=v; else if(!_stricmp(k,"fps_counter")) g_vid.fps=v; else if(!_stricmp(k,"true_3d")) g_vid.true3d=v; else if(!_stricmp(k,"music_songs")) g_vid.songs=v; else if(!_stricmp(k,"videos")) g_vid.videos=v; else if(!_stricmp(k,"segment_tracker")) g_vid.segpos=v; else if(!_stricmp(k,"opponents")) g_vid.opp=v; else if(!_stricmp(k,"time_of_day")) g_vid.tod=v; else if(!_stricmp(k,"weather")) g_vid.weather=v; else if(!_stricmp(k,"day_minutes")) g_vid.dayMin=v; else if(!_stricmp(k,"fog")) g_vid.fog=v; else if(!_stricmp(k,"weapon")) g_vid.weapon=v; else if(!_stricmp(k,"building_shadows")) g_vid.bldgShadow=v;
+        else if(!_stricmp(k,"draw_distance")) g_vid.dist=v; else if(!_stricmp(k,"grass")) g_vid.grass=v; else if(!_stricmp(k,"object_shadows")) g_vid.oshadow=v; else if(!_stricmp(k,"puddle_reflections")) g_vid.refl=v;
+        else if(!_stricmp(k,"window_interiors")) g_vid.interior=v; else if(!_stricmp(k,"ground_detail")) g_vid.ground=v; else if(!_stricmp(k,"render_scale")) g_vid.rscale=v;
+        else if(!_stricmp(k,"gfx_device")) iniDeck=v;
+        else if(!_stricmp(k,"effects_distance") || !_stricmp(k,"grass_distance")) g_vid.gdist=v; else if(!_stricmp(k,"light_halos")) g_vid.halos=v; else if(!_stricmp(k,"weather_particles")) g_vid.wxfx=v; else if(!_stricmp(k,"sun_glare")) g_vid.glare=v; else if(!_stricmp(k,"spray")) g_vid.spray=v; }   /* (an older video.ini's scaling / race_view / clouds / sprites / widescreen_mod / widescreen_menus are ignored: not options any more) */
+    fclose(f);
+    if(VidOnDeck() ? iniDeck!=1 : iniDeck==1) VidGfxPreset(VidOnDeck());   /* (settings made on another kind of machine - a PC's video.ini copied to the Deck: this one's preset) */
+    VidSanitize(); }
 static void VidSave(void)
 {   FILE *f; if(!g_vidPersist) return; f=fopen("video.ini","w"); if(!f) return;
     fprintf(f,"# Road Rash video settings (written by the Restroom > Video Options screen)\n");
@@ -70,12 +101,16 @@ static void VidSave(void)
     fprintf(f,"# fullscreen display mode (mode 2); 0 = the desktop's current mode\nfullscreen_width=%d\nfullscreen_height=%d\nfullscreen_hz=%d\n",g_vid.fsW,g_vid.fsH,g_vid.fsHz);
     fprintf(f,"# what Alt+Enter / F11 switch to: 1 = borderless, 2 = fullscreen\nfullscreen_kind=%d\n",g_vid.fsPref);
     fprintf(f,"# filter: 0 = sharp pixels, 1 = smooth\nfilter=%d\n# vsync: 0 / 1\nvsync=%d\n",g_vid.filter,g_vid.vsync);
-    fprintf(f,"# race extras: course map on the right of the race view, frames-per-second counter (0 / 1)\ncourse_map=%d\nfps_counter=%d\n# races: 0 = Pseudo 3D (the game's own view, original distance, road forks), 1 = True 3D (a real 3D world, far distance, no road forks)\ntrue_3d=%d\n",g_vid.map,g_vid.fps,g_vid.true3d);
+    fprintf(f,"# race extras: course map on the right of the race view, frames-per-second counter (0 / 1)\ncourse_map=%d\nfps_counter=%d\n",g_vid.map,g_vid.fps);   /* (true_3d is no longer written: players always get True 3D - RR_WORLD3D=0 is the tests' Pseudo 3D) */
     fprintf(f,"# Sound Mix > Music: 0 = the game's own music, 1 = random songs from AUDIO\\MUSIC (*.RRA) in menus and races, with a now-playing title\nmusic_songs=%d\n",g_vid.songs);
     fprintf(f,"# Video Options > Videos: 1 = play the game's videos (VIDEO_UP\\*.mp4), 0 = skip them all\nvideos=%d\n",g_vid.videos);
     fprintf(f,"# Video Options > Segment tracker: 1 = the course position (track, road segment, lateral position) top left during races, 0 = off\nsegment_tracker=%d\n",g_vid.segpos);
     fprintf(f,"# Restroom > Game Options > Opponents: the computer riders in a race, 1..50 (14 = the original field)\nopponents=%d\n",g_vid.opp);
-    fprintf(f,"# True 3D races (Esc in a race): time_of_day 0 = cycle, 1 = dawn, 2 = day, 3 = sunset, 4 = night; weather 0 = clear, 1 = rain, 2 = snow, 3 = heavy rain, 4 = heavy snow, 5 = torrential rain; day_minutes = race minutes per day of the cycle; fog 0 = auto (with the weather), 1 = off, 2 = light, 3 = heavy, 4 = haze, 5 = medium, 6 = pea soup, 7 = ground mist\ntime_of_day=%d\nweather=%d\nday_minutes=%d\nfog=%d\n# weapon 0 = the game's own, 1 = hammer, 2 = tire iron, 3.. = the pictures in mod\\weapons (alphabetical)\nweapon=%d\n# building_shadows 1 = the buildings cast shadows in the sun, 0 = off (default)\nbuilding_shadows=%d\n",g_vid.tod,g_vid.weather,g_vid.dayMin,g_vid.fog,g_vid.weapon,g_vid.bldgShadow);    fclose(f); }
+    fprintf(f,"# True 3D races (Esc in a race): time_of_day 0 = cycle, 1 = dawn, 2 = day, 3 = sunset, 4 = night; weather 0 = clear, 1 = rain, 2 = snow, 3 = heavy rain, 4 = heavy snow, 5 = torrential rain; day_minutes = race minutes per day of the cycle; fog 0 = auto (with the weather), 1 = off, 2 = light, 3 = heavy, 4 = haze, 5 = medium, 6 = pea soup, 7 = ground mist\ntime_of_day=%d\nweather=%d\nday_minutes=%d\nfog=%d\n# weapon 0 = the game's own, 1 = hammer, 2 = tire iron, 3.. = the pictures in mod\\weapons (alphabetical)\nweapon=%d\n",g_vid.tod,g_vid.weather,g_vid.dayMin,g_vid.fog,g_vid.weapon);   /* (building_shadows: removed - user, 2026-11-15) */
+    fprintf(f,"# Video Options > True 3D detail: draw_distance 0 near / 1 medium / 2 far; grass 0 off / 1 low / 2 high; object_shadows, puddle_reflections, window_interiors, ground_detail 0 / 1;\n# render_scale 0 = 50 %%, 1 = 75 %%, 2 = 100 %% of the window's pixels (the 3D picture)\ndraw_distance=%d\ngrass=%d\nobject_shadows=%d\npuddle_reflections=%d\nwindow_interiors=%d\nground_detail=%d\nrender_scale=%d\n",g_vid.dist,g_vid.grass,g_vid.oshadow,g_vid.refl,g_vid.interior,g_vid.ground,g_vid.rscale);
+    fprintf(f,"# effects_distance (the grass, window interiors and depth, wall relief, rain on the road - all alike) 0 near / 1 medium / 2 far; light_halos, sun_glare, spray (tyre / hydrant water, dirt, grass) 0 / 1; weather_particles 0 off / 1 low / 2 high\neffects_distance=%d\nlight_halos=%d\nweather_particles=%d\nsun_glare=%d\nspray=%d\n",g_vid.gdist,g_vid.halos,g_vid.wxfx,g_vid.glare,g_vid.spray);
+    fprintf(f,"# gfx_device: the machine the True 3D detail settings above were made on, 0 = a PC, 1 = a Steam Deck (another kind: its own preset instead)\ngfx_device=%d\n",VidOnDeck());
+    fclose(f); }
 /* the opponents of the next race (src\race\rider_slots.c; Game Options > Opponents) */
 __declspec(dllexport) int __stdcall RR_Opponents(void){ return g_vid.opp; }
 

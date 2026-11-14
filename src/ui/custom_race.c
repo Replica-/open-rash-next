@@ -18,7 +18,7 @@ static int g_prevMode, g_prevLevel;
 static const signed char *g_curve, *g_slope; static int g_curveN;   /* the editor's road per piece of the course (the shim's memory) */
 static int *g_height;                         /* the height before each piece (g_curveN + 1): the slopes added up */
 
-static FARPROC Shim(const char *name) { HMODULE sh = GetModuleHandleA("ddraw.dll"); return sh ? GetProcAddress(sh, name) : 0; }
+static FARPROC Shim(const char *name) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); return sh ? GetProcAddress(sh, name) : 0; }
 
 /* the Game Mode page's Custom Race item: the editor, then (Race) the race on the base track - as the track page does it (ChoiceScreenPick) */
 int __fastcall rr_CustomRacePick(int *item)

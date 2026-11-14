@@ -331,32 +331,40 @@ static void GpuRaceEnd(void){ W3RaceEnd(); if(g_gpuOn) LOG("GPU race end: %lu sc
 /* present of the race frame s: draw the three layers; 0 = not a GPU frame (normal path) */
 static int GpuCompose(Surf *s)
 {   DWORD lut[256], *bg, *ov; PALETTEENTRY black[256]; const PALETTEENTRY *pe; Pal *pal; int x, y, w, h, i; long hist[256]; SDL_Rect cr;
+    PF_T0(pfB);   /* (RR_PROFILE: frame copy = the 8-bit frame to the background + overlay pictures, their upload) */
     if(!g_gpuOn || !g_gpuScene || !g_ren || !g_tex || !s || s->bpp!=8 || s->w!=g_gpuBgW || s->h!=g_gpuBgH) return 0;
     w=s->w; h=s->h; pal=s->pal?s->pal:(g_primary?g_primary->pal:NULL); memset(black,0,sizeof black); pe=pal?pal->e:black; if(g_cdPal) pe=g_cdPal;
     for(i=0;i<256;i++) lut[i]=0xFF000000u|((DWORD)pe[i].peRed<<16)|((DWORD)pe[i].peGreen<<8)|pe[i].peBlue;
-    bg=(DWORD*)malloc((size_t)w*h*4); ov=(DWORD*)malloc((size_t)w*h*4); if(!bg || !ov){ free(bg); free(ov); return 0; }
+    {   /* the two pictures' buffers: made once (were 2 x 1.2 MB malloc'ed every frame) */
+        static DWORD *bgB, *ovB; static int bufN; if(bufN<w*h){ free(bgB); free(ovB); bgB=(DWORD*)malloc((size_t)w*h*4); ovB=(DWORD*)malloc((size_t)w*h*4); bufN=bgB && ovB ? w*h : 0; }
+        if(!bufN) return 0; bg=bgB; ov=ovB; }
     memset(hist,0,sizeof hist);
-    for(y=0;y<h;y++){ const BYTE *fr=s->bits+(size_t)y*s->pitch, *sn=g_gpuBg+(size_t)y*w; int inY=(y>=g_gpuClip[1] && y<=g_gpuClip[3]);
-        for(x=0;x<w;x++){ int in=inY && x>=g_gpuClip[0] && x<g_gpuClip[2], f=fr[x];
-            if(in){ int b=sn[x]; bg[y*w+x]=(b==g_gpuMarkPrev)?0xFF000000u:lut[b]; ov[y*w+x]=(f==g_gpuMark)?0:lut[f]; hist[b]++; if(f!=g_gpuMark) hist[f]++; }
-            else { bg[y*w+x]=lut[f]; ov[y*w+x]=0; hist[f]++; } } }
+    {   /* each row in three runs - left of the view, the view, right of it - no test per pixel (user, 2026-11-15: the Steam Deck's frame rate; this copy was
+           ~1.9 ms a frame on a Ryzen 5800X) */
+        int x0=g_gpuClip[0]<0?0:g_gpuClip[0]>w?w:g_gpuClip[0], x1=g_gpuClip[2]<x0?x0:g_gpuClip[2]>w?w:g_gpuClip[2]; DWORD mp=(DWORD)g_gpuMarkPrev, mk=(DWORD)g_gpuMark;
+        for(y=0;y<h;y++){ const BYTE *fr=s->bits+(size_t)y*s->pitch, *sn=g_gpuBg+(size_t)y*w; DWORD *bo=bg+(size_t)y*w, *oo=ov+(size_t)y*w; int a=w, b=w;   /* (outside the view: all of it the left run) */
+            if(y>=g_gpuClip[1] && y<=g_gpuClip[3]){ a=x0; b=x1;
+                for(x=a;x<b;x++){ DWORD sb=sn[x], f=fr[x]; bo[x]=(sb==mp)?0xFF000000u:lut[sb]; hist[sb]++; if(f==mk) oo[x]=0; else { oo[x]=lut[f]; hist[f]++; } } }
+            for(x=0;x<a;x++){ DWORD f=fr[x]; bo[x]=lut[f]; hist[f]++; }
+            for(x=b;x<w;x++){ DWORD f=fr[x]; bo[x]=lut[f]; hist[f]++; }
+            if(a>0) memset(oo,0,(size_t)a*4); if(b<w) memset(oo+b,0,(size_t)(w-b)*4); } }
     { int best=255; long bn=hist[255]; for(i=254;i>=1;i--) if(hist[i]<bn){ bn=hist[i]; best=i; } g_gpuMark=best; }   /* next marker: the colour this frame used least */
     if(!g_gpuOv){ g_gpuOv=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h); if(g_gpuOv) SDL_SetTextureBlendMode(g_gpuOv,SDL_BLENDMODE_BLEND); }
     else { float tw, th; SDL_GetTextureSize(g_gpuOv,&tw,&th); if((int)tw!=w || (int)th!=h){ SDL_DestroyTexture(g_gpuOv); g_gpuOv=SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,w,h); if(g_gpuOv) SDL_SetTextureBlendMode(g_gpuOv,SDL_BLENDMODE_BLEND); } }
     if(g_gpuOv) SDL_SetTextureScaleMode(g_gpuOv,g_vid.filter?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);
     WxUpdate();                /* True 3D time of day / weather (weather.inc) */
     SDL_UpdateTexture(g_tex,NULL,bg,w*4); SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect);
-    HsDraw(w,h);               /* HD sky over the panorama (hdsky.inc) */
-    W3Draw(w,h,&g_fullRect);   /* the true-3D world (world3d.inc), between the background and the game's remaining polygons */
-    W3Blood(w,h);              /* blood from hit riders (world3d.inc) */
+    PF_ADD(PF_BASE, pfB); { PF_T0(pfH); HsDraw(w,h); PF_ADD(PF_SKY, pfH); }   /* HD sky over the panorama (hdsky.inc) */
+    { PF_T0(pfW); W3Draw(w,h,&g_fullRect); PF_ADD(PF_W3DRAW, pfW); }   /* the true-3D world (world3d.inc), between the background and the game's remaining polygons */
+    PF_T0(pfP); W3Blood(w,h);   /* blood from hit riders (world3d.inc) */
     for(i=0;i<g_gnb;i++){ GpuBatch *b=&g_gb[i]; cr.x=b->clip[0]; cr.y=b->clip[1]; cr.w=b->clip[2]-b->clip[0]; cr.h=b->clip[3]-b->clip[1]+1;
         if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); WxBatchMod(b->t,1); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); WxBatchMod(b->t,0); }
     SDL_SetRenderClipRect(g_ren,NULL);
     WxParticles(w,h);          /* rain / snow in front of the world, under the HUD */
     WxGlare(w,h);              /* the sun's glare (weather.inc) */
     if(g_gpuOv){ SDL_UpdateTexture(g_gpuOv,NULL,ov,w*4); SDL_RenderTexture(g_ren,g_gpuOv,NULL,&g_fullRect); }
-    HhDraw(s,lut);             /* the HD dashboard + the HUD over it (hdhud.inc) */
-    CdDraw(w,h);               /* the start countdown, fancy (weather.inc) */
+    PF_ADD(PF_POLYS, pfP); { PF_T0(pfU); HhDraw(s,lut); PF_ADD(PF_HUD, pfU); }   /* the HD dashboard + the HUD over it (hdhud.inc) */
+    PF_T0(pfX); CdDraw(w,h);   /* the start countdown, fancy (weather.inc) */
     WxPanel(w,h);             /* the Esc pause's settings */
     GpuDrawExtras(w,h);
-    free(bg); free(ov); return 1; }
+    PF_ADD(PF_PANELS, pfX); return 1; }   /* (bg / ov: kept for the next frame) */

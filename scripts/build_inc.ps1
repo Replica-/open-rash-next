@@ -1,6 +1,6 @@
 # Incremental build: recompiles only the src\ C files newer than their object in analysis\build\ng (or the files named with -Files), then link (with the resources).
 # Same compiler flags as build_src.ps1 (RR_NOGAME build). A changed header is NOT tracked: name the files that include it (-Files a.c,b.c) or run build.ps1.
-# usage: build_inc.ps1 [-Files x.c,y.c] [-Shim]   (-Shim also rebuilds ddraw.dll)
+# usage: build_inc.ps1 [-Files x.c,y.c] [-Shim]   (-Shim also rebuilds rrddraw.dll)
 param([string[]]$Files = @(), [switch]$Shim)
 . "$PSScriptRoot\common.ps1"
 $out = "$Build\ng"

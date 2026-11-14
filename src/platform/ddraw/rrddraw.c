@@ -37,6 +37,29 @@ static WNDPROC g_origProc, g_sdlProc; static SDL_FRect g_fullRect={0,0,640,480};
 static FILE *g_log; static volatile int g_trAll;   /* RR_LOG_PRESENTS: log every surface call for a few race frames */
 #define TR(name,s) do{ static int n_; if(g_log && (g_trAll || ((s)->isPrimary && (n_<12 || n_%100==0)))) fprintf(g_log,"%s #%d surf=%dx%d bpp=%d prim=%d",name,n_,(s)->w,(s)->h,(s)->bpp,(s)->isPrimary), fputc(10,g_log), fflush(g_log); n_++; }while(0)
 #define LOG(...) do{ if(g_log){ fprintf(g_log,"[%lu] ",GetTickCount()); fprintf(g_log,__VA_ARGS__); fputc(10,g_log); fflush(g_log);} }while(0)
+/* frame profiler (test switch RR_PROFILE=1; user, 2026-11-15: "the game runs 50 fps with a lot of stuff off, is there something else taking up high
+   cpu? can you profile the game"): wall-clock time per frame in each stage, averaged and logged every 300 presents - game = between two presents (the
+   game's own logic and its drawing calls), present = the shim's whole frame, inside it w3 draw = the True 3D frame (live = the live stretch rebuilt,
+   grass, extras = cars / hydrants / shadows / lights, render = handing the world to the GPU, sprites = the game's polygons mapped into it), flip =
+   SDL_RenderPresent (waiting for the GPU / v-sync).  Works on the Steam Deck through RR_LOG too */
+enum { PF_GAME, PF_PRESENT, PF_W3DRAW, PF_LIVE, PF_GRASS, PF_EXTRAS, PF_RENDER, PF_SPRITES, PF_FLIP, PF_BASE, PF_SKY, PF_POLYS, PF_HUD, PF_PANELS, PF_N };
+static const char *const g_pfName[PF_N] = { "game", "present", "w3 draw", "live", "grass", "extras", "render", "sprites", "flip", "frame copy", "sky", "game polys", "hud", "panels" };
+static double g_pfSum[PF_N], g_pfMax[PF_N], g_pfLastEnd, g_pfFreqMs; static int g_pfOn = -1; static unsigned g_pfFrames;
+static double g_pfGpu[3]; static int g_pfGpuN;   /* GPU milliseconds of the shadow map, the puddle mirror, the world (render3d.h R3_GpuMark) */
+static double PfNow(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart; }
+#define PF_T0(v) double v = g_pfOn > 0 ? PfNow() : 0
+#define PF_ADD(i, v) do { if (g_pfOn > 0) { double d_ = PfNow() - (v); g_pfSum[i] += d_; if (d_ > g_pfMax[i]) g_pfMax[i] = d_; } } while (0)
+static void PfStart(void)   /* start of a present: the game's share since the last one */
+{   if (g_pfOn < 0) { LARGE_INTEGER f; g_pfOn = getenv("RR_PROFILE") != NULL; QueryPerformanceFrequency(&f); g_pfFreqMs = (double)f.QuadPart / 1000.0; }
+    if (g_pfOn > 0 && g_pfLastEnd > 0) { double d = PfNow() - g_pfLastEnd; g_pfSum[PF_GAME] += d; if (d > g_pfMax[PF_GAME]) g_pfMax[PF_GAME] = d; } }
+static void PfEnd(void)   /* end of a present: every 300, the averages (and the worst frame) in milliseconds */
+{   if (g_pfOn <= 0) return;
+    g_pfLastEnd = PfNow();
+    if (++g_pfFrames >= 300) { char t[900]; int i, n = 0; double all = (g_pfSum[PF_GAME] + g_pfSum[PF_PRESENT]) / g_pfFrames / g_pfFreqMs;
+        n += _snprintf(t + n, sizeof t - n, "profile %u frames: %.1f fps |", g_pfFrames, all > 0 ? 1000.0 / all : 0);
+        for (i = 0; i < PF_N && n < (int)sizeof t - 40; i++) n += _snprintf(t + n, sizeof t - n, " %s %.2f (max %.1f)", g_pfName[i], g_pfSum[i] / g_pfFrames / g_pfFreqMs, g_pfMax[i] / g_pfFreqMs);
+        if (g_pfGpuN) n += _snprintf(t + n, sizeof t - n, " | GPU shadow map %.2f mirror %.2f world %.2f", g_pfGpu[0] / g_pfGpuN, g_pfGpu[1] / g_pfGpuN, g_pfGpu[2] / g_pfGpuN);
+        LOG("%s ms", t); memset(g_pfSum, 0, sizeof g_pfSum); memset(g_pfMax, 0, sizeof g_pfMax); g_pfFrames = 0; memset(g_pfGpu, 0, sizeof g_pfGpu); g_pfGpuN = 0; } }
 /* the shim's fonts (user, 2026-11-14: the Steam Deck has no Impact / Bahnschrift - "i want this to support steamdeck"): open-licence fonts shipped in the
    game's fonts folder (data\fonts: Anton for Impact, Arimo - Arial's metrics - for Arial, Barlow Condensed for Bahnschrift; their licences beside them),
    loaded for this process only (FR_PRIVATE) the first time a font is wanted, from fonts\ in the current folder (the game's data) or beside the exe; the same on
@@ -107,7 +130,7 @@ static DWORD WINAPI PostThread(LPVOID p)
 {   unsigned long pn=0, pending=0; int ended=0; char path[MAX_PATH+16]; (void)p; timeBeginPeriod(1);
     for(;;){ Sleep(10);
         if(!(g_raceFrame0 && g_raceN>=100 && g_lastSceneTick && (int)(GetTickCount()-g_lastSceneTick)>400)){ pn=0; pending=0; ended=0; continue; }
-        if(!ended){ ended=1; { HMODULE ds=GetModuleHandleA("dsound.dll"); void (__stdcall *rt)(void)=ds?(void(__stdcall*)(void))GetProcAddress(ds,"RR_SndRealtime"):0; if(rt) rt(); } LOG("end of race: post-race ticks start"); }
+        if(!ended){ ended=1; { HMODULE ds=GetModuleHandleA("rrdsound.dll"); void (__stdcall *rt)(void)=ds?(void(__stdcall*)(void))GetProcAddress(ds,"RR_SndRealtime"):0; if(rt) rt(); } LOG("end of race: post-race ticks start"); }
         pn++;
         if(PostTick(pn) && g_dumpDir[0]) pending=pn;                       /* a dump is due ... */
         AcquireSRWLockShared(&g_surfLk); if(pending && g_lastShown && !SurfBlank(g_lastShown)){ sprintf(path,"%s/post%06lu.bmp",g_dumpDir,pending); DumpBmp(g_lastShown,path); pending=0; } ReleaseSRWLockShared(&g_surfLk);   /* ... and is taken as soon as something is on the screen (a fade/load shows black) */
@@ -221,6 +244,7 @@ static volatile LONG g_vpPlaying;   /* a video is on screen (videoplay.inc): not
 static void Present(Surf *s)
 {
     if (g_vpPlaying) return;
+    PfStart(); PF_T0(pfT);   /* (RR_PROFILE: the frame's stages) */
     DWORD *px; char path[MAX_PATH+16]; int gpuDump=0; if(g_modalSurf && s!=g_modalSurf) return; g_frame++; g_lastPresentTick=GetTickCount(); g_lastShown=s;
     { static int on=-1; static DWORD t0; static unsigned long f0; if(on<0) on=getenv("RR_PRESENT_RATE")!=NULL;   /* test switch RR_PRESENT_RATE=1: presents per second in the log (speed checks) */
       if(on){ DWORD t=GetTickCount(); if(!t0){ t0=t; f0=g_frame; } else if(t-t0>=1000){ LOG("presents: %lu per s",g_frame-f0); t0=t; f0=g_frame; } } }
@@ -232,7 +256,7 @@ static void Present(Surf *s)
     { int scene=g_sceneFlag; g_sceneThis=scene; if (g_detOn && !g_raceFrame0 && scene) { g_raceFrame0=g_frame; g_raceN=0; g_gf0=g_framePtr?*g_framePtr:0; g_gfLast=g_gf0-1; LOG("DET: race frame 0 = present #%lu (first 3D scene, game frame %d)",g_frame,g_gf0); MmKillMenuTimer(); }
       else if (g_raceFrame0 && scene) { /* race clock = the game's own frame counter: a scene drawn twice for the same game frame (repaint) is ignored */ int gf=g_framePtr?*g_framePtr:(int)(g_raceN+1+g_gf0); if (gf==g_gfLast) g_sceneThis=0; else { g_gfLast=gf; g_raceN=(unsigned long)(gf-g_gf0); } } }
     g_sceneFlag=0;
-    if (g_detOn && g_raceFrame0 && g_sceneThis) { static void (__stdcall *sndStep)(void); static int looked; if(!looked){ HMODULE ds=GetModuleHandleA("dsound.dll"); sndStep=ds?(void(__stdcall*)(void))GetProcAddress(ds,"RR_SndStep"):0; looked=1; } if(sndStep) sndStep(); }   /* deterministic audio clock: see rrdsound.c */
+    if (g_detOn && g_raceFrame0 && g_sceneThis) { static void (__stdcall *sndStep)(void); static int looked; if(!looked){ HMODULE ds=GetModuleHandleA("rrdsound.dll"); sndStep=ds?(void(__stdcall*)(void))GetProcAddress(ds,"RR_SndStep"):0; looked=1; } if(sndStep) sndStep(); }   /* deterministic audio clock: see rrdsound.c */
     SdTestHook(); MbTestHook(); IcTestHook(); VcTestHook(); McTestHook(); VpTestHook();
     if (g_raceFrame0 && g_sceneThis) FrameHashLog(s);
     if (g_raceFrame0 && g_sceneThis && RaceTick(g_raceN) && g_dumpDir[0]) { sprintf(path,"%s/race%06lu.bmp",g_dumpDir,g_raceN); DumpBmp(s,path); gpuDump=1; }
@@ -275,7 +299,7 @@ static void Present(Surf *s)
         static int mark=-1; if(mark<0){ char *e=getenv("RR_SYNC_MARK"); mark=(e && *e=='1'); }
         if(mark){ FILETIME ft; unsigned long long ms; GetSystemTimePreciseAsFileTime(&ft); ms=((((unsigned long long)ft.dwHighDateTime<<32)|ft.dwLowDateTime)/10000ULL)%2000ULL;
             if(ms<100){ SDL_SetRenderDrawColor(g_ren,255,255,255,255); SDL_RenderFillRect(g_ren,NULL); } } }
-    SDL_RenderPresent(g_ren);
+    { PF_T0(pfF); SDL_RenderPresent(g_ren); PF_ADD(PF_FLIP, pfF); } PF_ADD(PF_PRESENT, pfT); PfEnd();
     /* no SDL_PollEvent here: SDL's pump steals the game's WM_KEYDOWN messages (it polls them with PeekMessage) */
 }
 static void InstallTrace(void);
@@ -294,6 +318,7 @@ static void InitVideo(void)
     if (g_quiet && g_hwnd) { g_headless=0;   /* quiet GPU mode: keep the off-screen no-activate window, but go on to create the SDL renderer */
         if ((e=getenv("RR_QUIET_SIZE"))) { int qw=0, qh=0; if (sscanf(e,"%dx%d",&qw,&qh)==2 && qw>=320 && qh>=240 && qw<=7680 && qh<=4320) SetWindowPos(g_hwnd,HWND_BOTTOM,0,0,qw,qh,SWP_NOACTIVATE); } }   /* test switch: the renderer's output size (e.g. 1920x1080 to check the GPU renderer at a high resolution) */
     else if (g_headless || !g_hwnd) return;
+    VidGfxPreset(VidOnDeck());   /* the True 3D detail defaults (High, or Steam Deck on a Deck) - quiet / test runs too, which read no video.ini */
     { char *wm=getenv("RR_WINDOW"); g_vidLegacy=(wm && *wm); if(g_quiet || g_vidLegacy) g_vidPersist=0; else { VidLoad(); VidApply(); } if((e=getenv("RR_MENUSCALE")) && *e) g_vid.scale=VidClamp(atoi(e),VS_ASPECT,VS_WIDE); if((e=getenv("RR_FILTER")) && *e) g_vid.filter=*e==49; }   /* RR_MENUSCALE / RR_FILTER: tests; video.ini + Restroom > Video Options (winscale.inc); RR_WINDOW keeps the plain fixed window below */
     if (!g_quiet && g_vidLegacy) {   /* make the game window a normal 640x480 client-area window */
         char *wm=getenv("RR_WINDOW"); int popup=(wm && !_stricmp(wm,"popup")); RECT r; DWORD st=popup ? (WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS) : (WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS);   /* default: a normal movable window (GetWindowRect is translated, see inject.inc); RR_WINDOW=popup: borderless at (0,0) */

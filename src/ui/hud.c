@@ -248,7 +248,7 @@ static void hud_wide(int end)
     static void (__stdcall *finish)(int *, int, int);
     static int looked;
     if (!looked) {
-        HMODULE m = GetModuleHandleA("ddraw.dll");
+        HMODULE m = GetModuleHandleA("rrddraw.dll");
         looked = 1;
         if (m) {
             begin = (void (__stdcall *)(int *, int))GetProcAddress(m, "RR_HudBegin");
@@ -267,7 +267,7 @@ static void hud_needle(HDC dc, int which, int x0, int y0, int x1, int y1)
     static void (__stdcall *fn)(HDC, int, int, int, int, int);
     static int looked;
     if (!looked) {
-        HMODULE m = GetModuleHandleA("ddraw.dll");
+        HMODULE m = GetModuleHandleA("rrddraw.dll");
         looked = 1;
         if (m) fn = (void (__stdcall *)(HDC, int, int, int, int, int))GetProcAddress(m, "RR_HudNeedle");
     }
@@ -377,7 +377,7 @@ unsigned __stdcall rr_HudDraw(void)
         cnt.top = cnt.top + (0x78 >> (1 - g_hiResRace & 0x1f));
         {   /* the start countdown's number: the shim may draw its own (ddraw weather.inc RR_FancyCountdown) - drawing only */
             static int (__stdcall *fc)(void); static int init;
-            if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; fc = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_FancyCountdown") : 0; }
+            if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; fc = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_FancyCountdown") : 0; }
             if (!(g_raceRunning == 0 && rec_sndPlayerEngine.g_raceActive == 0 && fc && fc()))
                 ShadowTextDraw((int)dc, (int)&(*(char *)&rec_sndPlayerEngine.g_logBuf), (int)&cnt, 0x4851, 0xffffff);
         }

@@ -32,6 +32,7 @@ typedef struct R3 {
     ID3D11ShaderResourceView *ext[R3_MAXEXT]; int next;   /* views of textures owned by others (R3_External), batch tex = R3_EXT + index; released by R3_ExternalClear */
     ID3D11ShaderResourceView *white;
     ID3D11Texture2D *shTex; ID3D11DepthStencilView *shDsv; ID3D11ShaderResourceView *shSrv; ID3D11SamplerState *smpCmp; ID3D11VertexShader *vsSh; ID3D11PixelShader *psSh;   /* the sun's shadow map (R3Frame.shadow) */
+    ID3D11Query *qDis[4], *qTs[4][4]; int qi, qMade;   /* GPU timestamps of the passes (RR_PROFILE: R3_GpuTimes) */
     char err[512];
 } R3;
 
@@ -42,6 +43,7 @@ static const char r3_hlsl[] =
     "  float4 spP[6]; float4 spD[6]; float4 spC[6]; float4 trk; float4 fad; float4 wat; float4 rfl; float4 sun; float4 opt; row_major float4x4 svp; float4 shp; };\n"   /* svp / shp: the sun's shadow map (R3Frame.shadow): its view-projection, strength, 1 / size, bias; spot lights (the bikes' headlights): position + range, direction + cos outer, colour + cos inner; trk.x = 1 / the tracks map's size, y = their strength, z = spots, w = night;
                                                                                                 fad = distance fade start, 1 / its length (0 = none), rain puddles, time (s); wat = the sky colour water reflects, sun glints;
                                                                                                 rfl = the mirror plane's height, 1 = this is the mirror pass, 1 / target size (0 = no mirror picture: puddles show the sky only) */
+    "#define FXD (opt.z > 0 ? opt.z : 7000)\n"   /* the effects' reach (R3Frame.opt[2]: True 3D detail > Effects distance; 0 = not given: 7000) */
     "struct VI { float3 p : POSITION; float2 t : TEXCOORD0; float4 c : COLOR; float k : TEXCOORD1; float2 o : TEXCOORD2; };\n"
     "struct VO { float4 p : SV_Position; float2 t : TEXCOORD0; float4 c : COLOR; float d : TEXCOORD1; float3 w : TEXCOORD2; };\n"
     "Texture2D T : register(t0); Texture2D K : register(t1); Texture2D Rf : register(t2); Texture2D Sm : register(t3); SamplerState S : register(s0); SamplerComparisonState SC : register(s1);\n"
@@ -78,7 +80,7 @@ static const char r3_hlsl[] =
     "      float2 tu = ddx(i.t), tv = ddy(i.t); float det = tu.x * tv.y - tv.x * tu.y; det = abs(det) < 1e-14 ? 1e-14 : det;\n"
     "      float3 eu = (ddx(i.w) * tv.y - ddy(i.w) * tu.y) / det, ev = (ddy(i.w) * tu.x - ddx(i.w) * tv.x) / det, nf = normalize(n); if (dot(nf, eye.xyz - i.w) < 0) nf = -nf;\n"   /* world per u / v; facing the eye */
     "      float wg = abs(c.a - 0.698) < 0.02 ? 1 : abs(c.a - 0.600) < 0.02 ? 2 : 0;\n"   /* window glass (0xB2) / a shop window (0x99) */
-    "      if (wg > 0 && i.d < 7000) { float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, cells = wg > 1 ? B : C, cu = min(floor(fu * cells), cells - 1), u0 = cu / cells, u1 = (cu + 1) / cells, v0, v1, fl;\n"
+    "      if (wg > 0 && i.d < FXD && opt.y > 0) { float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, cells = wg > 1 ? B : C, cu = min(floor(fu * cells), cells - 1), u0 = cu / cells, u1 = (cu + 1) / cells, v0, v1, fl;\n"
     "        if (wg > 1) { v0 = sv + 0.04; v1 = 0.988; fl = 99; } else { float fh = (sv - ct) / F; fl = clamp(floor((v - ct) / fh), 0, F - 1); v0 = ct + fl * fh; v1 = v0 + fh; }\n"   /* the room: its bay, its floor */
     "        float3 r = normalize(i.w - eye.xyz); float lu2 = max(dot(eu, eu), 1e-6), lv2 = max(dot(ev, ev), 1e-6), ru = dot(r, eu) / lu2, rv = dot(r, ev) / lv2, rz = max(dot(r, -nf), 0.04);\n"   /* the view ray in (u, v, depth) */
     "        float D = (u1 - u0) * sqrt(lu2) * (wg > 1 ? 1.3 : 0.9), su = ru > 0 ? (u1 - fu) / max(ru, 1e-9) : (u0 - fu) / min(ru, -1e-9), sw = rv > 0 ? (v1 - v) / max(rv, 1e-9) : (v0 - v) / min(rv, -1e-9), sd = D / rz, s = min(min(su, sw), sd);\n"
@@ -91,16 +93,16 @@ static const char r3_hlsl[] =
     "        else if (rv > 0) { col = wg > 1 ? float3(0.56, 0.53, 0.49) : (rs2 < 0.5 ? float3(0.44, 0.31, 0.20) : float3(0.36, 0.37, 0.42)); sh = 0.65; }\n"   /* the floor (wood / carpet) */
     "        else { col = float3(0.90, 0.89, 0.86); sh = 0.85; if (length(float2(hu - 0.5, hz - 0.5)) < 0.09) col = float3(1.5, 1.4, 1.2); }\n"   /* the ceiling, a lamp */
     "        col *= sh * lerp(1.0, 0.55, hz);\n"   /* darker deeper in */
-    "        { float rc = 7 / rz; float ra = T.SampleLevel(S, float2(U + ru * rc, v + rv * rc), 0).a; bool rev = abs(ra - c.a) > 0.03 && i.d < 5000;\n"   /* the glass set back 7 units: at a slant the */
+    "        { float rc = 7 / rz; float ra = T.SampleLevel(S, float2(U + ru * rc, v + rv * rc), 0).a; bool rev = abs(ra - c.a) > 0.03 && i.d < FXD * 0.72;\n"   /* the glass set back 7 units: at a slant the */
     "          float3 tx = c.rgb; c.rgb = rev ? T.SampleLevel(S, float2(U + ru * rc * 1.4, v + rv * rc * 1.4), 0).rgb * 0.45 : lerp(col * (wg > 1 ? 1.0 : 0.72), tx, wg > 1 ? 0.10 : 0.25);\n"   /* reveal (the wall's side, in shade); the room, the pane's own (curtains) */
     "          facLit = rev ? 0 : wg > 1 ? step(0.12, rs2) : step(rs, 0.5) * step(0.25, H(floor(i.w.xz / 900) + 3.1)); }\n"   /* night: half the rooms of three buildings in four; nearly every shop */
     "        facE = col * (rs2 < 0.3 ? float3(0.75, 0.85, 1.0) : float3(1.0, 0.80, 0.52)) * (wg > 1 ? 1.5 : 1.25); facK = wg; }\n"   /* warm or cool light */
-    "      else if (trk.w > 0 && c.a < 0.985 && c.a > 0.55 && (i.t.y < sv || i.t.y > sv + 0.045)) { float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, sp = v > sv ? 1 : 0;\n"   /* far off at night (user: "the window lights */
+    "      else if ((trk.w > 0 || (wg > 0 && opt.y <= 0)) && c.a < 0.985 && c.a > 0.55 && (i.t.y < sv || i.t.y > sv + 0.045)) { if (wg > 0 && opt.y <= 0) c.rgb *= 0.6; float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, sp = v > sv ? 1 : 0;\n"   /* far off at night (user: "the window lights */
     "        float cells = sp > 0 ? B : C, cu = min(floor(fu * cells), cells - 1), fl = sp > 0 ? 99 : clamp(floor((v - ct) / ((sv - ct) / F)), 0, F - 1);\n"   /* dont show until the player is close"): the */
     "        float rs = Hu(float2(cu + base * 11 + (nf.x > 0 ? 500 : 0), fl * 3 + (nf.z > 0 ? 77 : 0))), rs2 = frac(rs * 7.31 + 0.17), f = saturate((1 - c.a) / (sp > 0 ? 0.40 : 0.302));\n"   /* mips blend glass into wall: */
     "        facK = 3; facLit = (sp > 0 ? step(0.12, rs2) : step(rs, 0.5) * step(0.25, H(floor(i.w.xz / 900) + 3.1))) * f;\n"   /* how much of the texel is glass (from its alpha) */
     "        facE = (rs2 < 0.3 ? float3(0.75, 0.85, 1.0) : float3(1.0, 0.80, 0.52)) * (sp > 0 ? 0.75 : 0.62); }\n"   /* lit by the same room rule, no rooms drawn */
-    "      else if (wg == 0 && c.a > 0.9 && i.d < 3500) { float2 o1 = float2(1 / sz.x, 0), o2 = float2(0, 1 / sz.y); float3 lw = float3(0.3, 0.59, 0.11);\n"   /* a wall: bump mapped from its brightness */
+    "      else if (wg == 0 && c.a > 0.9 && i.d < FXD * 0.5) { float2 o1 = float2(1 / sz.x, 0), o2 = float2(0, 1 / sz.y); float3 lw = float3(0.3, 0.59, 0.11);\n"   /* a wall: bump mapped from its brightness */
     "        float h0 = dot(c.rgb, lw), h1 = dot(T.SampleGrad(S, uv + o1, dx, dy).rgb, lw), h2 = dot(T.SampleGrad(S, uv + o2, dx, dy).rgb, lw), bk = 5 * saturate(1 - i.d / 3500);\n"   /* (mortar, joints, ornament: */
     "        facN = normalize(nf + (normalize(eu) * (h0 - h1) + normalize(ev) * (h0 - h2)) * bk); } } }\n"   /* darker = lower) */
     "  if (abs(i.c.a - 0.9608) < 0.0015) { float3 V = normalize(eye.xyz - i.w); float th = N(i.w.xz / 45) * 0.6 + N(i.w.xz / 14 + 2.1) * 0.4 + V.y * 1.8;\n"   /* an oil patch (vertex alpha 245, course3d.h C3_Patch): */
@@ -205,7 +207,7 @@ static const char r3_hlsl[] =
     "      bd = c.rgb * 0.6 * float3(0.9, 0.93, 1.0);\n"                                                                                                                            /* the road under the water, darker */
     "      c.rgb = lerp(c.rgb * (1 - 0.2 * wet), bd + sk * fr + (a - tint.rgb) * 0.35 + length(rg) * 0.02 * tint.rgb, pd); }\n"                                                    /* + the lights; the ripples catch the light */
     "    else c.rgb *= 1 - 0.2 * wet; }\n"                                                                                                                                          /* (damp road) */
-    "  if (fad.z > 0 && lit.w == 0 && rfl.y == 0 && i.d < 5000 && abs(i.c.a - 0.976) > 0.0015 && abs(i.c.a - 0.992) >= 0.002) { float2 p = i.w.xz / 45, q, cl; float rh = 0; int m;\n"   /* rain hitting the */
+    "  if (fad.z > 0 && lit.w == 0 && rfl.y == 0 && i.d < FXD * 0.72 && abs(i.c.a - 0.976) > 0.0015 && abs(i.c.a - 0.992) >= 0.002) { float2 p = i.w.xz / 45, q, cl; float rh = 0; int m;\n"   /* rain hitting the */
     "    [unroll] for (m = 0; m < 2; m++) { float2 pp = p + m * 0.5; cl = floor(pp); q = frac(pp) - 0.5 - (float2(Hu(cl + 2.1), Hu(cl + 4.7)) - 0.5) * 0.5;\n"                          /* ground: in each cell a */
     "      { float ph = frac(fad.w * 1.6 + Hu(cl + m * 3.3)), r = length(q) * 45, rr = ph * 60; rh += step(ph, 0.22) * saturate(1 - abs(r - rr) / 2.5) * (1 - ph / 0.22); } }\n"   /* drop's ring now and then, */
     "    c.rgb += rh * 0.07 * tint.rgb * saturate((abs(normalize(n).y) - 0.8) * 8) * saturate(1 - i.d / 5000); }\n"                                                                  /* faint, near only */
@@ -302,7 +304,8 @@ static int R3_Texture(R3 *r, const unsigned *rgba, int w, int h)
 
 static int R3_Init(R3 *r, ID3D11Device *dev)
 {
-    HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+    HMODULE dc = LoadLibraryA("rr_d3dcompiler_47.dll");   /* the release's own copy of Windows' compiler under a name Wine / Proton has no built-in of (the Steam */
+    if (!dc) dc = LoadLibraryA("d3dcompiler_47.dll");     /* Deck: no DLL override needed); else the system's */
     R3Compile cc = dc ? (R3Compile)GetProcAddress(dc, "D3DCompile") : NULL;
     ID3DBlob *vsb, *psb;
     D3D11_INPUT_ELEMENT_DESC ie[5] = {
@@ -427,7 +430,7 @@ typedef struct R3Frame {
     float night;                        /* 0..1: facades' windows (texture alpha 0.75) and signs (0.65) light up */
     float fadeStart, fadeEnd;           /* distance fade into the sky (fadeEnd 0 = none) */
     float puddles, time, water[4];      /* rain puddles 0..1, seconds (water waves), the sky colour water reflects + sun glints */
-    float opt[4];                       /* options: [0] 1 = the new road surface (render3d.h, road vertex alpha 248) */
+    float opt[4];                       /* options: [0] 1 = the new road surface (render3d.h, road vertex alpha 248); [1] 1 = window interiors; [2] the effects' reach (0: 7000) */
     float sun[4];                       /* the sun: direction to it (world) + how strongly it shapes the buildings' walls (0 = none) */
     int reflect; float reflectY;        /* 1 = the puddles mirror the world: it is drawn mirrored in the plane y = reflectY first (half size) */
     ID3D11ShaderResourceView *tracks; float trackScale, trackAmt;   /* snow tracks map (world x / z, wrapping every 1 / trackScale units), how much it clears the snow */
@@ -530,6 +533,25 @@ static int R3_EnsureShadow(R3 *r)
         R3_REL(r->shDsv); R3_REL(r->shSrv); R3_REL(r->shTex); r->shDsv = NULL; r->shSrv = NULL; r->shTex = NULL; return 0; }
     return 1;
 }
+/* GPU time of the world passes (RR_PROFILE, user 2026-11-15: the Steam Deck's 50 fps did not change with the CPU clock): timestamp queries round the
+   shadow map, the puddle mirror and the world, read back 3 frames later without waiting; the milliseconds go to the shim's profiler (g_pfGpu[0..2],
+   rrddraw.c).  r3mark: 0 = start (disjoint begun), 1 = after the shadow map, 2 = after the mirror, 3 = after the world (disjoint ended, oldest read) */
+static void R3_GpuMark(R3 *r, int k)
+{   int i;
+    if (g_pfOn <= 0) return;
+    if (!r->qMade) { D3D11_QUERY_DESC qd; r->qMade = 1; memset(&qd, 0, sizeof qd);
+        for (i = 0; i < 4; i++) { int j; qd.Query = D3D11_QUERY_TIMESTAMP_DISJOINT; ID3D11Device_CreateQuery(r->dev, &qd, &r->qDis[i]);
+            qd.Query = D3D11_QUERY_TIMESTAMP; for (j = 0; j < 4; j++) ID3D11Device_CreateQuery(r->dev, &qd, &r->qTs[i][j]); } }
+    if (!r->qDis[r->qi] || !r->qTs[r->qi][k]) return;
+    if (k == 0) ID3D11DeviceContext_Begin(r->ctx, (ID3D11Asynchronous *)r->qDis[r->qi]);
+    ID3D11DeviceContext_End(r->ctx, (ID3D11Asynchronous *)r->qTs[r->qi][k]);
+    if (k == 3) { int o = (r->qi + 1) & 3; D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj; UINT64 t[4];
+        ID3D11DeviceContext_End(r->ctx, (ID3D11Asynchronous *)r->qDis[r->qi]);
+        r->qi = o;   /* (the oldest slot: written 3 frames ago - read it, then reuse it) */
+        if (ID3D11DeviceContext_GetData(r->imm, (ID3D11Asynchronous *)r->qDis[o], &dj, sizeof dj, D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK && !dj.Disjoint && dj.Frequency) {
+            for (i = 0; i < 4; i++) if (ID3D11DeviceContext_GetData(r->imm, (ID3D11Asynchronous *)r->qTs[o][i], &t[i], sizeof t[i], D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) return;
+            for (i = 0; i < 3; i++) g_pfGpu[i] += (double)(t[i + 1] - t[i]) * 1000.0 / (double)dj.Frequency;
+            g_pfGpuN++; } } }
 /* the frame's constants (render3d.h r3_hlsl cbuffer C); vpm = the view-projection to draw with, rfl = its rfl row */
 static void R3_Consts(R3 *r, const R3Frame *f, const float *vpm, const float *rfl)
 {
@@ -591,6 +613,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
         }
     }
     ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &none);
+    if (!f->clipSpace) R3_GpuMark(r, 0);   /* (RR_PROFILE: GPU time per pass) */
     if (f->shadow > 0 && !f->clipSpace && R3_EnsureShadow(r)) {   /* the buildings' walls' depth from the sun (vsshadow / psshadow), no colour */
         D3D11_VIEWPORT sv; float z4[4] = { 0, 0, 0, 0 };
         R3_Consts(r, f, f->shadowVP, z4);
@@ -606,6 +629,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
         ID3D11DeviceContext_VSSetShader(r->ctx, r->vs, NULL, 0); ID3D11DeviceContext_PSSetShader(r->ctx, r->ps, NULL, 0);
         ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &r->shSrv); ID3D11DeviceContext_PSSetSamplers(r->ctx, 1, 1, &r->smpCmp);
     }
+    if (!f->clipSpace) R3_GpuMark(r, 1);
     if (mirror) {   /* the world mirrored in the plane y = reflectY (p' = p * M * vp, M: y -> 2 reflectY - y), what is above it only, at half size */
         float mm[16], mvp[16], clr[4] = { 0, 0, 0, 0 }; D3D11_VIEWPORT hv; D3D11_RECT hs;
         memset(mm, 0, sizeof mm); mm[0] = 1; mm[5] = -1; mm[10] = 1; mm[13] = 2 * f->reflectY; mm[15] = 1;
@@ -622,6 +646,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
         ID3D11DeviceContext_PSSetShaderResources(r->ctx, 2, 1, &r->rfSrv);
         rfl[1] = 0; rfl[2] = 1.0f / td.Width; rfl[3] = 1.0f / td.Height;
     }
+    if (!f->clipSpace) R3_GpuMark(r, 2);
     if (f->doClear) {
         if (f->x == 0 && f->y == 0 && f->w == (int)td.Width && f->h == (int)td.Height) ID3D11DeviceContext_ClearRenderTargetView(r->ctx, rtv, f->clear);
     }
@@ -633,6 +658,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
     ID3D11DeviceContext_RSSetViewports(r->ctx, 1, &vpt);
     ID3D11DeviceContext_RSSetScissorRects(r->ctx, 1, &sc);
     R3_DrawWorld(r, f, &vpt, dyn);
+    if (!f->clipSpace) R3_GpuMark(r, 3);
     ID3D11DeviceContext_PSSetShaderResources(r->ctx, 2, 1, &none); ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &none);
     if (r->deferred) {
         ID3D11CommandList *cl = NULL;

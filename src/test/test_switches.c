@@ -15,8 +15,8 @@ void rr_TestTick(void)
         char b[16];
         init = 1;
         if (GetEnvironmentVariableA("RR_BIG_BIKE", b, sizeof b) > 0 && b[0] >= '0' && b[0] <= '9') { int i; for (bike = 0, i = 0; b[i] >= '0' && b[i] <= '9'; i++) bike = bike * 10 + (b[i] - '0'); bike %= 15; }   /* RR_BIG_BIKE=<0..14>: a Big Game's player rides that bike once a character is picked (race\arsenal.c tests: nitro bikes 6..9) */
-        { void (__stdcall *su)(void *, void *) = (void (__stdcall *)(void *, void *))GetProcAddress(GetModuleHandleA("ddraw.dll"), "RR_InputSetup"); if (su) su(&rec_keyBindings.tbl_keyBindings, &(*(char *)&rec_sndPlayerEngine.tbl_joyBindings)); }
-        { void (__stdcall *cs)(void *, void *, void *) = (void (__stdcall *)(void *, void *, void *))GetProcAddress(GetModuleHandleA("ddraw.dll"), "RR_CampState"); if (cs) cs(&(*(unsigned char *)&rec_playerRecord.g_playerLevel), &(*(unsigned char *)&rec_playerRecord.g_tracksWonMask), &rec_playerRecord.g_playerCash); }   /* campaign driver: where level, tracks-won mask and cash really are in this build */
+        { void (__stdcall *su)(void *, void *) = (void (__stdcall *)(void *, void *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_InputSetup"); if (su) su(&rec_keyBindings.tbl_keyBindings, &(*(char *)&rec_sndPlayerEngine.tbl_joyBindings)); }
+        { void (__stdcall *cs)(void *, void *, void *) = (void (__stdcall *)(void *, void *, void *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_CampState"); if (cs) cs(&(*(unsigned char *)&rec_playerRecord.g_playerLevel), &(*(unsigned char *)&rec_playerRecord.g_tracksWonMask), &rec_playerRecord.g_playerCash); }   /* campaign driver: where level, tracks-won mask and cash really are in this build */
         if (GetEnvironmentVariableA("RR_CASH", b, sizeof b) > 0) { int i; for (i = 0; b[i] >= '0' && b[i] <= '9'; i++) ccash = ccash * 10 + (b[i] - '0'); }
     }
     if (bike >= 0 && (*(unsigned char *)&rec_playerRecord.g_playerCharacter) != 0) rec_playerRecord.g_playerBike = (unsigned char)bike;

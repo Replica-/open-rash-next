@@ -58,7 +58,7 @@ static void SgTitle(const char *file, char *out, int n)
     lstrcpynA(out, stem, n); }
 
 static void SgNext(void)
-{   HMODULE ds = GetModuleHandleA("dsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
+{   HMODULE ds = GetModuleHandleA("rrdsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
     int k, tries; char path[MAX_PATH + 70];
     if (!play || SgScan() <= 0) return;
     for (tries = 0; tries < 4; tries++) {
@@ -93,7 +93,7 @@ static int SgTickerUp(void);   /* below */
 static volatile LONG g_sgJuke, g_sgBusy;
 /* the game's track number of the song playing now, -1 = none (Restroom "Now Playing" text, src\ui\menu_draw.c) */
 __declspec(dllexport) int __stdcall RR_SongPlaying(void)
-{   HMODULE ds = GetModuleHandleA("dsound.dll"); int (__stdcall *state)(void) = ds ? (int (__stdcall *)(void))GetProcAddress(ds, "RR_MusicState") : NULL;
+{   HMODULE ds = GetModuleHandleA("rrdsound.dll"); int (__stdcall *state)(void) = ds ? (int (__stdcall *)(void))GetProcAddress(ds, "RR_MusicState") : NULL;
     char stem[64], *d; int i;
     if (!g_sgActive || !g_sgCurFile[0] || !state || state() != 2) return -1;
     lstrcpynA(stem, g_sgCurFile, sizeof stem); d = strrchr(stem, '.'); if (d) *d = 0; CharUpperA(stem);
@@ -101,7 +101,7 @@ __declspec(dllexport) int __stdcall RR_SongPlaying(void)
     return -1; }
 __declspec(dllexport) int __stdcall RR_JukeboxSong(int track)
 {   const char *const *names = g_sgTrackName;
-    HMODULE ds = GetModuleHandleA("dsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
+    HMODULE ds = GetModuleHandleA("rrdsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
     char path[MAX_PATH + 32], file[32]; int ok;
     if (track < 0 || track > 13 || !play || SgScan() <= 0) { LOG("jukebox: track %d not played (no songs folder)", track); return 0; }
     _snprintf(file, sizeof file - 1, "%s.RRA", names[track]); file[sizeof file - 1] = 0;
@@ -116,7 +116,7 @@ __declspec(dllexport) int __stdcall RR_JukeboxSong(int track)
 static DWORD WINAPI SgThread(LPVOID p)
 {   (void)p;
     for (;;) {
-        HMODULE ds = GetModuleHandleA("dsound.dll");
+        HMODULE ds = GetModuleHandleA("rrdsound.dll");
         int (__stdcall *state)(void) = ds ? (int (__stdcall *)(void))GetProcAddress(ds, "RR_MusicState") : NULL;
         int (__stdcall *stop)(void) = ds ? (int (__stdcall *)(void))GetProcAddress(ds, "RR_MusicStop") : NULL;
         int want = SgSongsOn();

@@ -15,7 +15,7 @@
 #define W3_ZN  20.0                     /* near plane (lateral units) */
 /* how far the 3D world is drawn: True 3D is always Far (W3_FAR = 150 segments) - without fog the far course would
    otherwise end as a thin sliver at the horizon, across the backdrop's mountains.  Test switch RR_W3DIST=<segments> */
-static double W3Far(void) { const char *e = getenv("RR_W3DIST"); int n = e ? atoi(e) : W3_FAR; if (n < DD_NORMAL) n = W3_FAR; return n * W3_L; }
+static double W3Far(void) { const char *e = getenv("RR_W3DIST"); int n = e ? atoi(e) : g_vid.dist == 0 ? 70 : g_vid.dist == 1 ? 105 : W3_FAR; if (n < DD_NORMAL) n = W3_FAR; return n * W3_L; }   /* (Video Options > True 3D detail > Draw distance: near 70 / medium 105 / far 150) */
 
 static C3Course g_w3c; static RxAssets g_w3a; static R3 g_w3r;
 static R3Batch g_w3b[4096]; static int g_w3nb; static C3Batch g_w3cb[4096];
@@ -350,7 +350,11 @@ static void W3GpuBatches(const C3Batch *cb, int n, R3Batch *out)
 /* every frame: the ring's stretch of the course from the game's live pieces (RrWorld3DCam.ring); rebuilt when the stretch moved or its decoration changed */
 static void W3GrassLive(void);   /* (below) */
 static void W3Live(void)
-{   static C3Batch lb[4096]; int lo = (g_w3cam.ringBack - g_w3Piece0) >> 8, hi = lo + RRW_LIVE - 1, i, changed = 0, half;
+{   static C3Batch lb[4096]; static int q; int lo = (g_w3cam.ringBack - g_w3Piece0) >> 8, hi, i, changed = 0, half;
+    /* the stretch starts on a multiple of q pieces and reaches q further: built again every q pieces, not every piece (user, 2026-11-15: the Steam Deck's
+       frame rate - ~1.2 ms a frame on a Ryzen 5800X); its first few pieces are the ring's pieces of a moment ago.  Test switch RR_W3LIVEQ=1: every piece */
+    if (!q) { q = getenv("RR_W3LIVEQ") ? atoi(getenv("RR_W3LIVEQ")) : 8; if (q < 1) q = 1; }
+    lo -= ((lo % q) + q) % q; hi = lo + RRW_LIVE - 1 + (q - 1);
     if (!g_w3l.piece) return;
     {   /* a split road within the draw distance: the live stretch covers all of it - only the live mesh leaves out the carriageway the camera is not on
            (C3_HideHalf); the static mesh has both, and B's made-up path can pass over / beside A far from the fork */
@@ -404,7 +408,7 @@ static void W3Live(void)
                     LOG("w3soft  A edges %d %d lanes %d %d outer %d %d kind %d (file %d %d / %d %d) B edges %d %d outer %d %d kind %d; y A %.0f B %.0f", a->edgeL, a->edgeR, a->laneEdgeL, a->laneEdgeR, a->outerL, a->outerR, a->kind,
                         fa->edgeL, fa->edgeR, fa->outerL, fa->outerR, b->edgeL, b->edgeR, b->outerL, b->outerR, b->kind, g_w3l.frame[k].y, g_w3l.frameB[k].y); } } } } }
     if (changed || lo != g_w3lo || hi != g_w3hi) {
-        int nb; LARGE_INTEGER t0, t1, fq; static double sum; static int nr;
+        int nb; LARGE_INTEGER t0, t1, fq; static double sum; static int nr, nch;
         QueryPerformanceCounter(&t0);
         g_w3l.nv = 0; C3_BuildRange(&g_w3l, lo, hi, &g_w3a);        nb = C3_Batches(&g_w3l, lb, 4096);
         W3GpuBatches(lb, nb, g_w3lb); g_w3lnb = nb;
@@ -419,7 +423,8 @@ static void W3Live(void)
                 if (e > b) { g_w3sb[g_w3snb] = g_w3b[i]; g_w3sb[g_w3snb].first = b; g_w3sb[g_w3snb].count = e - b; g_w3snb++; }
             } }
         QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq); sum += (double)(t1.QuadPart - t0.QuadPart) / fq.QuadPart; nr++;
-        if (getenv("RR_W3LOG") && nr % 100 == 0) LOG("world3d live: %d rebuilds, %.2f ms each, %d vertices, %d batches", nr, sum * 1000 / nr, g_w3l.nv, nb);
+        if (changed) nch++;
+        if (getenv("RR_W3LOG") && nr % 100 == 0) LOG("world3d live: %d rebuilds (%d for a change), %.2f ms each, %d vertices, %d batches", nr, nch, sum * 1000 / nr, g_w3l.nv, nb);
     } }
 
 /* ---- lights (weather.inc WxDark: how much they show; police lights always): the course's lamps (sprite textures LAMPPST* / STRTLTE*) and parked police cars
@@ -500,7 +505,25 @@ static unsigned W3Rgba(float r, float g, float b, float a);   /* (below) */
 static double W3Far(void);
 #define W3_GRCELL 38.7f   /* (40 % fewer than 30) */
 #define W3_GRNEAR 3000.0f   /* (user: "increase the distance ... its barely visible": was 900, with 1 / d^2 beyond) */
-#define W3_GRMAX 35000   /* (user: "cap the tuffs please 20k", then "increase the tuff limit": the pop-in near the camera) */
+#define W3_GRMAX 35000   /* (user: "cap the tuffs please 20k", then "increase the tuff limit": the pop-in near the camera; Grass Extreme - 60000 - removed again) */
+/* True 3D detail > Effects distance: how far every distance-limited effect reaches - the grass (and how far it stays thick), the rooms behind the
+   windows, their depth, the walls' relief, rain on the road (render3d.h opt.z) - all alike (user, 2026-11-15: "the same distance limit applied not
+   individually").  Near / medium / far = 15 / 30 / 55 % of the draw distance (Extreme, 97 %, removed again: user, 2026-11-15) */
+static double W3FxDist(void) { static const double fr[3] = { 0.15, 0.3, 0.55 }; return W3Far() * fr[g_vid.gdist < 0 ? 0 : g_vid.gdist > 2 ? 2 : g_vid.gdist]; }
+/* what the camera can see this frame (user, 2026-11-15: "it shouldnt be rendered if they cant be seen"): the view's planes from its view-projection
+   (W3Draw: W3ViewPlanes(f.vp)), and W3InView(x, y, z, r) = 1 when a sphere of radius r there reaches into the view.  The per-frame effects - grass,
+   tree / lamp shadows, light halos, broken hydrants, drops and blood - make nothing for what is out of it */
+static float g_w3pl[5][4]; static int g_w3plOk; static float g_w3fpxT = 1000;   /* (+ the focal length in the 3D picture's pixels) */
+static void W3ViewPlanes(const float *vp)
+{   int i, q; for (i = 0; i < 5; i++) {   /* left, right, bottom, top (w +- x, y), near (w - z: reversed depth, render3d.h R3_Persp); row vectors: clip = v * vp; inside >= 0 */
+        int c = i < 2 ? 0 : i < 4 ? 1 : 2; float sg = (i & 1) || i == 4 ? -1.0f : 1.0f, l;
+        for (q = 0; q < 4; q++) g_w3pl[i][q] = vp[q * 4 + 3] + sg * vp[q * 4 + c];
+        l = sqrtf(g_w3pl[i][0] * g_w3pl[i][0] + g_w3pl[i][1] * g_w3pl[i][1] + g_w3pl[i][2] * g_w3pl[i][2]); if (l > 0) for (q = 0; q < 4; q++) g_w3pl[i][q] /= l; }
+    g_w3plOk = 1; }
+static int W3InView(float x, float y, float z, float r)
+{   int i; if (!g_w3plOk) return 1;
+    for (i = 0; i < 5; i++) if (g_w3pl[i][0] * x + g_w3pl[i][1] * y + g_w3pl[i][2] * z + g_w3pl[i][3] < -r) return 0;
+    return 1; }
 typedef struct W3GrTri { float a[3], b[3], c[3]; float ua, va, ub, vb, uc, vc; float area; int tex; unsigned rgba; float lat; int dry, piece; } W3GrTri;   /* tex < 0: rgba = the colour; else rgba = the shade */
 static W3GrTri *g_w3gr; static int g_w3ngr, g_w3grTex = -1, g_w3grGen = -1;
 static unsigned **g_w3grPx; static int g_w3grNpx;   /* the green textures' pixels (ABGR), per course texture */
@@ -520,6 +543,22 @@ static unsigned char *g_w3texGreen;   /* per course texture: 2 = not looked at y
 static W3GrTri *g_w3grL; static int g_w3ngrL, g_w3grLcap;   /* the live stretch's ground triangles (W3GrassLive) */
 /* the ground triangles grass grows on of course mesh cc (the static one, or the live stretch round the camera - its ground is the game's own and can
    lie higher or lower than the file's: user, "the tuft isnt following the terrain properly") */
+/* a big ground triangle (an edge over W3_GRSPLIT) in four, at draw time (W3Grass): each part is culled on its own - the far ground's triangles are
+   huge, most of their tufts were out of view yet tried - and holds its own up to 400 tufts.  0 = small enough */
+#define W3_GRSPLIT 5000.0f
+static int W3GrSplit(const W3GrTri *T, W3GrTri *out)
+{   float e0 = (T->b[0] - T->a[0]) * (T->b[0] - T->a[0]) + (T->b[2] - T->a[2]) * (T->b[2] - T->a[2]), e1 = (T->c[0] - T->b[0]) * (T->c[0] - T->b[0]) + (T->c[2] - T->b[2]) * (T->c[2] - T->b[2]),
+          e2 = (T->a[0] - T->c[0]) * (T->a[0] - T->c[0]) + (T->a[2] - T->c[2]) * (T->a[2] - T->c[2]), ab[5], bc[5], ca[5], A5[5], B5[5], C5[5];   /* (x y z u v of the corners and the edges' middles) */
+    int k, j;
+    if (e0 <= W3_GRSPLIT * W3_GRSPLIT && e1 <= W3_GRSPLIT * W3_GRSPLIT && e2 <= W3_GRSPLIT * W3_GRSPLIT) return 0;
+    for (k = 0; k < 3; k++) { A5[k] = T->a[k]; B5[k] = T->b[k]; C5[k] = T->c[k]; }
+    A5[3] = T->ua; A5[4] = T->va; B5[3] = T->ub; B5[4] = T->vb; C5[3] = T->uc; C5[4] = T->vc;
+    for (k = 0; k < 5; k++) { ab[k] = (A5[k] + B5[k]) / 2; bc[k] = (B5[k] + C5[k]) / 2; ca[k] = (C5[k] + A5[k]) / 2; }
+    {   const float *t4[4][3] = { { A5, ab, ca }, { ab, B5, bc }, { ca, bc, C5 }, { ab, bc, ca } };
+        for (k = 0; k < 4; k++) { W3GrTri *q = &out[k]; *q = *T; q->area = T->area / 4;
+            for (j = 0; j < 3; j++) { q->a[j] = t4[k][0][j]; q->b[j] = t4[k][1][j]; q->c[j] = t4[k][2][j]; }
+            q->ua = t4[k][0][3]; q->va = t4[k][0][4]; q->ub = t4[k][1][3]; q->vb = t4[k][1][4]; q->uc = t4[k][2][3]; q->vc = t4[k][2][4]; } }
+    return 1; }
 static void W3GrassCollect(const C3Course *cc, W3GrTri **arr, int *nn, int *capp)
 {   int i;
     for (i = 0; i + 2 < cc->nv; i += 3) {
@@ -548,6 +587,16 @@ static void W3GrassCollect(const C3Course *cc, W3GrTri **arr, int *nn, int *capp
             F = g_w3c.frame ? &g_w3c.frame[pc < 0 ? 0 : pc >= g_w3c.n ? g_w3c.n - 1 : pc] : NULL;   /* (how far from the road's centre line: tufts thicker near it) */
             {   float mx = (T->a[0] + T->b[0] + T->c[0]) / 3, mz = (T->a[2] + T->b[2] + T->c[2]) / 3; T->lat = F ? (float)fabs((mx - F->x) * cos(F->heading) - (mz - F->z) * sin(F->heading)) : 0; } } }
 }
+/* the file's grass triangles sorted by road piece, g_w3grStart[k] = the first of piece k (k = 0 .. n): W3Grass looks only at the pieces in view - it had
+   walked all of them five times a frame (the City: 85000, ~3 ms of CPU a frame; user, 2026-11-15: "is there something else taking up high cpu?") */
+static int *g_w3grStart;
+static int W3GrCmp(const void *a, const void *b) { return ((const W3GrTri *)a)->piece - ((const W3GrTri *)b)->piece; }
+static void W3GrassIndex(void)
+{   int k, i = 0;
+    free(g_w3grStart); g_w3grStart = NULL;
+    if (!g_w3ngr || !(g_w3grStart = (int *)malloc(sizeof(int) * (g_w3c.n + 2)))) return;
+    qsort(g_w3gr, g_w3ngr, sizeof(W3GrTri), W3GrCmp);
+    for (k = 0; k <= g_w3c.n + 1; k++) { while (i < g_w3ngr && g_w3gr[i].piece < k) i++; g_w3grStart[k] = i; } }
 static void W3GrassInit(void)
 {   int i, cap = 0;
     free(g_w3gr); g_w3gr = NULL; g_w3ngr = 0; g_w3ngrL = 0;
@@ -555,64 +604,88 @@ static void W3GrassInit(void)
     if (getenv("RR_W3NOGRASS")) return;
     if (g_w3a.ntex > 0 && (g_w3texGreen = (unsigned char *)calloc(g_w3a.ntex, 1)) != NULL) { memset(g_w3texGreen, 2, g_w3a.ntex); if ((g_w3grPx = (unsigned **)calloc(g_w3a.ntex, sizeof(unsigned *))) != NULL) g_w3grNpx = g_w3a.ntex; }
     W3GrassCollect(&g_w3c, &g_w3gr, &g_w3ngr, &cap);
+    W3GrassIndex();   /* (by road piece: each frame only the pieces in view are looked at) */
     LOG("world3d: grass on %d ground triangles", g_w3ngr); }
 static void W3GrassLive(void)   /* the live stretch was built again (W3Live): its ground triangles */
 {   g_w3ngrL = 0; if (g_w3ngr && g_w3l.v) W3GrassCollect(&g_w3l, &g_w3grL, &g_w3ngrL, &g_w3grLcap);
     if (getenv("RR_W3LOGGR")) { static int n; if (n++ < 6) LOG("w3grass live %d..%d: %d triangles (static %d), live mesh %d vertices", g_w3lo, g_w3hi, g_w3ngrL, g_w3ngr, g_w3l.nv); } }   /* (test switch RR_W3LOGGR=1) */
 /* this frame's tufts (returns the vertices written).  A triangle holds up to ~1 tuft per W3_GRCELL^2 (thicker near the road: user, "render close to
    the sides of the road"; dirt's dry scrub 0.15 and none on the verge), tuft k at its own fixed threshold (k + hash) / that many: it is drawn while
-   the share kept at ITS distance - 1 near, W3_GRNEAR / d beyond - is above that, growing in from nothing over the last quarter (no pop-in: user, "the
-   tuff popin is distracting"), and out again towards the draw distance; bigger far off.  Triangles in bands of distance, nearest first (0, 600, 1300, 2400, 4000, the
+   the share drawn (below: the same at every distance) is above that, growing in from nothing over the last quarter (no pop-in: user, "the
+   tuff popin is distracting"), and out again towards the draw distance; one size near and far.  Triangles in bands of distance, nearest first (0, 600, 1300, 2400, 4000, the
    rest), so W3_GRMAX (20000) never cuts the tufts at the camera's feet.  The live stretch's triangles stand in for the file's there; a triangle's
-   tufts are seeded by where it is, not by its index */
+   tufts are seeded by where it is, not by its index.  Only what the camera can see: a triangle wholly outside the view (vp: the frame's view-projection) is
+   skipped, and so is a tuft outside it (W3InView) - neither counts towards the cap (user, 2026-11-15: "exclude tuffs that the player cant see") */
 static int W3Grass(R3Vert *o, int cap, const float *eye)
-{   static const int o6[6] = { 0, 3, 1, 1, 3, 2 }; int i, n = 0, tufts = 0, pass, set; float D = (float)(W3Far() * 0.97); static const float band[6] = { -1e9f, 600, 1300, 2400, 4000, 1e9f };   /* (filled nearest first: the cap never starves the ground at the camera's feet) */
-    int bandN[5][2]; memset(bandN, 0, sizeof bandN);
+{   static const int o6[6] = { 0, 3, 1, 1, 3, 2 }; static float share = 0.3f; int i, n = 0, tufts = 0, pass, set, nCull = 0; float maxD = 0, fr0 = -1, fg0 = 0, fb0 = 0;
+    /* share: the part of each triangle's tufts drawn - the same near and far, so a patch keeps the tufts it had when it came into the reach and does not
+       fill in as the camera nears it (user, 2026-11-15: "disable that dense step and just leave the initial approximation").  When a frame fills the cap
+       it drops a little for the next, and rises again (up to all of them) when there is room */
+    float D = (float)W3FxDist(); static const float band[6] = { -1e9f, 600, 1300, 2400, 4000, 1e9f };   /* (filled nearest first: the cap never starves the ground at the camera's feet) */
+    int grMax = g_vid.grass == 1 ? 14000 : W3_GRMAX; if (!g_vid.grass) return 0;   /* (True 3D detail > Grass: off / low - 40 % of the tufts / high) */
+    int bandN[5][2], nCand = 0, nTri = 0; memset(bandN, 0, sizeof bandN);
     for (pass = 0; pass < 5; pass++) for (set = 0; set < 2; set++) { int t0 = tufts;
-    const W3GrTri *arr = set ? g_w3grL : g_w3gr; int na = set ? (g_w3lo >= 0 ? g_w3ngrL : 0) : g_w3ngr;
-    for (i = 0; i < na && tufts < W3_GRMAX && n + 6 <= cap; i++) {
-        const W3GrTri *T = &arr[i]; float cx = (T->a[0] + T->b[0] + T->c[0]) / 3 - eye[0], cz = (T->a[2] + T->b[2] + T->c[2]) / 3 - eye[2], rr = sqrtf(T->area), dc = sqrtf(cx * cx + cz * cz) - rr, full, kc;
+    const W3GrTri *arr = set ? g_w3grL : g_w3gr; int na = set ? (g_w3lo >= 0 ? g_w3ngrL : 0) : g_w3ngr, i0 = 0;
+    if (!set && g_w3grStart) { int kc = (g_w3cam.viewPos - g_w3Piece0) >> 8, lo = kc - 8, hi = kc + (int)(D / W3_L) + 4;   /* (the file's triangles of the pieces in view only: 85000 in the City, a few thousand of them near) */
+        if (lo < 0) lo = 0; if (hi > g_w3c.n) hi = g_w3c.n; if (hi < lo) hi = lo; i0 = g_w3grStart[lo]; na = g_w3grStart[hi]; }
+    for (i = i0; i < na && tufts < grMax && n + 6 <= cap; i++) { W3GrTri stk[24]; unsigned char dep[24]; int ns = 1; stk[0] = arr[i]; dep[0] = 0;
+      while (ns > 0 && tufts < grMax) {   /* (the triangle, or the parts of a big one in view: W3GrSplit) */
+        W3GrTri TT = stk[--ns]; int dp = dep[ns]; const W3GrTri *T = &TT; float cx = (T->a[0] + T->b[0] + T->c[0]) / 3 - eye[0], cz = (T->a[2] + T->b[2] + T->c[2]) / 3 - eye[2], rr = sqrtf(T->area), dc = sqrtf(cx * cx + cz * cz) - rr, full, kc;
         int k, m; unsigned hm = ((unsigned)(int)(cx + eye[0]) * 73856093u) ^ ((unsigned)(int)(cz + eye[2]) * 19349663u);
         if (dc > D || dc >= band[pass + 1] || dc + 2 * rr < band[pass]) continue;   /* (it reaches into this band; each tuft checks its own distance) */
         if (!set && g_w3lo >= 0 && T->piece >= g_w3lo && T->piece <= g_w3hi) continue;   /* (the live stretch's own ground instead) */
-        full = T->area / (W3_GRCELL * W3_GRCELL) * (T->lat < 1400 ? 2.2f : T->lat < 4000 ? 0.7f : 0.2f) * (T->dry ? (T->lat < 1100 ? 0 : 0.15f) : 1);
+        full = T->area / (W3_GRCELL * W3_GRCELL) * (T->lat < 1400 ? 2.2f : T->lat < 4000 ? 0.7f : 0.2f) * (T->dry ? (T->lat < 1100 || !g_vid.ground ? 0 : 0.15f) : 1) * (g_vid.grass == 1 ? 0.4f : 1);   /* (True 3D detail > Grass Low: 40 %, Ground detail off: no dry scrub) */
         if (full <= 0) continue;
-        kc = dc > W3_GRNEAR ? W3_GRNEAR / dc : 1;   /* (the most kept anywhere on it) */
+        {   float mx = (T->a[0] + T->b[0] + T->c[0]) / 3, my = (T->a[1] + T->b[1] + T->c[1]) / 3, mz = (T->a[2] + T->b[2] + T->c[2]) / 3, rad = 0, e2; int q;   /* (the triangle's bounding sphere, + a tuft's size) */
+            const float *V3[3] = { T->a, T->b, T->c };
+            for (q = 0; q < 3; q++) { e2 = (V3[q][0] - mx) * (V3[q][0] - mx) + (V3[q][1] - my) * (V3[q][1] - my) + (V3[q][2] - mz) * (V3[q][2] - mz); if (e2 > rad) rad = e2; }
+            if (!W3InView(mx, my, mz, sqrtf(rad) + 150)) continue; }
+        if (dp < 3 && ns + 4 <= 24 && W3GrSplit(T, stk + ns)) { int q; for (q = 0; q < 4; q++) dep[ns + q] = (unsigned char)(dp + 1); ns += 4; continue; }
+        nTri++;
+        kc = share;   /* (the most kept anywhere on it) */
         m = (int)ceilf(full); if (m > 400) m = 400;
-        for (k = 0; k < m && tufts < W3_GRMAX && n + 6 <= cap; k++) {
+        fr0 = -1;   /* (the far tufts' colour on this triangle: not looked up yet) */
+        for (k = 0; k < m && tufts < grMax && n + 6 <= cap; k++) {
             unsigned h = hm ^ (unsigned)k * 2246822519u, j, col; float s1, s2, p[3], d, sz, ht, sh, gr, r, g, b, th, keep, grow; int q;
             th = (k + 0.5f) / full;   /* (its threshold: the tufts in order, the first ones kept furthest) */
             if (th >= kc) break;
-            h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; s1 = (h & 0xffff) / 65535.0f; s2 = (h >> 16) / 65535.0f;
+            nCand++; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; s1 = (h & 0xffff) / 65535.0f; s2 = (h >> 16) / 65535.0f;
             if (s1 + s2 > 1) { s1 = 1 - s1; s2 = 1 - s2; }
             for (q = 0; q < 3; q++) p[q] = T->a[q] + (T->b[q] - T->a[q]) * s1 + (T->c[q] - T->a[q]) * s2;
             d = sqrtf((p[0] - eye[0]) * (p[0] - eye[0]) + (p[2] - eye[2]) * (p[2] - eye[2]));
             if (d > D) continue;
             if (d < band[pass] || d >= band[pass + 1]) continue;
-            keep = d > W3_GRNEAR ? W3_GRNEAR / d : 1; if (th >= keep) continue;
+            if (!W3InView(p[0], p[1] + 40, p[2], 110)) { nCull++; continue; }   /* (a tuft is up to ~105 wide, ~90 high) */
+            keep = share; if (th >= keep) continue;
             grow = (keep - th) / (0.25f * keep); if (grow > 1) grow = 1;   /* (growing in, not popping in) */
             if (d > D * 0.85f) grow *= (D - d) / (D * 0.15f);   /* (and out towards the draw distance) */
-            gr = d > W3_GRNEAR ? sqrtf(d / W3_GRNEAR) : 1; if (gr > 3.0f) gr = 3.0f;
-            sz = (20 + (h >> 7) % 16) * gr * grow; ht = sz * (0.55f + ((h >> 11) % 30) / 100.0f); sh = 0.85f + ((h >> 3) % 30) / 100.0f;
+            gr = 1;   /* (one size at every distance: user, 2026-11-15 "just make them stay size" - they were up to 3x bigger far off) */
+            sz = (20 + (h >> 7) % 16) * gr; if (sz < d / g_w3fpxT) sz = d / g_w3fpxT;   /* (never under ~2 pixels across: a smaller cut-out flickers in and out of the pixels as the camera moves) */
+            sz *= grow; ht = sz * (0.55f + ((h >> 11) % 30) / 100.0f); sh = 0.85f + ((h >> 3) % 30) / 100.0f;
             if (sz < 0.5f) continue;
             if (T->dry) { sz *= 0.65f; ht *= 0.8f; }   /* (dry scrub on the dirt: low, sparse) */
-            if (T->tex >= 0) {   /* the ground texel under the tuft, times the ground's shade */
+            if (T->tex >= 0 && d >= 8000 && fr0 >= 0) { r = fr0; g = fg0; b = fb0; }   /* (far off - a few pixels each: one colour per triangle - the look-ups were most of the cost) */
+            else if (T->tex >= 0) {   /* the ground texel under the tuft, times the ground's shade */
                 const RxTex *x = &g_w3a.tex[T->tex]; float uu = T->ua + (T->ub - T->ua) * s1 + (T->uc - T->ua) * s2, vv = T->va + (T->vb - T->va) * s1 + (T->vc - T->va) * s2; int tx, ty;
                 int dx, dy, nn = 0; float sr = 0, sg = 0, sb = 0;
                 uu -= floorf(uu); vv -= floorf(vv); tx = (int)(uu * x->w); ty = (int)(vv * x->h);
-                for (dy = -2; dy <= 2; dy += 2) for (dx = -2; dx <= 2; dx += 2) {   /* (a few texels round it: one light speck does not make a white tuft) */
+                int st = d < 4000 ? 2 : 9;   /* (far off - most of the tufts with Effects distance extreme - the one texel: ~7 ms a frame for 60000) */
+                for (dy = -2; dy <= 2; dy += st) for (dx = -2; dx <= 2; dx += st) {   /* (a few texels round it: one light speck does not make a white tuft) */
                     int xx = ((tx + dx) % x->w + x->w) % x->w, yy = ((ty + dy) % x->h + x->h) % x->h; col = g_w3grPx[T->tex][yy * x->w + xx];
                     if (!(col >> 24)) continue; sr += col & 255; sg += (col >> 8) & 255; sb += (col >> 16) & 255; nn++; }
                 if (!nn) { nn = 1; sr = 60; sg = 140; sb = 70; }
-                r = sr / nn / 255.0f * (T->rgba & 255) / 255.0f; g = sg / nn / 255.0f * ((T->rgba >> 8) & 255) / 255.0f; b = sb / nn / 255.0f * ((T->rgba >> 16) & 255) / 255.0f; }
+                r = sr / nn / 255.0f * (T->rgba & 255) / 255.0f; g = sg / nn / 255.0f * ((T->rgba >> 8) & 255) / 255.0f; b = sb / nn / 255.0f * ((T->rgba >> 16) & 255) / 255.0f;
+                if (d >= 8000) { fr0 = r; fg0 = g; fb0 = b; } }
             else { r = (T->rgba & 255) / 255.0f; g = ((T->rgba >> 8) & 255) / 255.0f; b = ((T->rgba >> 16) & 255) / 255.0f; }
             {   unsigned rgba = W3Rgba(r * 1.12f * sh, g * 1.12f * sh, b * 1.12f * sh, 237.0f / 255.0f);   /* (the blade picture's mid grey brought back to the ground's brightness; vertex alpha 237: render3d.h - drawn behind the rails in front of them) */
                 for (j = 0; j < 6; j++) { int c4 = o6[j]; R3Vert *v = &o[n++];
                     v->x = p[0]; v->y = p[1] - 1; v->z = p[2]; v->rgba = rgba; v->tex = 0;
                     v->ox = (c4 == 0 || c4 == 3) ? -sz : sz; v->oy = c4 < 2 ? 0.01f : ht;
                     v->u = (c4 == 0 || c4 == 3) ? ((h & 1) ? 1.0f : 0.0f) : ((h & 1) ? 0.0f : 1.0f); v->v = c4 < 2 ? 1.0f : 0.0f; } }
-            tufts++; } } bandN[pass][set] += tufts - t0; }
-    if (getenv("RR_W3LOGGR")) { static int nf; if (++nf % 200 == 0) LOG("w3grass frame: %d tufts; bands file/live %d/%d %d/%d %d/%d %d/%d %d/%d", tufts, bandN[0][0], bandN[0][1], bandN[1][0], bandN[1][1], bandN[2][0], bandN[2][1], bandN[3][0], bandN[3][1], bandN[4][0], bandN[4][1]); }
+            if (d > maxD) maxD = d;
+            tufts++; } } } bandN[pass][set] += tufts - t0; }
+    if (tufts >= grMax * 0.97f) { share *= 0.97f; if (share < 0.01f) share = 0.01f; } else if (tufts < grMax * 0.75f) { share *= 1.01f; if (share > 1) share = 1; }   /* (a dead band between: no hunting round the cap, which cut the far tufts off one frame and let them back the next) */
+    if (getenv("RR_W3LOGGR")) { static int nf; if (++nf % 200 == 0) LOG("w3grass frame: %d tufts (%d triangles in view, %d tried, %d out of view), furthest %.0f of %.0f, share drawn %.3f; bands file/live %d/%d %d/%d %d/%d %d/%d %d/%d", tufts, nTri, nCand, nCull, maxD, D, share, bandN[0][0], bandN[0][1], bandN[1][0], bandN[1][1], bandN[2][0], bandN[2][1], bandN[3][0], bandN[3][1], bandN[4][0], bandN[4][1]); }
     return n; }
 static unsigned W3Rgba(float r, float g, float b, float a)
 {   int R = (int)(r * 255), G = (int)(g * 255), B = (int)(b * 255), A = (int)(a * 255);
@@ -826,7 +899,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
            game's forks in the 3D world, the other carriageway built round the camera like the original's view (course3d.h C3_SoftFrames; best with RR_W3DIST=33) */
         const char *e = getenv("RR_NOFORK");
         g_w3fork = (e && *e) ? *e != '0' : 1;
-        g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork;
+        g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork; g_w3c.noGround = !g_vid.ground;   /* (True 3D detail > Ground detail: rocks, fallen leaves) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
         W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex(); }
@@ -836,7 +909,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     R3_SetStatic(&g_w3r, (const R3Vert *)g_w3c.v, g_w3c.nv);
     memset(&g_w3l, 0, sizeof g_w3l);   /* the live copy: the file's pieces, g_w3c's frames */
     g_w3l.skirts = 1;   /* (the skirts round the camera only: course3d.h C3_Skirt) */
-    g_w3l.forkPick = g_w3fork;
+    g_w3l.forkPick = g_w3fork; g_w3l.noGround = g_w3c.noGround;
     g_w3l.bdead = g_w3c.bdead; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB;   /* (shared, g_w3c's) */
     g_w3l.n = g_w3c.n; g_w3l.start = g_w3c.start; g_w3l.finish = g_w3c.finish; g_w3l.L = g_w3c.L; g_w3l.frame = g_w3c.frame; g_w3l.frameB = g_w3c.frameB; g_w3l.fr = g_w3l.frame;
     if ((g_w3l.piece = (RoadPiece *)malloc(sizeof(RoadPiece) * g_w3c.n)) != NULL) memcpy(g_w3l.piece, g_w3c.piece, sizeof(RoadPiece) * g_w3c.n);
@@ -1340,7 +1413,7 @@ static int W3Lights(R3Frame *f, R3Vert *v, int cap, double p, const float *eye, 
         d2 = (lx - eye[0]) * (lx - eye[0]) + (ly - eye[1]) * (ly - eye[1]) + (lz - eye[2]) * (lz - eye[2]);
         {   int fresh = nb < 15, k = fresh ? nb++ : 14;   /* the 15 nearest light the world (+ a police rider) */
             if (fresh || d2 < bd[14]) { while (k > 0 && bd[k - 1] > d2) { bd[k] = bd[k - 1]; best[k] = best[k - 1]; k--; } bd[k] = d2; best[k] = i; } }
-        if (nv + 18 > cap) continue;
+        if (nv + 18 > cap || !W3InView(lx, ly, lz, L->cop ? L->w * 0.8f : (L->w * 0.72f < 168 ? 168 : L->w * 0.72f > 624 ? 624 : L->w * 0.72f))) continue;   /* (its halo out of view: the light still lights the road) */
         if (L->cop) {   /* the roof bar: red one side, blue the other, taking turns */
             float hs = L->w * 0.16f; a = dark > 0.5f ? dark : 0.5f;
             nv = (int)(W3Halo(v + nv, L, -L->w * 0.18f, hs * (flash ? 1.6f : 0.8f), W3Rgba(1.0f, 0.12f, 0.08f, a * (flash ? 1.0f : 0.35f))) - v);
@@ -1486,18 +1559,18 @@ static int W3HydDraw(R3Vert *v, int start, int cap, R3Batch *cb, int *nb, int nb
 {   static const int o6[6] = { 0, 3, 1, 1, 3, 2 }; int i, k, j, nv = start, first; double now = GetTickCount() / 1000.0;
     for (i = 0; i < g_w3nhyd && *nb < nbcap - 1; i++) {   /* the stumps */
         const W3Hyd *H = &g_w3hyd[i]; int t; float dx = H->x - eye[0], dz = H->z - eye[2];
-        if (!H->broken || dx * dx + dz * dz > 9000.0f * 9000.0f || nv + 6 > cap || (t = W3HydStumpTex(H->tex)) < 0) continue;
+        if (!H->broken || dx * dx + dz * dz > 9000.0f * 9000.0f || nv + 6 > cap || !W3InView(H->x, H->y + H->oyb * 0.5f, H->z, H->oyb + 40) || (t = W3HydStumpTex(H->tex)) < 0) continue;
         first = nv;
         for (j = 0; j < 6; j++) { int q = o6[j]; R3Vert *o = &v[nv++];
             o->x = H->x; o->y = H->y; o->z = H->z; o->rgba = 0xffffffffu; o->tex = 0;
             o->ox = (q == 0 || q == 3) ? H->oxa : H->oxb; o->oy = q < 2 ? H->oya : H->oyb; if (o->ox == 0 && o->oy == 0) o->ox = 0.01f;
             o->u = (q == 0 || q == 3) ? 0.0f : 1.0f; o->v = q < 2 ? 1.0f : 0.0f; }
         cb[*nb].first = first; cb[*nb].count = 6; cb[*nb].tex = t; cb[*nb].alpha = 0; (*nb)++; }
-    if (W3GlowTex() < 0) return nv - start;
+    if (W3GlowTex() < 0 || !g_vid.spray) return nv - start;   /* (True 3D detail > Spray and splashes off: no water jets) */
     first = nv;
     for (i = 0; i < g_w3nhyd; i++) {   /* the water: droplets in a jet (~1.3 s up and down, each its own phase; 180 of them), a mist at the foot */
         const W3Hyd *H = &g_w3hyd[i]; float dx = H->x - eye[0], dz = H->z - eye[2], top = H->oyb * 0.42f; double age;
-        if (!H->broken || dx * dx + dz * dz > 6000.0f * 6000.0f) continue;
+        if (!H->broken || dx * dx + dz * dz > 6000.0f * 6000.0f || !W3InView(H->x, H->y + 160, H->z, 260)) continue;   /* (the jet: ~270 high, ~100 across) */
         age = now - H->t0;
         for (k = 0; k < 210 && nv + 6 <= cap; k++) {
             unsigned hh = (unsigned)k * 2654435761u ^ (unsigned)i * 40503u; float r1, r2, r3, ph, T = 1.3f, t, vx, vz, vy, s, a, px, py, pz; unsigned col;
@@ -1546,6 +1619,7 @@ static void W3Casters(void)
 static int W3CstTexCmp(const void *a, const void *b) { return g_w3cst[*(const int *)a].tex - g_w3cst[*(const int *)b].tex; }
 static int W3CasterShadows(const R3Frame *f, R3Vert *v, int start, int cap, double p, R3Batch *cb, int *nb, int nbcap)   /* vertices v[start .. cap); returns how many */
 {   static int sel[512]; float bear, len, op = WxSunShadow(&bear, &len), fw[3], sd[3], ax[3]; int kc = (int)floor(p), lo = 0, hi = g_w3ncst, n = 0, i, k, nv = start, last = -1;
+    if (!g_vid.oshadow) return 0;   /* (True 3D detail > Object shadows off) */
     if (op < 0.01f || g_w3NoShadow || !g_w3ncst) return 0;
     { float d3[3], fw3[3]; fw3[0] = -f->right[2]; fw3[1] = 0; fw3[2] = f->right[0]; if (WxSunDir(fw3, f->right, d3) <= 0) return 0; }   /* (only a real sun: no sun, no tree / lamp shadows) */
     fw[0] = -f->right[2]; fw[2] = f->right[0];
@@ -1558,7 +1632,8 @@ static int W3CasterShadows(const R3Frame *f, R3Vert *v, int start, int cap, doub
         const W3Cst *C = &g_w3cst[sel[i]]; static const int o6[6] = { 0, 1, 2, 0, 2, 3 }; float c[4][3], uv[4][2], half = (C->oxb - C->oxa) * 0.5f, mid = (C->oxa + C->oxb) * 0.5f, H = C->oyb - C->oya, bx, bz, by;
         int gt = W3GpuTex(C->tex);
         if (gt < 0 || H <= 0) continue;
-        bx = C->x + f->right[0] * mid; bz = C->z + f->right[2] * mid; by = C->y + 6.0f;   /* (test switch RR_W3SHTEST=1: lifted, black) the foot on the ground (the pictures are sunk a little into it: oya < 0), just above it */
+        bx = C->x + f->right[0] * mid; bz = C->z + f->right[2] * mid; by = C->y + 6.0f;
+        if (!W3InView(bx + sd[0] * H * len * 0.5f, by, bz + sd[2] * H * len * 0.5f, half + H * len * 0.5f + 20)) continue;   /* (the shadow out of view) */   /* (test switch RR_W3SHTEST=1: lifted, black) the foot on the ground (the pictures are sunk a little into it: oya < 0), just above it */
         c[0][0] = bx - ax[0] * half; c[0][2] = bz - ax[2] * half; c[1][0] = bx + ax[0] * half; c[1][2] = bz + ax[2] * half;
         c[2][0] = c[1][0] + sd[0] * H * len; c[2][2] = c[1][2] + sd[2] * H * len; c[3][0] = c[0][0] + sd[0] * H * len; c[3][2] = c[0][2] + sd[2] * H * len;
         for (k = 0; k < 4; k++) c[k][1] = by;
@@ -1771,7 +1846,7 @@ static void W3Splash(const R3Frame *f, double vp, int w)
 {   static unsigned s = 9917; static double last = -1; static struct { unsigned id; float in; } was[32]; static void (__stdcall *snd)(float, float); static int init;
     double now = WxSeconds(), dt = last < 0 ? 0 : now - last; int i, j, k;
     last = now; if (dt <= 0 || dt > 0.1) return;
-    if (!init) { HMODULE m = GetModuleHandleA("dsound.dll"); init = 1; snd = m ? (void (__stdcall *)(float, float))GetProcAddress(m, "RR_Splash") : NULL; }
+    if (!init) { HMODULE m = GetModuleHandleA("rrdsound.dll"); init = 1; snd = m ? (void (__stdcall *)(float, float))GetProcAddress(m, "RR_Splash") : NULL; }
     if (g_w3Pcap < g_w3ns) return;   /* (puddles in the rain; dirt / grass off the tarmac any time) */
     for (i = 0; i < g_w3ns; i++) {
         const W3Spr *sp = &g_w3s[i]; float foot[3], fx = 0, fy = -1e9f, pd, t0[3], t1[3], bk[2], sd[2], l; double v, q; int n, slot = -1;
@@ -1790,7 +1865,7 @@ if (getenv("RR_W3LOGL") && sp->kind == RRO_PLAYER) { static int nl; if (++nl % a
             if (sp->kind != RRO_PLAYER) { double dd = sp->dObj; st *= dd < 3000 ? (float)(0.5 * (1 - dd / 3000)) : 0; }
             if (st > 0.02f) snd(st, w > 0 ? fx / w : 0.5f); }
         was[slot].in = pd;
-        if (pd < 0.3f && v >= 1.5 && g_blN < BL_N - 8 && sp->dObj < 6000) {   /* off the tarmac: dirt / grass thrown up from the rear tyre */
+        if (pd < 0.3f && v >= 1.5 && g_vid.spray && g_blN < BL_N - 8 && sp->dObj < 6000) {   /* off the tarmac: dirt / grass thrown up from the rear tyre */
             float col[3]; int gk = W3GroundAt(foot[0], foot[2], col);
             if (gk) {
                 q = vp + sp->objDepth - 1.0;
@@ -1806,7 +1881,7 @@ if (getenv("RR_W3LOGL") && sp->kind == RRO_PLAYER) { static int nl; if (++nl % a
                     d->col[0] = col[0] * sh; d->col[1] = col[1] * sh; d->col[2] = col[2] * sh;
                     if (gk == 2 && (k & 3) == 0 && g_blN < BL_N) { W3Drop *u = &g_bl[g_blN++]; *u = *d; u->water = 4; u->size = 14 + 16 * GfRnd(&s); u->v[0] *= 0.35f; u->v[2] *= 0.35f; u->v[1] = 120 + 160 * GfRnd(&s); u->max = u->life = 0.7f + 0.5f * GfRnd(&s);   /* (a dust cloud: big, soft, faint, hanging) */
                         u->col[0] = col[0] * 1.25f; u->col[1] = col[1] * 1.2f; u->col[2] = col[2] * 1.15f; } } } }
-        if (pd < 0.3f || v < 1.5 || g_blN >= BL_N - 8) continue;
+        if (pd < 0.3f || v < 1.5 || !g_vid.spray || g_blN >= BL_N - 8) continue;   /* (Spray and splashes off: the splash sound stays) */
         q = vp + sp->objDepth - 1.0;   /* the way he rides: along the road there */
         C3_PointF(&g_w3c, W3Fr(), q, sp->lat, 0, t0); C3_PointF(&g_w3c, W3Fr(), q + 0.5, sp->lat, 0, t1);
         bk[0] = t0[0] - t1[0]; bk[1] = t0[2] - t1[2]; l = (float)sqrt(bk[0] * bk[0] + bk[1] * bk[1]); if (l < 1) continue; bk[0] /= l; bk[1] /= l;
@@ -1832,6 +1907,7 @@ static void W3Blood(int fw, int fh)
         r[0] = d->p[0] - g_w3eye[0]; r[1] = d->p[1] - g_w3eye[1]; r[2] = d->p[2] - g_w3eye[2];
         z = r[0] * g_w3fw[0] + r[2] * g_w3fw[2]; if (z < 40) continue;
         x = cx + F * (r[0] * g_w3rt[0] + r[2] * g_w3rt[2]) / z; y = hy - F * r[1] / z; s = F * d->size / z; if (s < 0.6f) s = 0.6f; if (s > (d->water == 4 ? 70 : 9)) s = d->water == 4 ? 70.0f : 9.0f;
+        if (x < g_gpuClip[0] - 80 || x > g_gpuClip[2] + 80 || y < g_gpuClip[1] - 80 || y > g_gpuClip[3] + 80) continue;   /* (off the 3D view: not drawn, still moving) */
         a = d->life / d->max;
         if (d->water == 1) {   /* a water drop: a short streak along its flight (where it was ~35 ms ago -> now): spray, not blobs */
             float t2[3], z2, x2, y2, dx, dy, l, nx, ny; int c2;
@@ -1863,7 +1939,8 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     if (getenv("RR_W3LOG")) { static int n; if (++n == 300 && g_primary && g_primary->pal) { int i; double a = 0, b = 0;   /* RR_W3LOG: live vs course-file palette */
         for (i = 0; i < 256; i++) { a += g_primary->pal->e[i].peRed + g_primary->pal->e[i].peGreen + g_primary->pal->e[i].peBlue; b += (g_w3a.pal[i] & 0xff) + ((g_w3a.pal[i] >> 8) & 0xff) + ((g_w3a.pal[i] >> 16) & 0xff); }
         LOG("world3d palettes: live %.1f file %.1f; entry 100 live %d,%d,%d file %d,%d,%d", a / 768, b / 768, g_primary->pal->e[100].peRed, g_primary->pal->e[100].peGreen, g_primary->pal->e[100].peBlue, g_w3a.pal[100] & 0xff, (g_w3a.pal[100] >> 8) & 0xff, (g_w3a.pal[100] >> 16) & 0xff); } }
-    tw = (int)(w * g_gpuOutScale + 0.5f); th = (int)(h * g_gpuOutScale + 0.5f);
+    {   float rs = g_vid.rscale == 0 ? 0.5f : g_vid.rscale == 1 ? 0.75f : 1.0f;   /* (True 3D detail > 3D resolution: the 3D picture smaller, stretched to the window) */
+        tw = (int)(w * g_gpuOutScale * rs + 0.5f); th = (int)(h * g_gpuOutScale * rs + 0.5f); }
     if (tw < 16 || th < 16 || tw > 8192 || th > 8192) return;
     if (!g_w3tex || g_w3tw != tw || g_w3th != th) {
         if (g_w3tex) SDL_DestroyTexture(g_w3tex);
@@ -1888,9 +1965,10 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     R3_LookTo(view, eye, fwd, up);
     sx = (float)tw / w; sy = (float)th / h;
     {   double fpx = W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1);   /* focal length in frame pixels */
+        g_w3fpxT = (float)(fpx * sx);   /* (in the 3D picture's pixels: W3Grass) */
         R3_Persp(proj, (float)(fpx * sx), (float)(fpx * sy), g_w3cam.centreX * sx, g_w3cam.horizonY * sy, tw, th, (float)W3_ZN, (float)W3Far()); }
     memset(&f, 0, sizeof f);
-    R3_Mul(f.vp, view, proj);
+    R3_Mul(f.vp, view, proj); W3ViewPlanes(f.vp);
     f.right[0] = fwd[2]; f.right[1] = 0; f.right[2] = -fwd[0];
     f.eye[0] = eye[0]; f.eye[1] = eye[1]; f.eye[2] = eye[2]; f.bias = 400.0f;   /* billboards drawn over the ground just in front of them */
     if (getenv("RR_W3LOGY")) { static int ny; if ((++ny % atoi(getenv("RR_W3LOGY"))) == 0) {   /* test switch RR_W3LOGY=<k>: every k frames, the game's road centre x (its projection, lateral 0) against the 3D one at depths 3..24 -> yaw (rad); on half B the game's lateral 0 is A's centre (huge values) */
@@ -1920,13 +1998,13 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     if (g_cdPal) f.bright = 1.0f;   /* (the start countdown: undimmed) */
     f.target = t; f.w = tw; f.h = th; f.doClear = 1;   /* transparent: the background (sky) shows through */
     f.crisp = getenv("RR_W3SOFT") == NULL;   /* the ground's grain as the game's (unfiltered near texels); test switch RR_W3SOFT=1: filtered */
-    W3Live();
+    { PF_T0(pfL); W3Live(); PF_ADD(PF_LIVE, pfL); }
     if (g_w3lo >= 0) { f.staticBatches = g_w3sb; f.nStatic = g_w3snb; f.liveBatches = g_w3lb; f.nLive = g_w3lnb; }
     else { f.staticBatches = g_w3b; f.nStatic = g_w3nb; }
     WxWorld(&f);   /* time of day / weather: tint, fog, snow (weather.inc) */
     f.sun[3] = WxSunDir(fwd, f.right, f.sun);   /* the sun on the buildings' walls (render3d.h) */
-    W3SunShadowMap(&f, eye, fwd);   /* the buildings' shadows: the sun's shadow map (render3d.h R3Frame.shadow) */
-    if (f.puddles > 0 && !getenv("RR_W3NOREFL")) {   /* rain: the puddles mirror the world, in the plane of the road a little ahead (test switch RR_W3NOREFL=1: the sky only) */
+    f.shadow = 0;   /* (the buildings' shadows - the sun's shadow map, W3SunShadowMap - are off: removed for now, user 2026-11-15) */
+    if (f.puddles > 0 && g_vid.refl && !getenv("RR_W3NOREFL")) {   /* rain: the puddles mirror the world, in the plane of the road a little ahead (test switch RR_W3NOREFL=1: the sky only) */
         float a[3]; C3_PointF(&g_w3c, W3Fr(), p + 2.0, g_w3camB ? W3MidB(p + 2.0) : C3_RoadMid(&g_w3c, p + 2.0), 0, a); f.reflect = 1; f.reflectY = a[1]; }
     {   /* per-frame geometry of the world pass: traffic as 3D cars, then the light halos (their point lights into f) */
         static R3Vert *cv; static int ccap; static R3Batch cb[66 + 256]; int nc = 0, i, nb = 0, nv = 0, need, nh;
@@ -1935,12 +2013,14 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
         W3HydCheck(p);   /* (a rider on a fire hydrant breaks it) */
         if (ccap < need) { ccap = need; cv = (R3Vert *)realloc(cv, sizeof(R3Vert) * ccap); if (!cv) ccap = 0; }
         if (cv) {
+            PF_T0(pfX);   /* (RR_PROFILE: extras - grass included) */
             if (nc && (nb = W3Cars(cv, ccap - 18 * 400 - W3_GRMAX * 6 - 6 * (16 + 210 * 12), cb, 64, vp)) > 0) nv = cb[nb - 1].first + cb[nb - 1].count;
-            if (g_w3ngr && W3GrassTex() >= 0) { int ng = W3Grass(cv + nv, W3_GRMAX * 6, eye); if (ng > 0) { cb[nb].first = nv; cb[nb].count = ng; cb[nb].tex = W3GrassTex(); cb[nb].alpha = 0; nb++; nv += ng; } }   /* grass tufts on the green ground */
+            if (g_w3ngr && W3GrassTex() >= 0) { PF_T0(pfG); int ng = W3Grass(cv + nv, W3_GRMAX * 6, eye); PF_ADD(PF_GRASS, pfG); if (ng > 0) { cb[nb].first = nv; cb[nb].count = ng; cb[nb].tex = W3GrassTex(); cb[nb].alpha = 0; nb++; nv += ng; } }   /* grass tufts on the green ground */
             nv += W3HydDraw(cv, nv, nv + 6 * (16 + 210 * 12), cb, &nb, 64 + 180, eye);   /* broken hydrants: the stumps, the water */
             nv += W3CasterShadows(&f, cv, nv, ccap - 18 * 400, p, cb, &nb, 64 + 200);   /* trees, lamps, poles: shadows on the ground (before the halos) */
-            if (f.shadow <= 0 && getenv("RR_W3OLDBSH")) nv += W3BldgShadows(&f, cv, nv, ccap - 18 * 400, p, cb, &nb, 64 + 201);   /* (the old flat ones: test switch RR_W3OLDBSH=1) */
-            if ((nh = W3Lights(&f, cv + nv, ccap - nv, p, eye, w, h)) > 0 && W3GlowTex() >= 0) { cb[nb].first = nv; cb[nb].count = nh; cb[nb].tex = W3GlowTex(); cb[nb].alpha = 3; nb++; nv += nh; }
+
+            if ((nh = W3Lights(&f, cv + nv, ccap - nv, p, eye, w, h)) > 0 && g_vid.halos && W3GlowTex() >= 0) { cb[nb].first = nv; cb[nb].count = nh; cb[nb].tex = W3GlowTex(); cb[nb].alpha = 3; nb++; nv += nh; }
+            PF_ADD(PF_EXTRAS, pfX);
             if (nb) { f.dyn = cv; f.nDyn = nv; f.dynBatches = cb; f.nDynBatches = nb; } }
     }
     SDL_FlushRenderer(g_ren);
@@ -1950,7 +2030,7 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     W3Splash(&f, vp, w);   /* rain: water from the tyres in puddles; dirt / grass off the tarmac */
     if (f.snow > 0) { TkUpdate(vp, eye, fwd); f.tracks = g_tkSrv; f.trackScale = 1.0f / (TK_N * TK_CELL); f.trackAmt = 0.85f; }   /* snow tracks (above) */
     else g_tkInit = 0;
-    R3_Render(&g_w3r, &f);
+    { PF_T0(pfR); R3_Render(&g_w3r, &f); PF_ADD(PF_RENDER, pfR); }
     { static int ns = -1; if (ns < 0) ns = getenv("RR_W3NOSHADOW") != NULL; g_w3NoShadow = ns; }
-    W3Sprites(t, w, h, tw, th, f.vp, vp, &f); g_w3ns = 0;   /* the game's remaining polygons, depth-tested against the world */
+    { PF_T0(pfS); W3Sprites(t, w, h, tw, th, f.vp, vp, &f); PF_ADD(PF_SPRITES, pfS); } g_w3ns = 0;   /* the game's remaining polygons, depth-tested against the world */
     SDL_RenderTexture(g_ren, g_w3tex, NULL, r); }

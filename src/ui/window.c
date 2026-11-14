@@ -338,7 +338,7 @@ unsigned __fastcall rr_MenuItemActivate(int obj)
     else target = *(int *)(obj + 4);
     if (target == 0) return 0;
     if (target == 0x13) {   /* Restroom "Video Options" (was the Graphics Options page): the shim's own screen; afterwards rebuild the page we came from */
-        int (__stdcall *cfg)(void) = (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("ddraw.dll"), "RR_VideoConfig");
+        int (__stdcall *cfg)(void) = (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_VideoConfig");
         if (cfg && cfg()) target = (*(int *)&rec_menuScreen.g_menuScreen);
     }
     return MenuScreenShow(target);
@@ -574,7 +574,7 @@ mouse_down:
     if ((*(int *)&rec_menuScreen.g_menuScreen) == 0x1a) {   /* a Schmooze offer: only a click on its Yes / No counts (race\arsenal.c; the shim maps the click to frame pixels) */
         int rr_ArsenalOfferClick(int x, int y);
         static void (__stdcall *fp)(HWND, LPARAM, int *, int *); static int looked; int x = -1, y = -1;
-        if (!looked) { HMODULE m = GetModuleHandleA("ddraw.dll"); looked = 1; fp = m ? (void (__stdcall *)(HWND, LPARAM, int *, int *))GetProcAddress(m, "RR_FramePos") : 0; }
+        if (!looked) { HMODULE m = GetModuleHandleA("rrddraw.dll"); looked = 1; fp = m ? (void (__stdcall *)(HWND, LPARAM, int *, int *))GetProcAddress(m, "RR_FramePos") : 0; }
         if (fp) fp(hwnd, lp, &x, &y);
         if (rr_ArsenalOfferClick(x, y)) return 0;
     }

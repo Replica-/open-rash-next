@@ -36,6 +36,7 @@ typedef struct C3Course {
     int darkStrip;              /* C3_Strip: this cross-section span is drawn darker (-1 none): the median wedge under the rails at a fork */
     int skirts;                 /* C3_BuildRange: build the skirts (C3_Skirt) - only the live stretch round the camera, never the whole course */
     int forkPick;               /* 1 = forks off: a split is only its left road A, built as an ordinary road (no B / rails / median); 0 = both */
+    int noGround;               /* 1 = no rocks, fallen leaves (Video Options > True 3D detail > Ground detail off: C3_Leaves, C3_DirtRocks) */
     unsigned char *bdead;       /* per piece: 1 = carriageway B has already rejoined A (its real end is earlier than A's: C3_BTail); not built */
     int *pairA, *pairB;         /* per piece: the A piece beside B piece k / the B piece beside A piece k (they drift apart when B is shorter: C3_FramesB) */
     int soft;                   /* forks on, the original's way (C3_SoftFrames): hide = 1 + the carriageway the camera is not on, built round the camera each frame */
@@ -460,6 +461,7 @@ static void C3_Rock(C3Course *c, double p, double x, double y, double r, unsigne
 static void C3_DirtRocks(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1, int stones, int tex)   /* (row k: u, h; row k + 1: v, g; stones: stones only - a verge) */
 {
     double w = fabs(u1 - u0); unsigned s = (unsigned)k * 2654435761u ^ (unsigned)(int)(u0 * 7.0) * 40503u; int i, n;
+    if (c->noGround) return;
     if (w < 60) return;
     n = (int)(w / (stones ? 120.0 : 260.0) + ((s >> 12) % 100) / 100.0); if (n > 10) n = 10;
     for (i = 0; i < n; i++) {
@@ -902,6 +904,7 @@ static void C3_Leaves(C3Course *c, double p, double x, double half, double g, do
 {
     unsigned s = (unsigned)(int)(p * 977.0) * 2654435761u ^ (unsigned)(int)(x * 13.0) * 40503u; int i, n = 70;
     double dir = curb > x ? 1 : -1, rimO = half + C3_RIM;
+    if (c->noGround) return;   /* (True 3D detail > Ground detail off) */
     if (getenv("RR_W3LOGPIT")) { static int m; if (m++ < 40) LOG("w3leaves piece %.1f x %.0f curb %.0f colour %08x", p, x, curb, col); }   /* (RR_W3LOGPIT=1: where the pit trees are) */
 #define C3_RND() ((s = s * 1664525u + 1013904223u) >> 8) / 16777216.0
     for (i = 0; i < n; i++) {

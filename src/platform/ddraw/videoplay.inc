@@ -23,7 +23,7 @@ __declspec(dllexport) void __stdcall RR_VideoAsked(void) { g_vpAsked = 1; }
 __declspec(dllexport) int __stdcall RR_PlayVideo(const char *name, int count)
 {   char nm[64], path[MAX_PATH]; wchar_t w[MAX_PATH]; IMFSourceReader *rd = NULL; IMFAttributes *at = NULL; IMFMediaType *mt = NULL; HRESULT hr;
     UINT32 vw = 0, vh = 0; LONG stride = 0; SDL_Texture *tex = NULL; int done = 0, shown = 0, haveAudio = 0, frames = 0; LARGE_INTEGER fq, t0;
-    HMODULE ds = GetModuleHandleA("dsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
+    HMODULE ds = GetModuleHandleA("rrdsound.dll"); int (__stdcall *play)(const char *, int) = ds ? (int (__stdcall *)(const char *, int))GetProcAddress(ds, "RR_MusicPlay") : NULL;
     int (__stdcall *stop)(void) = ds ? (int (__stdcall *)(void))GetProcAddress(ds, "RR_MusicStop") : NULL;
     const DWORD VIDEO = 0xFFFFFFFCu, ALL = 0xFFFFFFFEu; static int mfOk; const char *off = getenv("RR_VIDEO"); int asked = g_vpAsked;
     g_vpAsked = 0;
@@ -44,7 +44,8 @@ __declspec(dllexport) int __stdcall RR_PlayVideo(const char *name, int count)
     if (SUCCEEDED(MFCreateMediaType(&mt))) { IMFMediaType_SetGUID(mt, &MF_MT_MAJOR_TYPE, &MFMediaType_Video); IMFMediaType_SetGUID(mt, &MF_MT_SUBTYPE, &MFVideoFormat_RGB32);
         hr = IMFSourceReader_SetCurrentMediaType(rd, VIDEO, NULL, mt); IMFMediaType_Release(mt); mt = NULL; }
     if (FAILED(hr) || FAILED(IMFSourceReader_GetCurrentMediaType(rd, VIDEO, &mt))) { LOG("video: no RGB32 output for %s (0x%lx)", path, (unsigned long)hr); IMFSourceReader_Release(rd); return 0; }
-    { UINT64 fs = 0; IMFMediaType_GetUINT64(mt, &MF_MT_FRAME_SIZE, &fs); vw = (UINT32)(fs >> 32); vh = (UINT32)fs;
+    { UINT64 fs = 0; GUID st; IMFMediaType_GetUINT64(mt, &MF_MT_FRAME_SIZE, &fs); vw = (UINT32)(fs >> 32); vh = (UINT32)fs;
+      if (SUCCEEDED(IMFMediaType_GetGUID(mt, &MF_MT_SUBTYPE, &st))) LOG("video: output subtype %08lx%s", (unsigned long)st.Data1, IsEqualGUID(&st, &MFVideoFormat_RGB32) ? " (RGB32)" : " - NOT RGB32");
       if (FAILED(IMFMediaType_GetUINT32(mt, &MF_MT_DEFAULT_STRIDE, (UINT32 *)&stride))) stride = (LONG)vw * 4; IMFMediaType_Release(mt); }
     if (!vw || !vh || !(tex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, (int)vw, (int)vh))) { IMFSourceReader_Release(rd); return 0; }
     SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_LINEAR);
@@ -82,6 +83,8 @@ __declspec(dllexport) int __stdcall RR_PlayVideo(const char *name, int count)
                     else if (len % ph == 0 && len / ph >= vw * 4) pitch = (int)(len / ph);
                     else if (len % vh == 0 && len / vh >= vw * 4) pitch = (int)(len / vh); }
                 top = stride < 0 ? p + (size_t)pitch * (vh - 1) : p;
+                if (g_log && (frames == 30 || frames == 120 || frames == 240)) { double s = 0; UINT32 yy, xx; for (yy = 0; yy < vh; yy += 37) for (xx = 0; xx < vw; xx += 41) { const BYTE *q = p + (size_t)yy * pitch + xx * 4; s += q[0] + q[1] + q[2]; }   /* (RR_LOG: a frame's mean brightness - Windows / Proton compared) */
+                    LOG("video: frame %u mean %.1f (buffer %lu, pitch %d, stride %ld)", frames, s / (3.0 * ((vh + 36) / 37) * ((vw + 40) / 41)), (unsigned long)len, pitch, (long)stride); }
                 if (len >= (DWORD)pitch * vh) {
                     if (stride >= 0) SDL_UpdateTexture(tex, NULL, top, pitch);
                     else { void *dst; int dp; UINT32 y; if (SDL_LockTexture(tex, NULL, &dst, &dp)) { for (y = 0; y < vh; y++) memcpy((BYTE *)dst + (size_t)y * dp, top - (size_t)y * pitch, (size_t)vw * 4); SDL_UnlockTexture(tex); } } }

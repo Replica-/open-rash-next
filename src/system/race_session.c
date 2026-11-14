@@ -136,7 +136,7 @@ void __cdecl rr_RaceSetup(void)
     (&g_cheatSpeed)[0] = 0; (&g_cheatSpeed)[1] = 0; (&g_cheatSpeed)[2] = 0; (&g_cheatSpeed)[3] = 0;
     TrackResourcesLoad();
     {   /* widescreen races (automatic when the window is wider than 4:3): the shim widens the frame (returns its width, 0 = normal 640); the projection centre / culling limit g_projWidth is the frame width in half-pixels (hi-res frames only) */
-        int (__stdcall *rb)(void) = g_hiResRace ? (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("ddraw.dll"), "RR_RaceBegin") : 0;
+        int (__stdcall *rb)(void) = g_hiResRace ? (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_RaceBegin") : 0;
         int ws = rb ? rb() : 0;
         rec_Controls.g_screenMidX = rec_Controls.g_projWidth = ws ? ws / 2 : 320;
         rr_GpuRaceBegin();   /* the world is drawn by the shim's GPU renderer (src\render\gpu_scene.c) */
@@ -232,7 +232,7 @@ unsigned __fastcall rr_FramePump(int step)
             {   /* the shim (weather.inc RR_RaceCountdown): the start countdown's ticks left and the race palette - it shows the countdown undimmed
                    (drawing only: the frame and the game state stay the original's) and says "3, 2, 1, Go!" */
                 static void (__stdcall *cd)(int, const void *); static int init;
-                if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; cd = m ? (void (__stdcall *)(int, const void *))GetProcAddress(m, "RR_RaceCountdown") : 0; }
+                if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; cd = m ? (void (__stdcall *)(int, const void *))GetProcAddress(m, "RR_RaceCountdown") : 0; }
                 if (cd) cd(g_frameRateSet, &tbl_gamePalette);
             }
         } else GameTicks(step);
@@ -258,7 +258,7 @@ int __cdecl rr_PromptKey(int escCancels, char *fmt, ...)
            and the mouse change those settings there instead of answering the prompt, and its Close / Exit Race buttons answer it; Pseudo 3D (the
            shim says no) is the original prompt */
         static int (__stdcall *pkf)(int); static int (__stdcall *pmf)(const MSG *); static int init;
-        if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; pkf = m ? (int (__stdcall *)(int))GetProcAddress(m, "RR_PauseKey") : 0;
+        if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; pkf = m ? (int (__stdcall *)(int))GetProcAddress(m, "RR_PauseKey") : 0;
                      pmf = m ? (int (__stdcall *)(const MSG *))GetProcAddress(m, "RR_PauseMouse") : 0; }
         pause = escCancels && pkf ? pkf : 0;
         pauseMouse = pause ? pmf : 0;

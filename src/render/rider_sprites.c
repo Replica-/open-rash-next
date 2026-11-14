@@ -225,7 +225,7 @@ void __fastcall rr_PlayerSpriteDraw(int p, int q)
                 rec[3] = src ? src[1] : 0;
                 {   /* the weapon picture (this overlay): the shim may draw another object in its place (ddraw weapons.inc RR_WeaponFrame) - drawing only */
                     static void (__stdcall *wf)(const void *, int, int); static int init;
-                    if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; wf = m ? (void (__stdcall *)(const void *, int, int))GetProcAddress(m, "RR_WeaponFrame") : 0; }
+                    if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; wf = m ? (void (__stdcall *)(const void *, int, int))GetProcAddress(m, "RR_WeaponFrame") : 0; }
                     if (wf) wf((const void *)spr, n, (int)(unsigned char)key);
                 }
                 rec[4] = 0;

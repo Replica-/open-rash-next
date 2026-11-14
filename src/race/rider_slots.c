@@ -29,7 +29,7 @@ static int Wanted(void)
 {
     char e[8]; int n = -1, i;
     if (GetEnvironmentVariableA("RR_OPPONENTS", e, sizeof e) > 0) { n = 0; for (i = 0; e[i] >= '0' && e[i] <= '9'; i++) n = n * 10 + (e[i] - '0'); }
-    else { HMODULE sh = GetModuleHandleA("ddraw.dll"); int (__stdcall *f)(void) = sh ? (int (__stdcall *)(void))GetProcAddress(sh, "RR_Opponents") : 0; if (f) n = f(); }
+    else { HMODULE sh = GetModuleHandleA("rrddraw.dll"); int (__stdcall *f)(void) = sh ? (int (__stdcall *)(void))GetProcAddress(sh, "RR_Opponents") : 0; if (f) n = f(); }
     if (n < 1 || n > RR_SLOTS_MAX - 2) n = 14;
     return n;
 }
