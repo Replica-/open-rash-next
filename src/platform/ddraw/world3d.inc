@@ -609,6 +609,8 @@ static void W3GrassCollect(const C3Course *cc, W3GrTri **arr, int *nn, int *capp
         u[0] = B->x - A->x; u[1] = B->y - A->y; u[2] = B->z - A->z; v[0] = C->x - A->x; v[1] = C->y - A->y; v[2] = C->z - A->z;
         n[0] = u[1] * v[2] - u[2] * v[1]; n[1] = u[2] * v[0] - u[0] * v[2]; n[2] = u[0] * v[1] - u[1] * v[0]; l = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
         if (l < 1e-3f || fabsf(n[1]) / l < 0.62f) continue;   /* (flat enough to grow on: up to ~50 degrees) */
+        if (t < 0 && l * 0.5f < 400) continue;   /* (no tufts on the fallen leaves round the city's tree pits - user, 2026-11-15: course3d.h C3_Leaves, flat green
+                                                     untextured diamonds of ~135 units at most; ground is never a flat-colour triangle smaller than one tuft) */
         if (dry) green = 1;
         else if (t < 0 || t >= g_w3a.ntex) green = W3IsGreen(A->rgba);
         else {
