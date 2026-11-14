@@ -170,8 +170,8 @@ static void SgMakeText(int px)
     if (g_sgTex) { SDL_DestroyTexture(g_sgTex); g_sgTex = NULL; }
     if (!dc) return;
     if (lpx < 8) lpx = 8;
-    ft = CreateFontA(-px, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Bahnschrift");
-    fl = CreateFontA(-lpx, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Bahnschrift");
+    ft = CreateFontA(-px, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_BAHN_SEMI));
+    fl = CreateFontA(-lpx, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_BAHN));
     o = (HFONT)SelectObject(dc, fl); SetTextCharacterExtra(dc, lpx / 2); GetTextExtentPoint32A(dc, lab, (int)strlen(lab), &sl);
     SelectObject(dc, ft); SetTextCharacterExtra(dc, px / 24); GetTextExtentPoint32A(dc, t, (int)strlen(t), &st);
     gap = px / 6; w = (st.cx > sl.cx ? st.cx : sl.cx) + 4 * sh + 8; h = sl.cy + gap + st.cy + 3 * sh + 4;

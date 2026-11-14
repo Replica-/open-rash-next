@@ -375,7 +375,12 @@ unsigned __stdcall rr_HudDraw(void)
         if (ORGX != 0)
             cnt.right = 0x280;
         cnt.top = cnt.top + (0x78 >> (1 - g_hiResRace & 0x1f));
-        ShadowTextDraw((int)dc, (int)&(*(char *)&rec_sndPlayerEngine.g_logBuf), (int)&cnt, 0x4851, 0xffffff);
+        {   /* the start countdown's number: the shim may draw its own (ddraw weather.inc RR_FancyCountdown) - drawing only */
+            static int (__stdcall *fc)(void); static int init;
+            if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; fc = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_FancyCountdown") : 0; }
+            if (!(g_raceRunning == 0 && rec_sndPlayerEngine.g_raceActive == 0 && fc && fc()))
+                ShadowTextDraw((int)dc, (int)&(*(char *)&rec_sndPlayerEngine.g_logBuf), (int)&cnt, 0x4851, 0xffffff);
+        }
     }
 
     SelectObject(dc, oldFont);

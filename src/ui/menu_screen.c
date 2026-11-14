@@ -256,6 +256,7 @@ void __fastcall rr_MenuScreenShow(int screen)
         MoveWindow(BUTTON(i), I32(rec, 0xc), I32(rec, 0x10), I32(rec, 0x14), I32(rec, 0x18), 0);
     }
     DialogControlsRefresh(0);
+    { void rr_ArsenalScreen(int s); rr_ArsenalScreen(s); }   /* Schmooze offers, the bounty's outcome (race\arsenal.c) */
     if (s == 7)
         TrackListCreate(1000);
     else if (s == 0x23)

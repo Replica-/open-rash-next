@@ -1,14 +1,14 @@
 /* weather.inc - time of day and weather of True 3D races (included by rrddraw.c after hdsky.inc; nothing here changes the game state, Pseudo 3D is untouched).
  *
  *   Time of day   Cycle (a day every g_vid.dayMin minutes of unpaused race time, carried on from race to race) / Dawn / Day / Sunset / Night
- *   Weather       Clear / Rain (overcast, grey fog, streaks, lightning) / Snow (white fog, flakes, snow on what faces up, banks by the road) / Heavy rain / Heavy snow
+ *   Weather       Clear / Rain (overcast, grey fog, streaks, lightning) / Snow (white fog, flakes, snow on what faces up, banks by the road) / Heavy rain / Heavy snow / Torrential rain (three times the heavy rain, pea-soup fog, 20 % darker)
  * Both are changed in the race's Esc pause (the game's "quit?" prompt, race_session.c rr_PromptKey asks RR_PauseKey first): Up / Down = row,
  * Left / Right = value; written to video.ini (time_of_day, weather, day_minutes).  Test switches: RR_TOD=0..4, RR_WEATHER=0..2, RR_TOD_CLOCK=<0..1> (a fixed
  * time of the cycle: 0 = midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset).
  * One colour model (WxCompute) feeds every layer: the sky (WxSky, from HsDraw: tint, graded sky, stars, sun / moon, clouds and skyline tinted), the 3D
  * world (WxWorld, from W3Draw: render3d.h tint / saturation / fog / snow / point lights - the lamps and police lights are world3d.inc's), the game's
  * remaining polygons (WxBatchMod) and the rain / snow in front of it all (WxParticles, before the HUD).  Day + Clear = the picture as before. */
-static int WpCount(void); static const char *WpName(int i);   /* weapons.inc */
+static const char *WpRowName(void); static void WpRowStep(int d); static int WpTorch(void);   /* weapons.inc (a Big Game: the weapons the player owns; the Miner's Lamp charm) */
 static float g_wxShelter;   /* 0..1: the camera under a roof (a tunnel, world3d.inc g_w3InTunnel): the rain / snow fades out, its sound muffled */
 static int g_wxPause, g_wxSel, g_wxDirty;   /* the Esc prompt is up / its row / a setting changed (saved when it closes) */
 static double g_wxClock = 0.30, g_wxTime;  /* the cycle's time of day (0..1, starts mid-morning); seconds of unpaused True 3D race time (animation) */
@@ -34,9 +34,10 @@ static void WxSound(int kind, float v)
 
 static int WxEnv(const char *n, int v, int lo, int hi) { const char *e = getenv(n); if (e && *e) { v = atoi(e); if (v < lo) v = lo; if (v > hi) v = hi; } return v; }
 static int WxTod(void) { return WxEnv("RR_TOD", g_vid.tod, 0, 4); }
-static int WxWeatherRaw(void) { return WxEnv("RR_WEATHER", g_vid.weather, 0, 4); }   /* the setting: 0 clear, 1 rain, 2 snow, 3 heavy rain, 4 heavy snow */
-static int WxWeather(void) { int r = WxWeatherRaw(); return r == 3 ? 1 : r == 4 ? 2 : r; }   /* its kind: 0 clear, 1 rain, 2 snow */
+static int WxWeatherRaw(void) { return WxEnv("RR_WEATHER", g_vid.weather, 0, 5); }   /* the setting: 0 clear, 1 rain, 2 snow, 3 heavy rain, 4 heavy snow, 5 torrential rain */
+static int WxWeather(void) { int r = WxWeatherRaw(); return r == 3 || r == 5 ? 1 : r == 4 ? 2 : r; }   /* its kind: 0 clear, 1 rain, 2 snow */
 static int WxHeavy(void) { return WxWeatherRaw() >= 3; }
+static int WxTorrent(void) { return WxWeatherRaw() == 5; }   /* torrential rain (also heavy) */
 /* the Fog setting: 0 auto (with the weather), 1 off, 2 light, 3 heavy, 4 haze, 5 medium, 6 pea soup, 7 ground mist (the stored numbers; the pause
    steps through them in WX_FOGORD order, thinnest to thickest) */
 #define WX_NFOG 8
@@ -71,6 +72,7 @@ static void WxCompute(float dt)
     WxL3(w->cloud, nCloud, one, w->day); for (i = 0; i < 3; i++) w->cloud[i] *= WxL(1, twCloud[i], tw * 0.8f); w->cloudA = 1;
     memcpy(w->fog, w->skyHor, sizeof w->fog); w->fogStart = 25; w->fogEnd = 150; w->fogMax = 0.55f * (1 - w->day);
     w->snow = 0;
+    if (wx == 0) { static const float warm[3] = { 1.0f, 0.95f, 0.84f }; for (i = 0; i < 3; i++) w->tint[i] *= WxL(1, warm[i], w->day); w->sat *= WxL(1, 1.08f, w->day); }   /* sunny: warmer, a little richer light */
     L = WxL(0.10f, 1, w->day);   /* overcast light */
     if (wx == 1) {   /* rain: low grey cloud, wet dull colours, grey fog */
         static const float rTop[3] = { 0.36f, 0.38f, 0.43f }, rHor[3] = { 0.55f, 0.57f, 0.60f }, rTint[3] = { 0.70f, 0.72f, 0.80f };
@@ -107,7 +109,18 @@ static void WxCompute(float dt)
             for (i = 0; i < 3; i++) w->fog[i] = WxL(w->fog[i], pale[i] * L2, 0.6f); }
         for (i = 0; i < 3; i++) { w->skyTop[i] = WxL(w->skyTop[i], w->fog[i], k2); w->skyHor[i] = WxL(w->skyHor[i], w->fog[i], k2); }
         if (w->skyA < k2) w->skyA = k2; w->stars *= 1 - k2; w->cloudA = 1 - k2 * 0.8f; }
-    if (w->flash > 0) for (i = 0; i < 3; i++) { float b = w->flash; w->tint[i] += b * 0.9f; w->skyTop[i] = WxL(w->skyTop[i], 0.80f, b * 0.8f); w->skyHor[i] = WxL(w->skyHor[i], 0.90f, b * 0.8f); w->fog[i] = WxL(w->fog[i], 0.85f, b * 0.6f); }
+    if (WxTorrent()) {   /* torrential rain: pea-soup fog whatever the Fog setting, and everything 20 % darker */
+        float k2 = g_wxFogSet[6].sky; w->fogStart = g_wxFogSet[6].start; w->fogEnd = g_wxFogSet[6].end; w->fogMax = g_wxFogSet[6].max; w->mist = 0;
+        for (i = 0; i < 3; i++) { w->skyTop[i] = WxL(w->skyTop[i], w->fog[i], k2); w->skyHor[i] = WxL(w->skyHor[i], w->fog[i], k2); }
+        if (w->skyA < k2) w->skyA = k2; w->stars = 0; w->cloudA = 1 - k2 * 0.8f;
+        for (i = 0; i < 3; i++) { w->tint[i] *= 0.8f; w->skyTop[i] *= 0.8f; w->skyHor[i] *= 0.8f; w->fog[i] *= 0.8f; w->cloud[i] *= 0.8f; w->hor[i] *= 0.8f; }
+        if (w->dark < 0.6f) w->dark = 0.6f; }
+    if (WpTorch()) {   /* the Miner's Lamp charm (Big Game, race\arsenal.c): the fog pushed back, the night a little less black */
+        float nk = 1 - w->day;
+        w->fogStart *= 1.6f; w->fogEnd *= 1.6f; w->fogMax *= 0.85f;
+        for (i = 0; i < 3; i++) w->tint[i] *= 1 + 0.35f * nk; }
+    if (w->flash > 0) for (i = 0; i < 3; i++) { float b = w->flash * (WxTorrent() ? 0.35f : 1.0f);   /* (in the torrent's fog a flash only lights it up a little) */
+        w->tint[i] += b * 0.9f; w->skyTop[i] = WxL(w->skyTop[i], 0.80f, b * 0.8f); w->skyHor[i] = WxL(w->skyHor[i], 0.90f, b * 0.8f); w->fog[i] = WxL(w->fog[i], 0.85f, b * 0.6f); }
 }
 /* once per composed frame of a GPU race (GpuCompose) */
 static void WxUpdate(void)
@@ -125,14 +138,22 @@ static float WxDark(void) { return g_w3On ? g_wx.dark : 0; }   /* how much the l
 /* the riders' shadows (world3d.inc W3Shadows): the sun's bearing from the view's forward (radians, + = right) - where WxSky draws it on the panorama,
    which turns once round with the view every g_hsPeriod columns - and the shadow's length per unit of height (1 / tan elevation); returns how dark it
    is.  No sun (overcast, night): a faint short shadow straight away from the camera, under the bike */
+/* True 3D: the sun stands still in the world - a fixed bearing (WX_SUNAZ, world x / z) that sweeps east to west through the day - so the shadows lie
+   still on the road while the view turns; WxView (world3d.inc W3Draw) hands over the view's heading each frame and the sky draws the sun there too */
+#define WX_SUNAZ 0.6f
+static double g_wxHd; static int g_wxHdOn;
+static void WxView(double hd) { g_wxHd = hd; g_wxHdOn = 1; }
+static float WxWrapPi(float b) { b = (float)fmod(b + 3.14159265f, 6.2831853f); if (b < 0) b += 6.2831853f; return b - 3.14159265f; }
+static float WxSunBear(float tt, int P)   /* the sun's bearing from the view's forward (radians, + = right) */
+{   if (g_w3On && g_wxHdOn) return WxWrapPi(WX_SUNAZ + (tt - 0.5f) * 2.4f - (float)g_wxHd);
+    return WxWrapPi((g_hsLeft + (0.22f + 0.56f * tt) * P + g_hsX - (float)g_w3cam.centreX) / P * 6.2831853f); }   /* (where the panorama has it) */
 static float WxSunShadow(float *bear, float *len)
 {   const WxState *w = &g_wx; int P = g_hsPeriod; float up = WxS(-0.04f, 0.10f, w->e);
     *bear = 3.14159265f; *len = 0.35f;
     if (!g_w3On) return 0;
     if (WxWeather() == 0 && P > 0 && up > 0) {
-        float tt = (w->t - 0.25f) / 0.5f, X, b, el; if (tt < 0) tt = 0; if (tt > 1) tt = 1;
-        X = g_hsLeft + (0.22f + 0.56f * tt) * P + g_hsX;
-        b = (X - (float)g_w3cam.centreX) / P * 6.2831853f; b = (float)fmod(b + 3.14159265f, 6.2831853f); if (b < 0) b += 6.2831853f; b -= 3.14159265f;
+        float tt = (w->t - 0.25f) / 0.5f, b, el; if (tt < 0) tt = 0; if (tt > 1) tt = 1;
+        b = WxSunBear(tt, P);
         el = (float)asin(w->e > 0.08f ? (w->e > 1 ? 1 : w->e) * 0.92f : 0.074f); if (el < 0.12f) el = 0.12f;
         *bear = b; *len = (float)(cos(el) / sin(el)); if (*len > 5) *len = 5;
         return 0.5f * (0.55f * up * (1 - 0.6f * w->fogMax) + 0.12f * (1 - up)); }   /* (half: user) */
@@ -161,8 +182,8 @@ static void WxWorld(R3Frame *f)
     f->fogStart = (float)(w->fogStart * W3_L); f->fogScale = (float)(1.0 / ((w->fogEnd - w->fogStart) * W3_L)); f->fogMax = w->fogMax;
     f->snow = w->snow; f->night = w->dark;
     f->fadeStart = (float)(W3Far() * 0.62); f->fadeEnd = (float)(W3Far() * 0.97);   /* the far world fades into the sky: no pop-in at the draw distance */
-    f->opt[0] = WxEnv("RR_ROAD", g_vid.road, 0, 1) ? 1.0f : 0.0f;   /* the new road surface (render3d.h); test switch RR_ROAD=0 / 1 */
-    f->puddles = w->rain * (WxHeavy() ? 1.6f : 1.0f); f->time = (float)fmod(g_wxTime, 3600.0); f->water[0] = w->hor[0]; f->water[1] = w->hor[1]; f->water[2] = w->hor[2]; f->water[3] = w->glint;
+    f->opt[0] = 1.0f;   /* the improved street textures: road, sidewalk, curb (render3d.h) - always on (user, 2026-11-14: no option) */
+    f->puddles = w->rain * (WxTorrent() ? 2.0f : WxHeavy() ? 1.6f : 1.0f); f->time = (float)fmod(g_wxTime, 3600.0); f->water[0] = w->hor[0]; f->water[1] = w->hor[1]; f->water[2] = w->hor[2]; f->water[3] = w->glint;
     if (getenv("RR_W3WATERDBG")) { f->water[0] = 1; f->water[1] = f->water[2] = 0; } }   /* test switch: the water red */
 /* the game's remaining 2D polygons of the race picture */
 static void WxBatchMod(SDL_Texture *t, int on)
@@ -212,7 +233,8 @@ static void WxSky(int P, int R, int y0, int y1, int fore, const SDL_Rect *cr)
         if (w->e > -0.12f) {   /* the sun: rises in the east, crosses the sky, sets in the west - low and orange at dawn / dusk, high and pale at noon (behind the skyline: drawn before it) */
             float tt = (w->t - 0.25f) / 0.5f, u, y, low = 1 - WxS(0.0f, 0.4f, w->e), vis = WxS(-0.12f, -0.02f, w->e), el = (w->e + 0.04f) * 1.6f, gr, gl;
             if (tt < 0) tt = 0; if (tt > 1) tt = 1; if (el > 1) el = 1;
-            u = (0.22f + 0.56f * tt) * P; y = hr - el * R * 0.74f; gr = R * WxL(0.70f, 0.55f, low); gl = WxL(0.30f, 0.55f, low);
+            u = (0.22f + 0.56f * tt) * P; y = hr - el * R * 0.74f;
+            if (g_w3On && g_wxHdOn) { u = (float)g_w3cam.centreX + WxSunBear(tt, P) / 6.2831853f * P - g_hsLeft - g_hsX; u = (float)fmod(u, (float)P); if (u < 0) u += P; }   /* (True 3D: where the shadows say it is) */ gr = R * WxL(0.70f, 0.55f, low); gl = WxL(0.30f, 0.55f, low);
             WX_WRAP(u, { WxSpot(X, y, gr, 1.0f, WxL(0.95f, 0.55f, low), WxL(0.78f, 0.30f, low), gl * vis, SDL_BLENDMODE_ADD);
                          WxSpot(X, y, R * WxL(0.06f, 0.075f, low), 1.0f, WxL(1.0f, 0.75f, low), WxL(0.92f, 0.5f, low), 1.0f * vis, SDL_BLENDMODE_BLEND);
                          WxSpot(X, y, R * WxL(0.06f, 0.075f, low), 1.0f, 1.0f, 0.9f, 0.9f * vis, SDL_BLENDMODE_ADD); }) }
@@ -227,11 +249,76 @@ static void WxCloudMod(int on)
     for (i = 0; i < CL_NTEX; i++) if (g_clTex[i]) { SDL_SetTextureColorModFloat(g_clTex[i], act ? (w->cloud[0] > 1 ? 1 : w->cloud[0]) : 1, act ? (w->cloud[1] > 1 ? 1 : w->cloud[1]) : 1, act ? (w->cloud[2] > 1 ? 1 : w->cloud[2]) : 1); SDL_SetTextureAlphaModFloat(g_clTex[i], act ? w->cloudA : 1); } }
 static void WxForeMod(SDL_Texture *t, int on)
 {   const WxState *w = &g_wx; int act = on && WxOn();
-    if (t) SDL_SetTextureColorModFloat(t, act ? (w->tint[0] > 1 ? 1 : w->tint[0]) : 1, act ? (w->tint[1] > 1 ? 1 : w->tint[1]) : 1, act ? (w->tint[2] > 1 ? 1 : w->tint[2]) : 1); }
+    float k = !act ? 0 : WxTorrent() ? g_wxFogSet[6].sky : WxFog() >= 2 ? g_wxFogSet[WxFog()].sky : 0;   /* (a thick fog hides the skyline too) */
+    if (t) { SDL_SetTextureColorModFloat(t, act ? (w->tint[0] > 1 ? 1 : w->tint[0]) : 1, act ? (w->tint[1] > 1 ? 1 : w->tint[1]) : 1, act ? (w->tint[2] > 1 ? 1 : w->tint[2]) : 1); SDL_SetTextureAlphaModFloat(t, 1 - 0.95f * k * k); } }
+/* over the tinted skyline (hdsky.inc HsDraw, True 3D): haze = 0 its grey copy, as much as the world's colours are washed out (1 - saturation, in the
+   light's colour), haze = 1 its white silhouette in the fog / haze colour, as far as the distant world fades into it (a little on a clear day, most of
+   the way in rain, snow, fog).  Returns 0 when there is nothing to draw */
+static int WxForeLayer(SDL_Texture *t, int haze)
+{   const WxState *w = &g_wx; float k, vis, a; int i; float c[3];
+    if (!t || !WxOn()) return 0;
+    k = WxTorrent() ? g_wxFogSet[6].sky : WxFog() >= 2 ? g_wxFogSet[WxFog()].sky : 0; vis = 1 - 0.95f * k * k;   /* (as WxForeMod) */
+    if (!haze) { a = 1 - w->sat; for (i = 0; i < 3; i++) c[i] = w->tint[i] > 1 ? 1 : w->tint[i]; }
+    else { a = 0.18f + 0.75f * w->fogMax; if (a > 0.92f) a = 0.92f; for (i = 0; i < 3; i++) c[i] = w->fog[i] > 1 ? 1 : w->fog[i] < 0 ? 0 : w->fog[i]; }
+    a *= vis; if (a < 0.01f) return 0;
+    SDL_SetTextureColorModFloat(t, c[0], c[1], c[2]); SDL_SetTextureAlphaModFloat(t, a); return 1; }
+/* the skyline's night layers (hdsky.inc g_hsNight, added): beacon = 0 the lit windows, coming on as it gets dark; 1 the roof lights, blinking.  Both
+   dimmed by the haze / fog as the skyline itself.  Returns 0 when there is nothing to draw */
+static int WxNightLayer(SDL_Texture *t, int beacon)
+{   const WxState *w = &g_wx; float k, a, d = WxDark();
+    if (!t || !g_w3On) return 0;
+    k = WxTorrent() ? g_wxFogSet[6].sky : WxFog() >= 2 ? g_wxFogSet[WxFog()].sky : 0;
+    a = WxS(beacon ? 0.2f : 0.3f, beacon ? 0.55f : 0.75f, d) * (1 - 0.95f * k * k) * (1 - 0.6f * w->fogMax);
+    if (beacon) a *= fmod(WxSeconds(), 1.5) < 0.9 ? 1.0f : 0.1f;
+    if (a < 0.01f) return 0;
+    SDL_SetTextureColorModFloat(t, 1, 1, 1); SDL_SetTextureAlphaModFloat(t, a > 1 ? 1 : a); return 1; }
 
+/* ---- a sunny day (clear weather, sun up): the sun's glare.  Drawing only ---- */
+static float WxSunUp(float *el)   /* how strongly the sun shines (0: none - weather, night) and its elevation (radians) */
+{   const WxState *w = &g_wx; float bear, len, up = WxS(-0.04f, 0.10f, w->e);
+    *el = 0; if (!g_w3On || WxWeather() != 0 || up <= 0 || g_hsPeriod <= 0) return 0;
+    WxSunShadow(&bear, &len); *el = (float)atan(1.0 / (len > 0.01f ? len : 0.01f));
+    return up * (1 - w->fogMax); }
+/* is the sun behind a building?  The ray from the eye towards it against the buildings' boxes (course3d.h C3_Building footprints, height) */
+static int WxSunBlocked(const float *eye, const float *dir)
+{   int i, e; float dl = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]);
+    if (dl < 1e-4f) return 0;
+    for (i = 0; i < g_w3c.nbldg; i++) {
+        const C3Bldg *B = &g_w3c.bldg[i]; float cx = 0, cz = 0, t0 = 0, t1 = 60000, dx = B->f[0][0] - eye[0], dz = B->f[0][2] - eye[2];
+        if (dx * dx + dz * dz > 60000.0f * 60000.0f) continue;
+        for (e = 0; e < 4; e++) { cx += B->f[e][0] * 0.25f; cz += B->f[e][2] * 0.25f; }
+        for (e = 0; e < 4 && t0 <= t1; e++) {   /* clip the ray to each side's half plane (the side the middle is on) */
+            const float *a = B->f[e], *b = B->f[(e + 1) & 3]; float nx = -(b[2] - a[2]), nz = b[0] - a[0], sg, num, den;
+            sg = (cx - a[0]) * nx + (cz - a[2]) * nz; if (sg < 0) { nx = -nx; nz = -nz; }
+            num = (eye[0] - a[0]) * nx + (eye[2] - a[2]) * nz; den = dir[0] * nx + dir[2] * nz;   /* inside: num + den t >= 0 */
+            if (fabsf(den) < 1e-6f) { if (num < 0) t1 = -1; }
+            else if (den > 0) { float tt = -num / den; if (tt > t0) t0 = tt; }
+            else { float tt = -num / den; if (tt < t1) t1 = tt; } }
+        if (t0 <= t1 && eye[1] + dir[1] * t0 < B->f[0][1] + B->h) return 1; }
+    return 0; }
+/* the glare: a warm bloom round the sun and a few faint lens ghosts across the picture towards its middle, when the sun is in the view and not
+   behind a building (eased in and out) */
+static void WxGlare(int fw, int fh)
+{   static float g; static double lastT; const WxState *w = &g_wx; float el, s = WxSunUp(&el), bear, len, X, Y, R = (float)g_hsRows, want = 0, edge, dt, dir[3];
+    int P = g_hsPeriod, k;
+    dt = (float)(WxSeconds() - lastT); lastT = WxSeconds(); if (dt < 0 || dt > 0.5f) dt = 0.5f;
+    if (s > 0 && R > 0 && P > 0 && !getenv("RR_NOGLARE")) {   /* (test switch RR_NOGLARE=1) */
+        float tt = (w->t - 0.25f) / 0.5f, e2 = (w->e + 0.04f) * 1.6f; if (tt < 0) tt = 0; if (tt > 1) tt = 1; if (e2 > 1) e2 = 1;
+        WxSunShadow(&bear, &len);
+        X = (float)g_w3cam.centreX + bear / 6.2831853f * P; Y = g_hsTop + R * 0.80f - e2 * R * 0.74f;   /* where WxSky draws it */
+        edge = 1 - WxS(0.35f, 0.6f, fabsf(X - fw * 0.5f) / fw) ; if (Y < -0.2f * fh || Y > fh) edge = 0;
+        if (edge > 0 && WxSunDir(g_w3fw, g_w3rt, dir) > 0 && !WxSunBlocked(g_w3eye, dir)) want = s * edge; }
+    g += (want - g) * (dt * 6 > 1 ? 1 : dt * 6);
+    if (g < 0.01f) return;
+    if (!g_wxGlow) WxGlowMake();
+    {   float cx = fw * 0.5f, cy = fh * 0.45f, H = (float)fh; static const float gk[5] = { 0.45f, 0.75f, 1.2f, 1.55f, 1.9f }, gr[5] = { 0.035f, 0.06f, 0.025f, 0.08f, 0.045f };
+        static const float gc[5][3] = { { 1.0f, 0.75f, 0.35f }, { 0.5f, 0.9f, 0.6f }, { 1.0f, 0.55f, 0.3f }, { 0.45f, 0.6f, 1.0f }, { 0.9f, 0.85f, 0.5f } };
+        WxSpot(X, Y, H * 0.34f, 1.0f, 0.88f, 0.62f, 0.18f * g, SDL_BLENDMODE_ADD);   /* the bloom */
+        WxSpot(X, Y, H * 0.12f, 1.0f, 0.96f, 0.85f, 0.30f * g, SDL_BLENDMODE_ADD);
+        for (k = 0; k < 5; k++) WxSpot(X + (cx - X) * gk[k], Y + (cy - Y) * gk[k], H * gr[k], gc[k][0], gc[k][1], gc[k][2], 0.14f * g, SDL_BLENDMODE_ADD); } }   /* the ghosts */
 /* ---- rain / snow: particles in the camera's space (x right, y up from the eye, z ahead; lateral units), moved by the fall and the ride, drawn over the
  * world and under the HUD (GpuCompose) ---- */
-#define WX_NP 3200
+#define WX_NP 9600
 typedef struct WxP { float x, y, z, ph; } WxP;
 static WxP g_wxp[WX_NP]; static int g_wxpKind = -1; static unsigned g_wxpSeed = 991;
 #define WX_ZN 60.0f
@@ -241,9 +328,21 @@ static WxP g_wxp[WX_NP]; static int g_wxpKind = -1; static unsigned g_wxpSeed = 
 static void WxPSpawn(WxP *p, float ground, int back)
 {   p->x = (WxRf(&g_wxpSeed) * 2 - 1) * WX_XW; p->ph = WxRf(&g_wxpSeed) * 6.283f;
     p->z = WX_ZN + WxRf(&g_wxpSeed) * (WX_ZF - WX_ZN); p->y = ground + WxRf(&g_wxpSeed) * (WX_YT - ground); (void)back; }   /* evenly through the whole volume */
+/* the wind the rain falls in (world units / s along the ground, in the view's x / z): a steady wind - strong in torrential rain, some in heavy rain,
+   light in rain - in gusts (overlapping slow waves), and every 4 .. 14 s a gust front swings it round to a new direction (eased in).  The direction is
+   kept in the world, so the rain slants across the picture differently as the road turns */
+static float g_wxWx, g_wxWz;   /* this frame's wind (WxParticles) */
+static void WxWind(float dt, double hd, float *wx, float *wz)
+{   static float dir = 0.7f, want = 0.7f, next = 6; static unsigned s = 4711; float t = (float)g_wxTime, base, gust;
+    base = WxTorrent() ? 1700.0f : WxHeavy() ? 700.0f : 260.0f;
+    if ((next -= dt) <= 0) { next = 4 + 10 * WxRf(&s); want = dir + (WxRf(&s) * 2 - 1) * (WxTorrent() ? 1.4f : 0.8f); }   /* a gust front */
+    dir += (want - dir) * (dt * 0.6f > 1 ? 1 : dt * 0.6f);
+    gust = 0.55f * sinf(t * 0.31f) + 0.30f * sinf(t * 0.77f + 1.3f) + 0.15f * sinf(t * 1.9f + 2.1f);   /* -1 .. 1 */
+    base *= 1 + 0.6f * gust; if (base < 0) base = 0;
+    *wx = base * sinf(dir - (float)hd); *wz = base * cosf(dir - (float)hd); }
 static void WxParticles(int fw, int fh)
 {   static double lastT = -1; static int lastPos; static double lastHd; static SDL_Vertex *vx; static int *ix, cap;
-    int kind = WxWeather(), n = kind == 1 ? (WxHeavy() ? 3200 : 1400) : (WxHeavy() ? 2800 : 1200), i, nq = 0; float dt, F, cx, hy, ground, fall, speed, dh, ca, sa; double hd;
+    int kind = WxWeather(), n = kind == 1 ? (WxTorrent() ? 9600 : WxHeavy() ? 3200 : 1400) : (WxHeavy() ? 2800 : 1200), i, nq = 0; float dt, F, cx, hy, ground, fall, speed, dh, ca, sa; double hd;
     (void)fw; (void)fh;
     if (!g_w3On || !g_w3HaveCam || !kind) { g_wxpKind = -1; return; }
     if (!g_wxGlow) WxGlowMake();
@@ -259,11 +358,13 @@ static void WxParticles(int fw, int fh)
     lastT = g_wxTime; lastPos = g_w3cam.viewPos; lastHd = hd;
     g_wxShelter += ((g_w3InTunnel ? 1.0f : 0.0f) - g_wxShelter) * (dt * 4 > 1 ? 1 : dt * 4);   /* (in a tunnel: none falls - faded over ~0.25 s) */
     fall = kind == 1 ? 2600.0f : 230.0f; ca = (float)cos(dh); sa = (float)sin(dh);
+    {   float wcx = 0, wcz = 0; if (kind == 1) WxWind(dt, hd, &wcx, &wcz); g_wxWx = wcx; g_wxWz = wcz; }   /* rain: blown by the wind (WxWind) */
     if (cap < n) { cap = n; vx = (SDL_Vertex *)realloc(vx, sizeof(SDL_Vertex) * 4 * cap); ix = (int *)realloc(ix, sizeof(int) * 6 * cap); if (!vx || !ix) { cap = 0; return; } }
     for (i = 0; i < n; i++) {
         WxP *p = &g_wxp[i]; float x, z, sx0, sy0, sx1, sy1, wd, a; SDL_FColor c;
         x = p->x * ca - p->z * sa; z = p->x * sa + p->z * ca; p->x = x; p->z = z;   /* the view turned by dh */
         p->z -= speed; p->y -= fall * dt;
+        if (kind == 1) { p->x += (g_wxWx * (0.85f + 0.15f * sinf(p->ph)) + sinf((float)g_wxTime * 2.7f + p->ph * 3) * 60) * dt; p->z += g_wxWz * dt; }   /* (a little turbulence each) */
         if (kind == 2) p->x += (float)sin(g_wxTime * 1.3 + p->ph) * 60 * dt;
         /* wrapped round the volume (not respawned in one place): the density stays even - no waves of rain */
         if (p->z < WX_ZN) { p->z += WX_ZF - WX_ZN; p->x = (WxRf(&g_wxpSeed) * 2 - 1) * WX_XW; } else if (p->z > WX_ZF) p->z -= WX_ZF - WX_ZN;
@@ -272,8 +373,8 @@ static void WxParticles(int fw, int fh)
         sx0 = cx + F * p->x / p->z; sy0 = hy - F * p->y / p->z;
         if (sx0 < g_gpuClip[0] - 20 || sx0 > g_gpuClip[2] + 20 || sy0 < g_gpuClip[1] - 40 || sy0 > g_gpuClip[3] + 40) continue;
         if (kind == 1) {   /* a streak: where the drop was 1/30 s ago (higher, further) to where it is */
-            float zb = p->z + speed * 1.0f + 1, yb = p->y + fall / 30.0f, dx, dy, l;
-            sx1 = cx + F * p->x / zb; sy1 = hy - F * yb / zb;
+            float zb = p->z + speed * 1.0f + 1 - g_wxWz / 30.0f, yb = p->y + fall / 30.0f, xb = p->x - g_wxWx / 30.0f, dx, dy, l;   /* (along its real path: fall, wind, the ride) */
+            if (zb < WX_ZN) zb = WX_ZN; sx1 = cx + F * xb / zb; sy1 = hy - F * yb / zb;
             wd = F * 2.6f / p->z; if (wd < 0.45f) wd = 0.45f; if (wd > 1.8f) wd = 1.8f;
             a = (0.30f + 0.25f * (1 - p->z / WX_ZF)) * (1 - g_wxShelter); c.r = 0.78f; c.g = 0.82f; c.b = 0.92f; c.a = a;
             dx = sx1 - sx0; dy = sy1 - sy0; l = (float)sqrt(dx * dx + dy * dy); if (l < 0.5f) { dx = 0; dy = -0.5f; l = 0.5f; }
@@ -294,7 +395,7 @@ static void WxParticles(int fw, int fh)
                   SDL_RenderGeometry(g_ren, kind == 2 ? g_wxGlow : NULL, vx, nq * 4, ix, nq * 6); }
         if (g_wx.flash > 0.02f) {   /* lightning: the whole view lit up a moment */
             SDL_FRect fr; fr.x = (float)vr.x; fr.y = (float)vr.y; fr.w = (float)vr.w; fr.h = (float)vr.h;
-            SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_ADD); SDL_SetRenderDrawColorFloat(g_ren, 0.55f * g_wx.flash, 0.58f * g_wx.flash, 0.7f * g_wx.flash, 1); SDL_RenderFillRect(g_ren, &fr);
+            SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_ADD); { float fk = g_wx.flash * (WxTorrent() ? 0.35f : 1.0f); SDL_SetRenderDrawColorFloat(g_ren, 0.55f * fk, 0.58f * fk, 0.7f * fk, 1); }   /* (dimmer in the torrent's fog) */ SDL_RenderFillRect(g_ren, &fr);
             SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); }
         SDL_SetRenderClipRect(g_ren, NULL); } }
 
@@ -302,12 +403,12 @@ static void WxParticles(int fw, int fh)
 static void IcBox(HDC dc, int x, int y, int w, int h, COLORREF fill, COLORREF frame, int r);   /* inputcfg.inc */
 static void IcPoly(HDC dc, const POINT *pt, int n, COLORREF fill, COLORREF frame);
 static SDL_Texture *g_ppTex; static char g_ppKey[96]; static SDL_FRect g_ppRect; static int g_wxBtn, g_wxHot = -1, g_wxCur;   /* panel: where it is drawn; the button row's choice (0 ride on, 1 exit race); the item under the mouse; cursor shown */
-/* the panel's picture (W x H, drawn at half size): 3 setting rows (y 66 + 58 r, arrows boxes at WX_LA / WX_RA), then the button row */
-enum { WX_NROW = 5, WX_PW = 680, WX_LA = 330, WX_RA = 612, WX_BY = 66 + WX_NROW * 58 + 12, WX_BH = 56, WX_B0 = 40, WX_B1 = 360, WX_BW = 280, WX_PH = WX_BY + WX_BH + 64 };   /* (setting rows, then the buttons) */
+/* the panel's picture (W x H, drawn at half size): the setting rows (y 66 + 58 r, arrows boxes at WX_LA / WX_RA), then the button row */
+enum { WX_NROW = 5, WX_PW = 900, WX_LA = 552, WX_RA = 834, WX_BY = 66 + WX_NROW * 58 + 12, WX_BH = 56, WX_B0 = 50, WX_B1 = 470, WX_BW = 380, WX_PH = WX_BY + WX_BH + 64 };   /* (setting rows, then the buttons) */
 static void WxText(HDC dc, int x, int y, const char *t, COLORREF c, UINT al) { SetTextColor(dc, c); SetTextAlign(dc, al); TextOutA(dc, x, y, t, (int)strlen(t)); SetTextAlign(dc, TA_LEFT | TA_TOP); }
 static void WxPanelMake(const char *const *val)
 {   enum { W = WX_PW, H = WX_PH }; BITMAPINFO bi; void *bits = NULL; HDC dc; HBITMAP bm; HGDIOBJ ob, of; HFONT ft, fr, fh; int i, r; DWORD *px;
-    static const char *lab[WX_NROW] = { "TIME OF DAY", "WEATHER", "FOG", "ROAD", "WEAPON" };
+    static const char *lab[WX_NROW] = { "TIME OF DAY", "WEATHER", "FOG", "WEAPON", "BUILDING SHADOWS" };
     memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
     if (!(dc = CreateCompatibleDC(NULL))) return;
     if (!(bm = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, NULL, 0)) || !bits) { DeleteDC(dc); return; }
@@ -315,9 +416,9 @@ static void WxPanelMake(const char *const *val)
     for (i = 0; i < W * H; i++) px[i] = 0x00FF00FFu;   /* (key: transparent) */
     SetBkMode(dc, TRANSPARENT);
     IcBox(dc, 0, 0, W, H, RGB(16, 16, 34), RGB(90, 90, 130), 28);
-    ft = CreateFontA(40, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Impact");
-    fr = CreateFontA(34, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Arial");
-    fh = CreateFontA(21, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Arial");
+    ft = CreateFontA(40, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_IMPACT));
+    fr = CreateFontA(34, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_ARIAL));
+    fh = CreateFontA(21, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_ARIAL));
     of = SelectObject(dc, ft); WxText(dc, 28, 12, "TRUE 3D WORLD", RGB(255, 96, 40), TA_LEFT | TA_TOP);
     for (r = 0; r < WX_NROW; r++) { int y = 66 + r * 58, on = r == g_wxSel; COLORREF c = on ? RGB(255, 235, 80) : RGB(225, 225, 240);
         if (on) { POINT a[3]; IcBox(dc, 16, y - 6, W - 32, 50, RGB(70, 58, 16), RGB(255, 235, 80), 16); a[0].x = 30; a[0].y = y + 7; a[1].x = 30; a[1].y = y + 31; a[2].x = 44; a[2].y = y + 19; IcPoly(dc, a, 3, c, c); }
@@ -328,7 +429,7 @@ static void WxPanelMake(const char *const *val)
                 a[0].x = ax + (k ? 14 : 26); a[0].y = y + 9; a[1].x = a[0].x; a[1].y = y + 29; a[2].x = ax + (k ? 28 : 12); a[2].y = y + 19; IcPoly(dc, a, 3, c, c); }
             WxText(dc, (WX_LA + 40 + WX_RA) / 2, y, val[r], c, TA_CENTER | TA_TOP); } }
     for (r = 0; r < 2; r++) {   /* the buttons: ride on / exit race */
-        int x = r ? WX_B1 : WX_B0, on = g_wxSel == WX_NROW && g_wxBtn == r, hot = g_wxHot == 20 + r; COLORREF c = on ? RGB(255, 235, 80) : RGB(225, 225, 240);
+        int x = r ? WX_B1 : WX_B0, on = g_wxSel == WX_NROW && g_wxBtn == r, hot = g_wxHot == 40 + r; COLORREF c = on ? RGB(255, 235, 80) : RGB(225, 225, 240);
         IcBox(dc, x, WX_BY, WX_BW, WX_BH, on ? (r ? RGB(120, 30, 20) : RGB(30, 90, 40)) : hot ? RGB(60, 60, 95) : RGB(36, 36, 62), on ? c : RGB(110, 110, 150), 16);
         SelectObject(dc, fr); WxText(dc, x + WX_BW / 2, WX_BY + 9, r ? "EXIT RACE" : "CLOSE", c, TA_CENTER | TA_TOP); }
     SelectObject(dc, fh); WxText(dc, W / 2, H - 38, "Arrows choose / change  -  Enter or click a button  -  Esc exits the race", RGB(150, 150, 175), TA_CENTER | TA_TOP);
@@ -338,11 +439,11 @@ static void WxPanelMake(const char *const *val)
     if (g_ppTex) SDL_UpdateTexture(g_ppTex, NULL, px, W * 4);
     SelectObject(dc, ob); DeleteObject(bm); DeleteDC(dc); }
 static void WxPanel(int w, int h)
-{   static const char *tods[5] = { "Cycle", "Dawn", "Day", "Sunset", "Night" }, *wxs[5] = { "Clear", "Rain", "Snow", "Heavy rain", "Heavy snow" }; const char *const *fogs = g_wxFogName;
+{   static const char *tods[5] = { "Cycle", "Dawn", "Day", "Sunset", "Night" }, *wxs[6] = { "Clear", "Rain", "Snow", "Heavy rain", "Heavy snow", "Torrential rain" }; const char *const *fogs = g_wxFogName;
     char v0[48], key[96]; SDL_FRect d; (void)h;
     if (!g_w3On || !g_wxPause || !g_ren) return;
     if (!WxTod()) { int m = (int)(WxT() * 1440) % 1440; _snprintf(v0, sizeof v0, "Cycle %02d:%02d", m / 60, m % 60); } else strcpy(v0, tods[WxTod()]); v0[sizeof v0 - 1] = 0;
-    {   const char *vals[WX_NROW]; vals[0] = v0; vals[1] = wxs[WxWeatherRaw()]; vals[2] = fogs[WxFog()]; vals[3] = g_vid.road ? "New" : "Original"; vals[4] = WpName(g_vid.weapon);
+    {   const char *vals[WX_NROW]; vals[0] = v0; vals[1] = wxs[WxWeatherRaw()]; vals[2] = fogs[WxFog()]; vals[3] = WpRowName(); vals[4] = g_vid.bldgShadow ? "On" : "Off";
         _snprintf(key, sizeof key, "%d|%d|%d|%s|%s|%s|%s|%s", g_wxSel, g_wxBtn, g_wxHot, vals[0], vals[1], vals[2], vals[3], vals[4]); key[sizeof key - 1] = 0;
         if (!g_ppTex || strcmp(key, g_ppKey)) { WxPanelMake(vals); strcpy(g_ppKey, key); } }
     if (!g_ppTex) return;
@@ -351,9 +452,9 @@ static void WxPanel(int w, int h)
     SDL_RenderTexture(g_ren, g_ppTex, NULL, &d); }
 static void WxChange(int row, int d)   /* a setting row one step on (d = 1) or back (-1) */
 {   if (row == 0) g_vid.tod = (g_vid.tod + d + 5) % 5;
-    else if (row == 1) { static const int ord[5] = { 0, 1, 3, 2, 4 }; int k; for (k = 0; k < 5 && ord[k] != g_vid.weather; k++) {} g_vid.weather = ord[((k < 5 ? k : 0) + d + 5) % 5]; }   /* clear, rain, heavy rain, snow, heavy snow */
-    else if (row == 3) g_vid.road ^= 1;   /* the road surface: the course's / new asphalt */
-    else if (row == 4) { int n = WpCount(); g_vid.weapon = n > 0 ? (g_vid.weapon + d + n) % n : 0; }   /* the weapon (weapons.inc) */
+    else if (row == 1) { static const int ord[6] = { 0, 1, 3, 5, 2, 4 }; int k; for (k = 0; k < 6 && ord[k] != g_vid.weather; k++) {} g_vid.weather = ord[((k < 6 ? k : 0) + d + 6) % 6]; }   /* clear, rain, heavy rain, snow, heavy snow */
+    else if (row == 4) g_vid.bldgShadow ^= 1;   /* the buildings' shadows (world3d.inc W3BldgShadows; off by default) */
+    else if (row == 3) WpRowStep(d);   /* the weapon (weapons.inc: a Big Game's owned weapons, else the pictures) */
     else { int k; for (k = 0; k < WX_NFOG && g_wxFogOrd[k] != g_vid.fog; k++) {} g_vid.fog = g_wxFogOrd[((k < WX_NFOG ? k : 0) + d + WX_NFOG) % WX_NFOG]; }
     g_wxDirty = 1; WxCompute(0); }
 static void WxCursor(int on)   /* the mouse pointer while the panel is up (the race hides it) */
@@ -381,10 +482,10 @@ __declspec(dllexport) int __stdcall RR_PauseMouse(const MSG *m)
     px = (int)((x - g_ppRect.x) * WX_PW / g_ppRect.w); py = (int)((y - g_ppRect.y) * WX_PH / g_ppRect.h);
     for (r = 0; r < WX_NROW; r++) { int ry = 66 + r * 58;
         if (py >= ry - 6 && py < ry + 44) { hit = r; if (px >= WX_LA && px < WX_LA + 40) hit = 10 + 2 * r; else if (px >= WX_RA && px < WX_RA + 40) hit = 11 + 2 * r; } }
-    if (py >= WX_BY && py < WX_BY + WX_BH) { if (px >= WX_B0 && px < WX_B0 + WX_BW) hit = 20; else if (px >= WX_B1 && px < WX_B1 + WX_BW) hit = 21; }
-    if (m->message == WM_MOUSEMOVE) { g_wxHot = hit >= 10 ? hit : -1; if (hit >= 20) { g_wxSel = WX_NROW; g_wxBtn = hit - 20; } SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_ARROW)); return 1; }
+    if (py >= WX_BY && py < WX_BY + WX_BH) { if (px >= WX_B0 && px < WX_B0 + WX_BW) hit = 40; else if (px >= WX_B1 && px < WX_B1 + WX_BW) hit = 41; }   /* (buttons 40 / 41: the rows' arrows are 10 + 2 r ..) */
+    if (m->message == WM_MOUSEMOVE) { g_wxHot = hit >= 10 ? hit : -1; if (hit >= 40) { g_wxSel = WX_NROW; g_wxBtn = hit - 40; } SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_ARROW)); return 1; }
     if (m->message != WM_LBUTTONUP) return 1;   /* (the other mouse messages: nothing to the game) */
-    if (hit >= 20) return 2 + (hit - 20);
+    if (hit >= 40) return 2 + (hit - 40);
     if (hit >= 10) { g_wxSel = (hit - 10) / 2; WxChange(g_wxSel, (hit & 1) ? 1 : -1); return 1; }
     if (hit >= 0) g_wxSel = hit;
     return 1; }
@@ -431,8 +532,52 @@ static void WxSay(const wchar_t *s)
     if (!g_vxEv) { g_vxEv = CreateEventA(NULL, FALSE, FALSE, NULL); if (!g_vxEv) return; CloseHandle(CreateThread(NULL, 0, WxVoiceThread, NULL, 0, NULL)); }
     g_vxSay = s; SetEvent(g_vxEv); }
 /* race_session.c rr_FramePump, every frame of the start countdown: ticks left (180 .. 0) and the race palette */
+static volatile int g_cdLeft; static double g_cdGoT = -10;   /* (the fancy countdown, CdDraw) */
+static double CdNow(void) { LARGE_INTEGER n, f; QueryPerformanceCounter(&n); QueryPerformanceFrequency(&f); return (double)n.QuadPart / f.QuadPart; }
+/* the HUD (src\ui\hud.c) asks: draw the start countdown's number ourselves (CdDraw) - not in the deterministic test runs (their pictures stay the game's) */
+__declspec(dllexport) int __stdcall RR_FancyCountdown(void) { static int det = -1; if (det < 0) det = getenv("RR_DETERMINISTIC") != NULL; return g_ren && !det; }
+static BYTE *SgMask(HDC dc, const char *t, int w, int h, int x, int y);   /* musicbox.inc */
+static SDL_Texture *g_cdTex[4]; static int g_cdW[4], g_cdH[4];
+static void CdMake(int k)   /* "1" "2" "3" "GO!": white, a thick dark outline, 220 px high */
+{   static const char *txt[4] = { "1", "2", "3", "GO!" }; HDC dc = CreateCompatibleDC(NULL); HFONT f, o; SIZE sz; int w, h, x, y, R = 10, i, j; BYTE *m; DWORD *out;
+    if (!dc) return;
+    f = CreateFontA(-220, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_IMPACT)); o = (HFONT)SelectObject(dc, f);
+    GetTextExtentPoint32A(dc, txt[k], (int)strlen(txt[k]), &sz); w = sz.cx + 2 * R + 8; h = sz.cy + 2 * R + 8;
+    free(SgMask(dc, txt[k], 1, 1, 0, 0)); m = SgMask(dc, txt[k], w, h, R + 4, R + 4);
+    if (m && (out = (DWORD *)malloc((size_t)w * h * 4)) != NULL) {
+        for (y = 0; y < h; y++) for (x = 0; x < w; x++) { int t = m[y * w + x], ol = 0, a, l;
+            for (j = -R; j <= R && ol < 255; j += 2) for (i = -R; i <= R; i += 2) { int xx = x + i, yy = y + j; if (i * i + j * j > R * R || xx < 0 || yy < 0 || xx >= w || yy >= h) continue; if (m[yy * w + xx] > ol) ol = m[yy * w + xx]; }
+            a = t + ol * 220 / 255 * (255 - t) / 255; l = a ? t * 255 / a : 0;   /* white letters over a dark rim */
+            l = l * (200 + 55 * (h - y) / h) / 255;   /* (a little lighter at the top) */
+            out[y * w + x] = ((DWORD)a << 24) | ((DWORD)l << 16) | ((DWORD)l << 8) | (DWORD)l; }
+        g_cdTex[k] = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (g_cdTex[k]) { SDL_UpdateTexture(g_cdTex[k], NULL, out, w * 4); SDL_SetTextureBlendMode(g_cdTex[k], SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(g_cdTex[k], SDL_SCALEMODE_LINEAR); g_cdW[k] = w; g_cdH[k] = h; }
+        free(out); }
+    free(m); SelectObject(dc, o); DeleteObject(f); DeleteDC(dc); }
+/* the fancy start countdown (gpuscene.inc GpuCompose, over the HUD): each number punches in big, settles, then swells and fades - 3 red, 2 amber,
+   1 yellow - then GO! in green, growing as it goes; a soft glow of its colour behind */
+static void CdDraw(int fw, int fh)
+{   static const float col[4][3] = { { 1.0f, 0.92f, 0.25f }, { 1.0f, 0.62f, 0.12f }, { 1.0f, 0.22f, 0.15f }, { 0.35f, 1.0f, 0.35f } };
+    int left = g_cdLeft, k; float p, sc, a; double go = CdNow() - g_cdGoT; SDL_FRect d;
+    if (!RR_FancyCountdown()) return;
+    if (left > 0) { k = (left - 1) / 60; if (k > 2) k = 2; p = 1 - (float)((left - 1) % 60 + 1) / 60.0f; }
+    else if (go >= 0 && go < 0.9) { k = 3; p = (float)(go / 0.9); }
+    else return;
+    if (!g_cdTex[k]) CdMake(k); if (!g_cdTex[k]) return;
+    if (k < 3) { float q = p < 0.22f ? p / 0.22f : 1; q = 1 - (1 - q) * (1 - q) * (1 - q);
+        sc = p < 0.22f ? 2.6f + (1.0f - 2.6f) * q : (p > 0.8f ? 1 + (p - 0.8f) * 1.8f : 1 + 0.03f * sinf(p * 25));
+        a = p < 0.12f ? p / 0.12f : (p > 0.8f ? 1 - (p - 0.8f) / 0.2f : 1); }
+    else { sc = 1 + p * 0.9f; a = p < 0.5f ? 1 : 1 - (p - 0.5f) / 0.5f; }
+    {   float hgt = fh * 0.30f * sc, wid = hgt * g_cdW[k] / g_cdH[k], cx = fw * 0.5f, cy = fh * 0.36f;
+        if (!g_wxGlow) WxGlowMake();
+        WxSpot(cx, cy, hgt * 0.9f, col[k][0], col[k][1], col[k][2], 0.35f * a, SDL_BLENDMODE_ADD);
+        d.x = cx - wid / 2; d.y = cy - hgt / 2; d.w = wid; d.h = hgt;
+        SDL_SetTextureColorModFloat(g_cdTex[k], col[k][0], col[k][1], col[k][2]); SDL_SetTextureAlphaModFloat(g_cdTex[k], a < 0 ? 0 : a);
+        SDL_RenderTexture(g_ren, g_cdTex[k], NULL, &d); } }
 __declspec(dllexport) void __stdcall RR_RaceCountdown(int left, const void *pal)
 {   static int last;
+    if (left <= 0 && last > 0) g_cdGoT = CdNow();
+    g_cdLeft = left > 0 ? left : 0;
     g_cdPal = left > 0 ? (const PALETTEENTRY *)pal : NULL;
     if (left > 0 && last <= 0) WxSay(L"<pitch middle='3'>Three</pitch>");
     else if (last > 120 && left <= 120) WxSay(L"<pitch middle='4'>Two</pitch>");

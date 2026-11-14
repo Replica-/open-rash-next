@@ -6,10 +6,14 @@
  *   0x08  uint32  player[8]  copy of the live player block g_playerRecord (name, flags ...; byte [1] of it selects the record set)
  *   0x28  uint32  rec[10][3] ten 12-byte records, taken from the table at g_recordsTable (record set * 12 bytes, 0x204 bytes between records)
  * The file name is in g_playerFilePath (set by the menus when a player is chosen/created).
+ * After the 0xA0 bytes: the player's weapons and bounty (race\arsenal.c) - RrsExtra, its own magic and checksum; a file without it (an older save) loads
+ * as a rider with bare knuckles.  The save screen's tiles read the first 0xA0 bytes only.
  */
 #include "../rr.h"
 #include "../data/records.h"
 #include <stdint.h>
+#include <string.h>
+#include "../platform/arsenal_api.h"
 
 #define RRS_MAGIC     0xCAFEDEADu
 #define RRS_BYTES     0xA0
@@ -24,6 +28,18 @@ typedef struct RrsFile {
     uint32_t player[8];
     uint32_t rec[REC_COUNT][3];
 } RrsFile;                       /* == 0xA0 bytes */
+
+#define RRS_EXTRA_MAGIC 0x32535241u   /* "ARS2" (the whole RrArsenalSave) */
+#define RRS_EXTRA_V1    0x31535241u   /* "ARS1": a 24-byte RrArsenalSave (the fields before backLv), same layout otherwise */
+#define RRS_EXTRA_V1_SAVE 24
+typedef struct RrsExtra {
+    uint32_t magic;
+    RrArsenalSave arsenal;
+    uint32_t checksum;           /* Checksum() over magic + arsenal */
+} RrsExtra;
+extern RrArsenal g_arsenal;      /* race\arsenal.c */
+void rr_ArsenalReset(void);
+void rr_ArsenalSet(const RrArsenalSave *s);
 
 RR_DATA(RrsFile, g_saveFile);  /* the global file image the original code used */
 RR_DATA(char,    g_playerFilePath);  /* path of the current player file */
@@ -43,6 +59,14 @@ int  __fastcall DirectionMirror(char v);                                        
 #pragma comment(linker, "/alternatename:@DirectionMirror@4=DirectionMirror")
 void __fastcall MenuEnableBuild(int mode);                                             /* refresh after load */
 #pragma comment(linker, "/alternatename:@MenuEnableBuild@4=MenuEnableBuild")
+
+static void extra_make(RrsExtra *x)
+{
+    memset(x, 0, sizeof *x);
+    x->magic = RRS_EXTRA_MAGIC;
+    x->arsenal = g_arsenal.s;
+    x->checksum = Checksum((unsigned char *)x, (unsigned)(sizeof *x - 4));
+}
 
 static uint32_t *record_ptr(int set, int i)
 {
@@ -75,6 +99,10 @@ void __stdcall rr_SavePlayerFile(void)
         CrtStrerror((int)GetLastError());
         MessageBoxShow(NULL, *(char **)(g_configBlock + 0x5bc));
     } else {
+        RrsExtra x;
+        extra_make(&x);
+        WriteFile(h, &x, sizeof x, &written, NULL);
+        SetEndOfFile(h);   /* (OPEN_ALWAYS: nothing of a longer old file left behind) */
         g_unsavedChanges = 0;
     }
     CloseHandle(h);
@@ -107,6 +135,17 @@ void __stdcall rr_LoadPlayerFile(void)
             uint32_t *dst = record_ptr(rec_fadeFactors.g_selectedRecordSet, i);
             for (k = 0; k < 3; k++)
                 dst[k] = g_saveFile.rec[i][k];
+        }
+        {   RrsExtra x;
+            memset(&x, 0, sizeof x);
+            if (ReadFile(h, &x, sizeof x, &got, NULL) && got == sizeof x && x.magic == RRS_EXTRA_MAGIC && Checksum((unsigned char *)&x, (unsigned)(sizeof x - 4)) == x.checksum)
+                rr_ArsenalSet(&x.arsenal);
+            else if (got == 4 + RRS_EXTRA_V1_SAVE + 4 && x.magic == RRS_EXTRA_V1 && Checksum((unsigned char *)&x, 4 + RRS_EXTRA_V1_SAVE) == *(uint32_t *)((char *)&x + 4 + RRS_EXTRA_V1_SAVE)) {
+                RrArsenalSave s;   /* (version 1: the newer fields start at zero) */
+                memset(&s, 0, sizeof s); memcpy(&s, &x.arsenal, RRS_EXTRA_V1_SAVE);
+                rr_ArsenalSet(&s);
+            }
+            else rr_ArsenalReset();
         }
         MenuEnableBuild(2);
         g_unsavedChanges = 0;
@@ -143,5 +182,6 @@ void rr_AutoSave(void)
     h = CreateFileA(name[pick], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (h == INVALID_HANDLE_VALUE) return;
     WriteFile(h, &f, RRS_BYTES, &written, NULL);
+    { RrsExtra x; extra_make(&x); WriteFile(h, &x, sizeof x, &written, NULL); }
     CloseHandle(h);
 }

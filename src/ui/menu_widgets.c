@@ -203,6 +203,31 @@ void __fastcall rr_MessagePageShow(int item)
             if (nl && nl > t && nl[-1] == '\r') nl--;
             if (nl && nl > t && nl[-1] == '\n') { char *q = nl + (*nl == '\r' ? 2 : 1); while ((*nl++ = *q++) != 0) ; } }
     }
+    {   /* the Schmooze page: a rider's offer (race\arsenal.c) goes on under the quote, then "[ Yes ]   No" (the choice in brackets) or the rider's reply -
+           all one text, so the sharp-text replay at the window's size (which may wrap the lines differently) keeps it together.  Where the last line is
+           (frame pixels, as laid out here) goes back to arsenal.c for clicks: MenuLabelDraw's box is up to 300 wide, left at 8 (or 0x13c with DT_RIGHT
+           in the style), the text from +8,+8 */
+        int rr_ArsenalOffer(const char **text, const char **last, int *sel);
+        void rr_ArsenalOfferPlaces(const int *line);
+        const char *offer, *last; int sel;
+        if (rr_ArsenalOffer(&offer, &last, &sel)) {
+            static char buf[1200];
+            const char *q = STRTAB(it[0xc]);
+            unsigned df = it[0xd];
+            HDC dc;
+            sprintf(buf, "%s\n\n%s\n\n%s", q ? q : "", offer, last);   /* (quotes are a few lines; offer < 200, last < 120 characters: arsenal.c) */
+            MenuLabelDraw(g_hoverWindow, buf, df, it[9] & 0xfffff6ff);
+            if (sel >= 0 && GETDC(g_screenSurface, &dc) == 0) {
+                RECT m = { 0, 0, 300, 0x186 }; TEXTMETRICA tm; int x0 = ((df & 2) == 0 ? -0x134 : 0) + 0x13c + 8, y0 = 0x7a + 8, line[4];
+                SelectObject(dc, HelpFont(it[9] & 0xfffff6ff));
+                DrawTextExA(dc, buf, -1, &m, 0x4c50, NULL); GetTextMetricsA(dc, &tm);
+                RELEASEDC(g_screenSurface, dc);
+                line[0] = x0; line[1] = y0 + m.bottom - tm.tmHeight; line[2] = x0 + 300; line[3] = y0 + m.bottom;
+                rr_ArsenalOfferPlaces(line);
+            }
+            return;
+        }
+    }
     MenuLabelDraw(g_hoverWindow, STRTAB(it[0xc]), it[0xd], it[9] & 0xfffff6ff);
 }
 

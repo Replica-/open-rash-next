@@ -64,6 +64,9 @@ int __fastcall rr_ScaleFar(unsigned depth)
 /* course map (road_build.c builds it): where the riders are - their distances to the finish line, which the game keeps up to date in rider + 0x1f8
    (24.8 units, 856 per hundredth of a mile; the player's rider is g_playerRider + 0x2fc, the others hang off the 15 rider slots tbl_riders1..) */
 RR_DATA(int, g_playerRider);
+int rr_ArsenalIsTarget(int o, int *done);   /* race\arsenal.c: the bounty's target */
+const char *rr_ArsenalTargetName(void);
+void rr_ArsenalHud(RrCourseProgress *p);   /* race\arsenal.c: the Big Game item HUD */
 static void CourseProgress(void)
 {
     RrCourseProgress p;
@@ -74,11 +77,15 @@ static void CourseProgress(void)
     p.player = player[0x1f8 / 4] / 256.0f;
     p.miles = player[0x1f8 / 4] / 85600.0f;
     p.nRivals = 0;
+    p.target = -1; p.targetDone = 0; p.targetName[0] = 0;
+    rr_ArsenalHud(&p); p.cop = -1;
     for (i = 1; i < g_riderCount && p.nRivals < 64; i++) {   /* (every slot, the police last: race\rider_slots.c) */
-        int *o = (int *)RrRiderAt(i), *r;
+        int *o = (int *)RrRiderAt(i), *r, done;
         if (!o) continue;
         r = (int *)o[0x2fc / 4];
         if (!r || r == player) continue;
+        if (rr_ArsenalIsTarget((int)o, &done)) { p.target = p.nRivals; p.targetDone = done; lstrcpynA(p.targetName, rr_ArsenalTargetName(), sizeof p.targetName); }
+        if (i == g_riderCount - 1) p.cop = p.nRivals;   /* (the police: the last slot) */
         p.rival[p.nRivals++] = r[0x1f8 / 4] / 256.0f;
     }
     g_gpuProgress(&p);

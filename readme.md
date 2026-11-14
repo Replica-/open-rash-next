@@ -1,12 +1,8 @@
-# Open Rash
+# Open Rash Next
 
-> **Please note:** this project is provided as is, and I'm unlikely to fix reported issues. You're welcome to fork it and make your own fixes. Some problems turned out to be hard to fix: the textures wobble with the original renderer's draw-distance
-> handling, and fixing that properly would mean rebuilding the 3D world from scratch, which brings its own set of challenges.
-> My own plans will probably continue in a fork focused on the True 3D mode, better upscaled art, a day / night cycle, weather effects and more.
->
 > The widescreen art mod (the menu side strips and upscaled sprites, textures and skies) is not included yet; I'll work out how to share it later.
 
-Open Rash does not include the game's content (graphics, sounds, music, videos, courses). You need your own copy of *Road Rash* for Windows 95;
+Open Rash Next does not include the game's content (graphics, sounds, music, videos, courses). You need your own copy of *Road Rash* for Windows 95;
 
 ## New: time of day, weather and lighting (True 3D)
 
@@ -16,9 +12,11 @@ Press **Esc** in a race to change it on the spot:
 | Setting | Choices |
 |---|---|
 | Time of day | Cycle (a full day every few race minutes) / Dawn / Day / Sunset / Night |
-| Weather | Clear / Rain / Heavy rain / Snow / Heavy snow |
+| Weather | Clear / Rain / Heavy rain / Torrential rain / Snow / Heavy snow |
 | Fog | Auto / Off / Haze / Light / Medium / Heavy / Pea soup / Ground mist |
-| Road | Original / New (fresh asphalt that shines in the sun) |
+| Improved Street Textures | Off / On (fresh asphalt that shines in the sun, paving slabs, granite kerbs) |
+| Weapon | Original / Hammer / your own pictures in `mod/weapons` (gives you the club and draws the chosen weapon in its place when you swing) |
+| Building Shadows | Off / On (the buildings cast shadows in the sun; off by default) |
 
 Use the arrow keys or the mouse; **Close** rides on and **Exit Race** leaves the race. The world keeps moving behind the panel (rain falls, clouds drift, the sea rolls), so a change shows straight away; only the race and the clock of the day cycle stand still. The settings are saved in `video.ini`.
 
@@ -31,19 +29,19 @@ Use the arrow keys or the mouse; **Close** rides on and **Exit Race** leaves the
 ![Night in the City: an oncoming car lights the road, the bike ahead brakes](docs/screenshots/true3d_night_cars.jpg)
 
 - **Shadows:** riders cast their own shadow along the road, away from the sun, in place of the game's black blob. It is long at dawn and dusk, short at noon, and gone under cloud and at night (a soft patch under the bike remains). Trees, lamp posts and street lights cast sun shadows too (the shadows painted into their pictures are removed). Building walls are lit by the same sun.
-- **New road surface (Esc > Road):** fresh asphalt with sealed cracks and the original lane paint, with a sheen toward the sun on clear days.
+- **Improved street textures (Esc > Improved Street Textures):** fresh asphalt with sealed cracks and the original lane paint, with a sheen toward the sun on clear days; concrete paving slabs on the sidewalks with a granite kerb top, and granite kerbstones on the curb.
 
 ![Day in the City: the new road surface and a tree's shadow on the pavement](docs/screenshots/true3d_new_road.jpg)
 
 ![Dawn: a long shadow from the low sun](docs/screenshots/true3d_dawn_shadows.jpg)
 
-- **Rain:** steady streaks, puddles that faintly mirror the buildings, tiny splashes where drops hit the ground, and spray and a splash sound when a tyre goes through a puddle. No rain falls in tunnels.
+- **Rain:** steady streaks, puddles that faintly mirror the buildings, tiny splashes where drops hit the ground, and spray and a splash sound when a tyre goes through a puddle. No rain falls in tunnels. **Torrential rain** triples the downpour of heavy rain, brings a pea-soup fog and darkens everything by a fifth.
 
 ![Rain: puddles reflecting the buildings](docs/screenshots/true3d_rain.jpg)
 
 ![Heavy rain at night](docs/screenshots/true3d_heavyrain_night.jpg)
 
-- **Snow:** falling flakes, snow on the road with drifts built up across parts of it and tyre-wide tracks behind every wheel, bumpy banks of snow along the curbs, and snow on the roofs.
+- **Snow:** falling flakes, snow on the road with tyre-wide tracks behind every wheel, bumpy banks of snow along the curbs, and snow on the roofs.
 
 ![Snow: snow on the road, banks along the curbs, tyre tracks](docs/screenshots/true3d_snow.jpg)
 
@@ -275,11 +273,11 @@ Higher denoise looks more like a real car but starts to change it: at 0.65 the T
   All credit for the game - its design, art, sound and the original program - goes to its creators.
 - **[SDL](https://www.libsdl.org/)** by Sam Lantinga and the SDL contributors (zlib license) - window, input, audio and rendering.
 
-Open Rash is a non-commercial fan project. It is not affiliated with, endorsed by or connected to Electronic Arts or any of the companies above.
+Open Rash Next is a non-commercial fan project. It is not affiliated with, endorsed by or connected to Electronic Arts or any of the companies above.
 
 ## License
-Open Rash's own code is licensed under the [GNU General Public License v3.0](LICENSE): you may use, copy, change and share it, provided that
+Open Rash Next's own code is licensed under the [GNU General Public License v3.0](LICENSE): you may use, copy, change and share it, provided that
 anything you distribute that is based on it is shared under the same license, with its source code.
 
-The license covers only Open Rash's own work. It grants no rights to *Road Rash* itself, its data, music, videos or trademarks, which remain the
+The license covers only Open Rash Next's own work. It grants no rights to *Road Rash* itself, its data, music, videos or trademarks, which remain the
 property of their owners.

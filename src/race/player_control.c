@@ -6,6 +6,7 @@
 #include "../legacy_decls.h"
 
 RR_DATA(int,      g_playerRider);
+RR_DATA(int,      tbl_aiAnims);
 RR_DATA(char,     g_demoMode);
 RR_DATA(char,     g_joystickOn);
 RR_DATA(int,      g_sfxMuted);
@@ -56,6 +57,16 @@ void __fastcall rr_PlayerControlTick(int self)
         RRF_RiderCrashTick(self);
         if ((U8(ctl, 0xc0) & 0x10) && I32(ctl, 0xec) < 0x12c) RRF_RaceStateSet(0x7f, 0xb4);
         return;
+    }
+    {   /* the player's weapon (arsenal.c: a Big Game's carried weapon, else the Esc pause choice) at the race start and when it changes; the race
+           set-up gave the level's weapon; a rival can still steal it */
+        void rr_ArsenalPlayerTick(int self);
+        rr_ArsenalPlayerTick(self);
+    }
+    {   /* test switch RR_WPSWING=1: every 45 frames the player swings what it holds (tbl_aiAnims[class + side * 4], sides in turn) - no target needed */
+        static int sw = -1, n; char ev[4];
+        if (sw < 0) sw = GetEnvironmentVariableA("RR_WPSWING", ev, sizeof ev) > 0;
+        if (sw && ++n % 45 == 0) RRF_AnimModeWithFallback(st, (&tbl_aiAnims)[(I32(self, 0x1c8) & 3) + ((n / 45) & 1) * 4]);
     }
     if (I32(ctl, 0x2f4) != 0) {
         if (U8(self, 0xc0) & 0x10) {

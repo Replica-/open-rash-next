@@ -24,6 +24,6 @@ static void JbKey(int vk)
     else if(vk==VK_F10){ if(g_jbCur<0) JbPlayIndex(0); else if(g_jbPaused){ if(resume) resume(); g_jbPaused=0; JbShow("Jukebox: playing"); } else { if(pause) pause(); g_jbPaused=1; JbShow("Jukebox: paused"); } } }
 static DWORD WINAPI JbThread(LPVOID p)
 {   static const int keys[3]={VK_F9,VK_F10,VK_F11}; int down[3]={0,0,0}, i; (void)p;
-    for(;;){ Sleep(30); for(i=0;i<3;i++){ int d=(g_inj[keys[i]]!=0) || ((GetAsyncKeyState(keys[i])&0x8000) && g_hwnd && GetForegroundWindow()==g_hwnd);
+    for(;;){ Sleep(30); for(i=0;i<3;i++){ int d=(g_inj[keys[i]]!=0) || ((GetAsyncKeyState(keys[i])&0x8000) && RrOurFocus());
             if(d && !down[i]) JbKey(keys[i]); down[i]=d; } } return 0; }
 static void StartJukebox(void){ static int started; char *e=getenv("RR_JUKEBOX"); if(started) return; started=1; if(e && !_stricmp(e,"off")){ g_jbOff=1; return; } CreateThread(NULL,0,JbThread,NULL,0,NULL); }

@@ -146,6 +146,7 @@ int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdSho
     if (!g_configBlock) return 0;
     ((const char **)g_configBlock)[0x18a] = "Video Options";                                          /* was "Graphics Options" (Restroom item, string id 0x18a) */
     ((const char **)g_configBlock)[0x18b] = "Window mode, resolution, scaling, filtering and V-sync.";   /* its help text (0x18b) */
+    { void rr_ArsenalInit(void); rr_ArsenalInit(); }   /* the player's weapons, shared with the shim (race\arsenal.c) */
     if (g_playerFilePath) LoadPlayerFile();
     if (!(char)HelperStart()) return 0;
     if (!(char)rr_WindowsCreate(inst, created, cmdShow)) return 0;
@@ -187,6 +188,7 @@ int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdSho
         rr_SurfacesCreate();
         MainLoop();
         g_unsavedChanges = 1;
+        { void rr_ArsenalRaceEnd(void); rr_ArsenalRaceEnd(); }   /* a bounty paid or collected (race\arsenal.c) */
         rr_AutoSave();   /* the race is over: auto save (savegame.c) */
         if (demo) autoTrack = demoTrack = demoTrack % 5 + 1;   /* RR_DEMO_ALL=1 (with RR_AUTORACE): straight into the next track's race, round and round */
         mode = (int)GameQuit();

@@ -64,6 +64,12 @@ static int HdDirPick(HdDir *dd, const char *nm, DWORD hs, char *out)
     _snprintf(out, MAX_PATH - 1, "%s\\%s.png", dd->path, nm); out[MAX_PATH - 1] = 0;   /* (no hashes.txt / not listed: by name) */
     at = GetFileAttributesA(out); return at != INVALID_FILE_ATTRIBUTES && !(at & FILE_ATTRIBUTE_DIRECTORY); }
 
+/* the mod's picture folder of this track ("" = none: no mod, not in a race) - world3d.inc loads the broken hydrants' stumps from it */
+static const char *HdTrackDir(void)
+{   int t = HdTrack(); char sub[16];
+    if (!t || !HdTexOn()) return "";
+    if (!g_hdDirs[t].loaded) { _snprintf(sub, sizeof sub - 1, "t%d", t); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[t], sub); }
+    return g_hdDirs[t].path; }
 /* the 4x picture of texture name8 (8 chars, may lack the NUL) of size w x h with these palette indices (pitch bytes per row) on this track, NULL = none */
 static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch)
 {   static const char *const car[6] = { "", "CITY", "HIWAY", "MEDLY", "NAPA", "CANYN" };

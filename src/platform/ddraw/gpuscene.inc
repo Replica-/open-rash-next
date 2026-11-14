@@ -11,11 +11,13 @@
  * Nothing the game reads changes: the game state is the same as the original game's.
  */
 #include "../gpu_api.h"
+#include "../arsenal_api.h"   /* the player's weapons in a Big Game (src/race/arsenal.c; shop.inc, weapons.inc) */
 
 static void W3Blood(int fw, int fh); static void W3Draw(int w, int h, const SDL_FRect *r); static void W3RaceEnd(void); static int W3Replaces(const RrGpuQuad *q); static void W3SceneBegin(void);   /* world3d.inc (true-3D world) */
 static const PALETTEENTRY *volatile g_cdPal;   /* the race start countdown (weather.inc RR_RaceCountdown): its frames drawn with the race palette, not the dimmed one */
 static Pal *GpuCdPal(void){ static Pal p; const PALETTEENTRY *e=g_cdPal; if(!e) return g_primary?g_primary->pal:NULL; memcpy(p.e,e,sizeof p.e); return &p; }
-static void WxUpdate(void); static void WxBatchMod(SDL_Texture *t, int on); static void WxParticles(int fw, int fh); static void WxPanel(int w, int h);   /* weather.inc */
+static void WxUpdate(void); static void WxBatchMod(SDL_Texture *t, int on); static void WxParticles(int fw, int fh); static void WxPanel(int w, int h); static void WxGlare(int fw, int fh); static void CdDraw(int fw, int fh);   /* weather.inc */
+static int WpClubSprite(int spr); static int WpPicture(void); static void WpClubSwap(DWORD *px, int w, int h, int spr, int wpn);   /* weapons.inc */
 static int g_gpuOn;                    /* this race is drawn by the GPU renderer (RR_GpuRace at the race start) */
 static int g_gpuScene;                 /* a scene (background + polygon list) is ready to compose */
 static BYTE *g_gpuBg; static int g_gpuBgW, g_gpuBgH, g_gpuBgCap; static int g_gpuClip[4];
@@ -93,6 +95,7 @@ static DWORD *GpuHalve(const DWORD *s,int w,int h,int *ow,int *oh)
     *ow=nw; *oh=nh; return d; }
 static GpuTex *GpuTexFor(const RrGpuQuad *q)
 {   int pitch=q->pitch?q->pitch:q->w, key=((q->flags&RRG_KEY)!=0)|((q->flags&RRG_TRUECOL)?2:0), w=q->w, h=q->h, l;   /* (key bit 2: true-colour rider tile, a texture of its own) */ DWORD hs=GpuHashMemo(q->bits[0],w,h,pitch,(q->flags&RRG_SNAP)!=0);
+    int wpn=(q->objKind==RRO_PLAYER && WpClubSprite(q->riderSprite))?WpPicture():0; if(wpn>0) hs^=0x9e3779b9u*(unsigned)wpn;   /* the player swinging the club: drawn as the chosen weapon (weapons.inc) - a texture of its own per choice */
     unsigned k=((((unsigned)(size_t)q->bits[0]>>4)*2654435761u) ^ hs ^ (unsigned)(w*7+h*13+key))%GPU_TEXSLOTS, i; GpuTex *e, *freeSlot=NULL; DWORD *px;
     for(i=0;i<64;i++){ e=&g_gt2[(k+i)%GPU_TEXSLOTS];
         if(!e->bits){ if(!freeSlot) freeSlot=e; break; }
@@ -103,9 +106,11 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
     e=freeSlot; px=GpuExpand(q->bits[0],w,h,pitch,key&1,GpuCdPal()); if(!px) return NULL;
     if(key&2){ const DWORD *lut=RcTrueLut(); int x, y;   /* the player's tile in true-colour mode (ridercol.inc): template index -> the player's own colours */
         if(lut) for(y=0;y<h;y++){ const BYTE *r=q->bits[0]+(size_t)y*pitch; for(x=0;x<w;x++) if(px[y*w+x]&0xFF000000u) px[y*w+x]=lut[r[x]]; } }
+    if(wpn>0) WpClubSwap(px,w,h,q->riderSprite,wpn);
     { static int dt=-1; static char dd[MAX_PATH]; if(dt<0){ char *s=getenv("RR_DUMP_TEX"); dt=(s && *s); if(dt){ strncpy(dd,s,MAX_PATH-1); CreateDirectoryA(dd,NULL); } }   /* RR_DUMP_TEX=<dir>: every new texture as <kind>_<w>x<h>_<hash>.raw (int w, int h, w*h ARGB) */
       if(dt){ char fn[MAX_PATH+64]; FILE *f; _snprintf(fn,sizeof fn-1,"%s\\%s_%dx%d_%08lx.raw",dd,q->objDepth>=0?"object":(q->world?"world":"other"),w,h,(unsigned long)hs); fn[sizeof fn-1]=0;
           if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
+    { static int wl=-1; if(wl<0) wl=getenv("RR_WPLOG")!=NULL; if(wl && q->riderSprite>=0) LOG("rider texture: HiBob sprite %d %dx%d key %d", q->riderSprite, w, h, key); }   /* (test switch RR_WPLOG=1, weapons.inc) */
     e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen;
     if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch); DWORD *hx;   /* "slightly upscaled": the 4x picture (never the rider tiles) */
         if(getenv("RR_HDLOG")) LOG("hdtex scene %u: new '%.8s' %dx%d hash %08lx bits %p world %d -> %s", g_gpuFrame, q->name, w, h, (unsigned long)hs, q->bits[0], q->world, hp?"4x":"original");   /* test switch RR_HDLOG=1 */
@@ -259,8 +264,27 @@ static void ExQuad(float x0,float y0,float x1,float y1,float wd,SDL_FColor c)   
     v[0].position.x=x0+nx; v[0].position.y=y0+ny; v[1].position.x=x1+nx; v[1].position.y=y1+ny; v[2].position.x=x1-nx; v[2].position.y=y1-ny; v[3].position.x=x0-nx; v[3].position.y=y0-ny;
     for(k=0;k<4;k++){ v[k].color=c; v[k].tex_coord.x=v[k].tex_coord.y=0; } SDL_RenderGeometry(g_ren,NULL,v,4,idx,6); }
 static void ExDot(float x,float y,float r,SDL_FColor c){ SDL_FRect f; f.x=x-r; f.y=y-r; f.w=r*2; f.h=r*2; SDL_SetRenderDrawColorFloat(g_ren,c.r,c.g,c.b,c.a); SDL_RenderFillRect(g_ren,&f); }
+/* the Big Game item HUD (race\arsenal.c through RR_GpuCourseProgress), top left of the window: the bounty, medikits, adrenaline, nitro, the police
+   scanner - lines of the debug font, scaled with the window height, on a dark plate */
+static void GpuItemHud(int w,int h)
+{   char ln[6][48]; SDL_Color col[6]; int n=0, i, mw=0; float s=h/400.0f; SDL_FRect bg; const RrCourseProgress *p=&g_cmProg; (void)w;
+    if(!g_cmHaveProg || p->medikits<0) return;
+    if(s<1) s=1;
+    if(p->target>=0){ _snprintf(ln[n],48,p->targetDone?"%s: DONE":"GET %s",p->targetName); CharUpperA(ln[n]); col[n]=p->targetDone?(SDL_Color){120,235,120,255}:(SDL_Color){255,70,60,255}; n++; }
+    _snprintf(ln[n],48,"MEDIKIT %d [%c]",p->medikits,(char)p->medKey); col[n]=(SDL_Color){150,220,255,255}; n++;
+    if(p->healAge>=0 && p->healAge<60){ strcpy(ln[n],"+HEALTH"); col[n]=(SDL_Color){120,255,120,255}; n++; }
+    if(p->adrLeft>0){ _snprintf(ln[n],48,"ADRENALINE %ds",(p->adrLeft+29)/30); col[n]=(SDL_Color){255,(Uint8)((GetTickCount()/200)&1?220:120),60,255}; n++; }
+    else if(p->adrenaline>0){ _snprintf(ln[n],48,"ADRENALINE %d [%c]",p->adrenaline,(char)p->adrKey); col[n]=(SDL_Color){255,200,90,255}; n++; }
+    if(p->nitro>=0){ _snprintf(ln[n],48,"NITRO %d",p->nitro); col[n]=(SDL_Color){120,200,255,255}; n++; }
+    if(p->scanner){ if(p->cop>=0 && p->cop<p->nRivals){ float d=(p->rival[p->cop]-p->player)*256.0f/85600.0f; _snprintf(ln[n],48,"COP %.1fmi %s",d<0?-d:d,d<0?"AHEAD":"BEHIND"); } else strcpy(ln[n],"SCANNER: NO COPS"); col[n]=(SDL_Color){180,180,255,255}; n++; }
+    for(i=0;i<n;i++){ ln[i][47]=0; if((int)strlen(ln[i])>mw) mw=(int)strlen(ln[i]); }
+    bg.x=6; bg.y=6; bg.w=(mw*8+10)*s; bg.h=(n*11+6)*s; SDL_SetRenderDrawColor(g_ren,10,12,24,150); SDL_RenderFillRect(g_ren,&bg);
+    SDL_SetRenderScale(g_ren,s,s);
+    for(i=0;i<n;i++){ SDL_SetRenderDrawColor(g_ren,col[i].r,col[i].g,col[i].b,255); SDL_RenderDebugText(g_ren,6/s+5,6/s+4+i*11,ln[i]); }
+    SDL_SetRenderScale(g_ren,1,1); SDL_SetRenderDrawColor(g_ren,255,255,255,255); }
 static void GpuDrawExtras(int w,int h)
 {   SDL_SetRenderDrawBlendMode(g_ren,SDL_BLENDMODE_BLEND);
+    GpuItemHud(w,h);
     if(g_cmN>1 && CourseMapWanted()){
         float pw=w*0.19f*0.7f, ph=135, px=w-pw-10, py=34, minx=1e30f, maxx=-1e30f, miny=1e30f, maxy=-1e30f, sc, ox, oy, pidx; int i, step, last=g_cmN-1;
         SDL_FRect bg; SDL_FColor road={0.80f,0.80f,0.85f,1}, done={0.35f,0.90f,0.35f,1}, fin={1,0.15f,0.15f,1}, me={1,0.92f,0.1f,1}, them={1,0.45f,0.2f,1};
@@ -281,6 +305,12 @@ static void GpuDrawExtras(int w,int h)
             int f=g_cmFinish>0?g_cmFinish:1; float dx=g_cmX[f]-g_cmX[f-1], dy=g_cmY[f]-g_cmY[f-1], l=(float)sqrt(dx*dx+dy*dy); if(l<1e-4f){ dx=0; dy=1; l=1; }
             ExQuad(MX(g_cmX[f])-dy/l*6,MY(g_cmY[f])-dx/l*6,MX(g_cmX[f])+dy/l*6,MY(g_cmY[f])+dx/l*6,3,fin); }
         if(g_cmHaveProg){ for(i=0;i<g_cmProg.nRivals;i++){ float r=g_cmFinish-g_cmProg.rival[i]; int k; if(r<0||r>last) continue; k=(int)r; ExDot(MX(g_cmX[k]),MY(g_cmY[k]),2.0f,them); }
+            if(g_cmProg.target>=0 && g_cmProg.target<g_cmProg.nRivals){   /* a Big Game bounty's target (race\arsenal.c): a blinking red ring, grey once taken out */
+                float r=g_cmFinish-g_cmProg.rival[g_cmProg.target]; if(r>=0 && r<=last){ int k=(int)r; float x=MX(g_cmX[k]), y=MY(g_cmY[k]);
+                    SDL_FColor ring=g_cmProg.targetDone?(SDL_FColor){0.6f,0.6f,0.65f,1}:(SDL_FColor){1,0.1f,0.1f,(GetTickCount()/300)&1?1.0f:0.55f}, core={0.05f,0.05f,0.08f,1};
+                    ExDot(x,y,5.0f,ring); ExDot(x,y,2.5f,core); ExDot(x,y,1.5f,ring); } }
+            if(g_cmProg.scanner && g_cmProg.cop>=0 && g_cmProg.cop<g_cmProg.nRivals){   /* a police scanner: the police flashing blue / red */
+                float r=g_cmFinish-g_cmProg.rival[g_cmProg.cop]; if(r>=0 && r<=last){ int k=(int)r; SDL_FColor c=(GetTickCount()/250)&1?(SDL_FColor){0.2f,0.4f,1,1}:(SDL_FColor){1,0.15f,0.15f,1}; ExDot(MX(g_cmX[k]),MY(g_cmY[k]),3.5f,c); } }
             { int k=(int)pidx; ExDot(MX(g_cmX[k]),MY(g_cmY[k]),3.5f,me); } }
 #undef MX
 #undef MY
@@ -323,8 +353,10 @@ static int GpuCompose(Surf *s)
         if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); WxBatchMod(b->t,1); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); WxBatchMod(b->t,0); }
     SDL_SetRenderClipRect(g_ren,NULL);
     WxParticles(w,h);          /* rain / snow in front of the world, under the HUD */
+    WxGlare(w,h);              /* the sun's glare (weather.inc) */
     if(g_gpuOv){ SDL_UpdateTexture(g_gpuOv,NULL,ov,w*4); SDL_RenderTexture(g_ren,g_gpuOv,NULL,&g_fullRect); }
     HhDraw(s,lut);             /* the HD dashboard + the HUD over it (hdhud.inc) */
+    CdDraw(w,h);               /* the start countdown, fancy (weather.inc) */
     WxPanel(w,h);             /* the Esc pause's settings */
     GpuDrawExtras(w,h);
     free(bg); free(ov); return 1; }

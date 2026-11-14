@@ -18,6 +18,7 @@ void __fastcall rr_GameModeSwitch(int page)
     if (g_gameMode != page) {
         rec_playerRecord.g_playerLevel = 0; rec_playerRecord.g_tracksWonMask = 0; rec_playerRecord.g_playerCharacter = 0; rec_fadeFactors.g_selectedRecordSet = 0;
         SkillTablesRegenerate();
+        { void rr_ArsenalReset(void); rr_ArsenalReset(); }   /* bare knuckles, no bounty (race\arsenal.c) */
     }
     MenuEnableBuild(page);
 }

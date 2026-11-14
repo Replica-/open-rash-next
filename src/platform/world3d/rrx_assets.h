@@ -23,6 +23,8 @@ typedef struct RxTex {                         /* one texture object */
     int holes;                                 /* some texel has index 0 (see-through where the texture is colour-keyed) */
     const unsigned *gen;                       /* a generated texture's RGBA (world3d.inc W3GenFacades; bits = NULL) */
     int facade;                                /* used as a building facade (course3d.h C3_Building): its windows light up at night */
+    int gkind;                                 /* as ground (course3d.h C3_TexDirt): 0 not looked at yet, 1 dirt, 2 something else */
+    float shopV;                               /* a facade picture of the City set (world3d.inc W3LoadCityArt): its shop line, v from the top (0 = not one) */
 } RxTex;
 
 typedef struct RxAssets {
@@ -36,6 +38,8 @@ typedef struct RxAssets {
     unsigned short (*bind)[2][4];              /* per piece, section source, slot: the sprite set id (RX_Bind) */
     unsigned char *file;                       /* the chunk payloads stay here */
     int gen0, ngen;                            /* generated facades: tex[gen0 .. gen0 + ngen - 1] (course3d.h C3_FacadeVary) */
+    int rockTex;                               /* the rocks' texture (world3d.inc W3RockTex; -1 = none: course3d.h C3_Rock flat colour) */
+    int sign0, nsign;                          /* projecting signs (the City set): tex[sign0 .. sign0 + nsign - 1] (course3d.h C3_BladeSign) */
 } RxAssets;
 
 static void RX_Bind(RxAssets *a);

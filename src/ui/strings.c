@@ -209,6 +209,7 @@ char * __fastcall rr_HeightText(int inches)
 /* load a numbered string table from the module's resources: the first string "<maxlen> <count>" sizes a pointer array and a text pool, then the
    strings (id + count down to id + 1) are loaded back to back; a string ending in 0xff continues in the string whose id is 3000 + the char before it */
 int g_newGameTextId;   /* the Restroom's "New Game" label in the main table (0 = none: another language), menutrim.c */
+int g_shopTextId;      /* The Street's "Hurt Hardware" label (its help the string after it; 0 = none), menutrim.c */
 RR_REPLACE_FAST(StringTableLoad, rr_StringTableLoad, 12);
 unsigned * __fastcall rr_StringTableLoad(HINSTANCE hinst, UINT id, unsigned *poolOut)
 {
@@ -266,12 +267,15 @@ unsigned * __fastcall rr_StringTableLoad(HINSTANCE hinst, UINT id, unsigned *poo
                         if (base == 0 && modeHelp && table[modeHelp - 1] && !strcmp((char *)table[modeHelp - 1], "Game Mode")) {
                             /* the Restroom's "Game Mode" item is "New Game": its label string is also the Game Mode page's title, so the item gets a string
                                of its own - the table grows by two (label, help: an item's help is the string after its label), menutrim.c points the item there */
-                            static char newGame[] = "New Game";
-                            unsigned *big = (unsigned *)MemAlloc((total + 3) * 4);
+                            /* (and two more: The Street's Hurt Hardware, menutrim.c / race\arsenal.c) */
+                            static char newGame[] = "New Game", shop[] = "Hurt Hardware", shopHelp[] = "Bats, chains and bad intentions.  Buy a weapon or beef up the one you've got.";
+                            unsigned *big = (unsigned *)MemAlloc((total + 5) * 4);
                             if (big != NULL) {
                                 for (i = 0; i <= total; i++) big[i] = table[i];
                                 big[total + 1] = (unsigned)newGame; big[total + 2] = table[modeHelp];
+                                big[total + 3] = (unsigned)shop; big[total + 4] = (unsigned)shopHelp;
                                 g_newGameTextId = total + 1;
+                                g_shopTextId = total + 3;
                                 MemFree((int)table);
                                 table = big;
                             }

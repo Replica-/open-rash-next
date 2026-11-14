@@ -195,6 +195,26 @@ static HDC g_txDcLo;
 static float TxWidthLo(const TxItem *t)
 {   HFONT f, of; float w; if(!g_txDcLo) g_txDcLo=CreateCompatibleDC(NULL); if(!g_txDcLo || !(f=CreateFontIndirectA(&t->lf))) return 0;
     of=(HFONT)SelectObject(g_txDcLo,f); w=TxWidth(g_txDcLo,t); SelectObject(g_txDcLo,of); DeleteObject(f); return w; }
+/* a left-aligned word-wrapped DrawTextEx item's text with its line breaks as the game's 640 x 480 drawing made them (the font at its own size, the
+   rectangle's width less the margins) - so the sharp copy breaks where the game broke, whatever its own widths (malloc'd; NULL = not such an item) */
+static char *TxBreakLo(const TxItem *t)
+{   HFONT f, of; char *o; int i = 0, k = 0, ls = 0, w; SIZE z;
+    if (t->kind != 0 || !(t->fmt & DT_WORDBREAK) || (t->fmt & (DT_CENTER | DT_RIGHT | DT_SINGLELINE)) || t->n <= 0 || t->n > 4000) return NULL;
+    w = t->rc.right - t->rc.left - (t->hasDtp ? t->dtp.iLeftMargin + t->dtp.iRightMargin : 0); if (w <= 0) return NULL;
+    if (!g_txDcLo) g_txDcLo = CreateCompatibleDC(NULL); if (!g_txDcLo || !(f = CreateFontIndirectA(&t->lf))) return NULL;
+    if (!(o = (char *)malloc((size_t)t->n * 2 + 2))) { DeleteObject(f); return NULL; }
+    of = (HFONT)SelectObject(g_txDcLo, f);
+    while (i < t->n) {   /* (greedy, as GDI: a word that does not fit goes to the next line; the spaces at a break are dropped) */
+        int j = i, e;
+        if (t->str[i] == '\r' || t->str[i] == '\n') { if (t->str[i] == '\r' && i + 1 < t->n && t->str[i + 1] == '\n') i++; o[k++] = '\n'; i++; ls = k; continue; }
+        while (j < t->n && t->str[j] == ' ') j++;
+        e = j; while (e < t->n && t->str[e] != ' ' && t->str[e] != '\r' && t->str[e] != '\n') e++;
+        memcpy(o + k, t->str + i, (size_t)(e - i));
+        if (k > ls && GetTextExtentPoint32A(g_txDcLo, o + ls, k + (e - i) - ls, &z) && z.cx > w) { o[k++] = '\n'; ls = k; memcpy(o + k, t->str + j, (size_t)(e - j)); k += e - j; }
+        else k += e - i;
+        i = e; }
+    o[k] = 0;
+    SelectObject(g_txDcLo, of); DeleteObject(f); return o; }
 static int TxBuffers(int W,int H)
 {   BITMAPINFO bi;
     if(g_txDcHi && g_txBw==W && g_txBh==H) return 1;
@@ -277,8 +297,10 @@ static void TxDraw(const Surf *s)
                 SetViewportOrgEx(g_txDcHi,(int)(t->vorg.x*kx+0.5f),(int)(t->vorg.y*ky+0.5f),NULL);
                 clip=CreateRectRgnIndirect(&E); SelectClipRgn(g_txDcHi,clip); DeleteObject(clip);
                 if(t->kind==1) g_rTextOutA(g_txDcHi,(int)(t->x*kx+0.5f),(int)(t->y*ky+0.5f),t->str,t->n);
-                else { p.iLeftMargin=(int)(p.iLeftMargin*kx/wf+0.5f); p.iRightMargin=(int)(p.iRightMargin*kx/wf+0.5f);
-                    g_rDrawTextExA(g_txDcHi,t->str,t->n,&rc,t->fmt,t->hasDtp?&p:NULL); }
+                else { char *br=TxBreakLo(t);   /* (a wrapped text: the game's own line breaks, the rectangle no longer breaks it) */
+                    p.iLeftMargin=(int)(p.iLeftMargin*kx/wf+0.5f); p.iRightMargin=(int)(p.iRightMargin*kx/wf+0.5f);
+                    if(br){ rc.right+=(rc.right-rc.left); g_rDrawTextExA(g_txDcHi,br,-1,&rc,t->fmt&~DT_WORDBREAK,t->hasDtp?&p:NULL); free(br); }
+                    else g_rDrawTextExA(g_txDcHi,t->str,t->n,&rc,t->fmt,t->hasDtp?&p:NULL); }
                 SetViewportOrgEx(g_txDcHi,0,0,NULL); SelectClipRgn(g_txDcHi,NULL);
                 if(of) SelectObject(g_txDcHi,of); if(f) DeleteObject(f);
                 GdiFlush();

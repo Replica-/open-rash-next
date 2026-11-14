@@ -56,6 +56,7 @@ int __cdecl rr_ResultPageNext(void);
 RR_REPLACE(ResultPageStep, rr_ResultPageStep);
 int __cdecl rr_ResultPageStep(void)
 {
+    { int rr_ArsenalOfferEnter(void); if (rr_ArsenalOfferEnter()) return 0; }   /* (a Schmooze offer answered on the page: race\arsenal.c) */
     if (rec_trackMenuItems.tbl_resultPage[0] == 0x19) {
         MenuGlobalSet(0x1a, 0x1a);
         rec_menuScreen.g_resultCount = 0;
@@ -295,6 +296,7 @@ int __fastcall rr_BikeShopBuy(int *item)
             cost = ((unsigned)(*(unsigned char *)&rec_playerRecord.g_playerLevel) * 5 + 5) * 5 << 4;
             fmt = (const char *)I32(g_configBlock, 0x314);
         }
+        { unsigned rr_ArsenalInsure(unsigned cost, int bust); cost = rr_ArsenalInsure(cost, item[2] == 0xC3); }   /* (insurance: the player pays the excess at most - race\arsenal.c) */
         sprintf(&(*(char *)&rec_menuTextBuf.g_menuTextBuf), fmt, (const char *)PlayerDisplayName(), cost);
         if ((*(unsigned *)&rec_playerRecord.g_playerCash) < cost) {
             rec_demoPage.tbl_levelPage[0] = 0xC6;

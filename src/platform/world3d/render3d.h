@@ -31,6 +31,7 @@ typedef struct R3 {
     ID3D11ShaderResourceView *tex[R3_MAXTEX]; int ntex;
     ID3D11ShaderResourceView *ext[R3_MAXEXT]; int next;   /* views of textures owned by others (R3_External), batch tex = R3_EXT + index; released by R3_ExternalClear */
     ID3D11ShaderResourceView *white;
+    ID3D11Texture2D *shTex; ID3D11DepthStencilView *shDsv; ID3D11ShaderResourceView *shSrv; ID3D11SamplerState *smpCmp; ID3D11VertexShader *vsSh; ID3D11PixelShader *psSh;   /* the sun's shadow map (R3Frame.shadow) */
     char err[512];
 } R3;
 
@@ -38,15 +39,18 @@ typedef struct R3Batch { int first, count, tex; int alpha; } R3Batch;   /* tex =
 
 static const char r3_hlsl[] =
     "cbuffer C : register(b0) { row_major float4x4 vp; float4 fogc; float4 fogp; float4 right; float4 eye; float4 tint; float4 lit; float4 lp[16]; float4 lc[16];\n"
-    "  float4 spP[6]; float4 spD[6]; float4 spC[6]; float4 trk; float4 fad; float4 wat; float4 rfl; float4 sun; float4 opt; };\n"   /* spot lights (the bikes' headlights): position + range, direction + cos outer, colour + cos inner; trk.x = 1 / the tracks map's size, y = their strength, z = spots, w = night;
+    "  float4 spP[6]; float4 spD[6]; float4 spC[6]; float4 trk; float4 fad; float4 wat; float4 rfl; float4 sun; float4 opt; row_major float4x4 svp; float4 shp; };\n"   /* svp / shp: the sun's shadow map (R3Frame.shadow): its view-projection, strength, 1 / size, bias; spot lights (the bikes' headlights): position + range, direction + cos outer, colour + cos inner; trk.x = 1 / the tracks map's size, y = their strength, z = spots, w = night;
                                                                                                 fad = distance fade start, 1 / its length (0 = none), rain puddles, time (s); wat = the sky colour water reflects, sun glints;
                                                                                                 rfl = the mirror plane's height, 1 = this is the mirror pass, 1 / target size (0 = no mirror picture: puddles show the sky only) */
     "struct VI { float3 p : POSITION; float2 t : TEXCOORD0; float4 c : COLOR; float k : TEXCOORD1; float2 o : TEXCOORD2; };\n"
     "struct VO { float4 p : SV_Position; float2 t : TEXCOORD0; float4 c : COLOR; float d : TEXCOORD1; float3 w : TEXCOORD2; };\n"
-    "Texture2D T : register(t0); Texture2D K : register(t1); Texture2D Rf : register(t2); SamplerState S : register(s0);\n"
+    "Texture2D T : register(t0); Texture2D K : register(t1); Texture2D Rf : register(t2); Texture2D Sm : register(t3); SamplerState S : register(s0); SamplerComparisonState SC : register(s1);\n"
+    "VO vsshadow(VI i) { VO o; o.t = i.t; o.c = i.c; o.d = 0; o.w = i.p;\n"   /* the shadow map's pass (the sun's view, svp in vp): only the buildings' walls cast (vertex */
+    "  o.p = abs(i.c.a - 0.996) < 0.002 && all(i.o == 0) ? mul(float4(i.p, 1), vp) : float4(0, 0, -1, 1); return o; }\n"   /* alpha 254, not billboards: the trees / lamps have their own) */
+    "float4 psshadow(VO i) : SV_Target { if (T.Sample(S, i.t).a * i.c.a < 0.5) discard; return 0; }\n"
     "VO vsmain(VI i) { VO o; float3 w = i.p + right.xyz * i.o.x + float3(0, i.o.y, 0);\n"   /* billboards: upright, facing the camera */
     "  if (lit.w > 0) { o.p = float4(i.p, 1); o.w = float3(i.k, i.o.x, i.o.y); o.d = length(o.w - eye.xyz); o.t = i.t; o.c = i.c; return o; }\n"   /* lit.w: clip-space vertices (the sprites pass), (k, o) = their place in the world (lights, fog) */
-    "  if (eye.w > 0 && any(i.o != 0)) { float3 d = w - eye.xyz; float l = length(d); w = eye.xyz + d * (max(l - eye.w, l * 0.5) / l); }\n"   /* billboards: eye.w units nearer along the view ray (same place on screen): the ground / a rail just in front of the foot cannot cover them (the game draws sprites over their surroundings) */
+    "  if (eye.w > 0 && any(i.o != 0)) { float3 d = w - eye.xyz; float l = length(d), bb = abs(i.c.a - 0.9294) < 0.0015 ? 25 : eye.w; w = eye.xyz + d * (max(l - bb, l * 0.5) / l); }\n"   /* (grass tufts, vertex alpha 237 (world3d.inc W3Grass): only 25 - the rails and fences in front of them still cover them) */   /* billboards: eye.w units nearer along the view ray (same place on screen): the ground / a rail just in front of the foot cannot cover them (the game draws sprites over their surroundings) */
     "  else if (eye.w > 0 && abs(i.c.a - 0.984) < 0.002) { float3 d = w - eye.xyz; float l = length(d); w = eye.xyz + d * (max(l - 160, l * 0.7) / l); }\n"   /* a shadow on the ground (world3d.inc): a little nearer too - the hillside beside the road rises above the caster's foot */
     "  o.p = mul(float4(w, 1), vp); o.t = i.t; o.c = i.c; o.d = o.p.w; o.w = w; return o; }\n"
     "float H(float2 p) { return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453); }\n"
@@ -65,10 +69,97 @@ static const char r3_hlsl[] =
     "  float4 c = T.SampleGrad(S, uv, dx, dy) * i.c; if (c.a < 0.5 || (rfl.y > 0 && (i.w.y < rfl.x - 40 || abs(normalize(n).y) > 0.8))) discard;\n"   /* (the mirror pass: only what stands up above the mirror - buildings, hillsides; not the road / ground) */
     "  float y = dot(c.rgb, float3(0.299, 0.587, 0.114)); float3 a = tint.rgb; int k; c.rgb = lerp(y.xxx, c.rgb, tint.w);\n"   /* time of day / weather: saturation, then the light */
     "  bool road = abs(i.c.a - 0.9725) < 0.0015;\n"   /* the road surface (vertex alpha 248, course3d.h C3_Lanes) */
-    "  if (opt.x > 0 && road) { float2 q = i.w.xz; float mk = saturate(smoothstep(0.42, 0.55, y) + saturate((c.r - c.b) * 3 - 0.2)), nk;\n"   /* the new road (opt.x): the paint */
-    "    float ag = Hu(floor(q / 4)) * 0.6 + Hu(floor(q / 9) + 3.7) * 0.4, pt = Nu(q / 420) * 0.6 + Nu(q / 130 + 2.2) * 0.4; nk = Nu(q / 260 + 9.1);\n"   /* kept, the rest fresh asphalt: */
-    "    float3 asp = float3(0.18, 0.18, 0.19) * (0.78 + 0.35 * pt) + (ag - 0.5) * 0.06 * saturate(1 - i.d / 3000);\n"                                        /* fine aggregate (near), darker / */
-    "    asp *= 1 - 0.45 * smoothstep(0.494, 0.5, nk) * smoothstep(0.506, 0.5, nk); c.rgb = lerp(asp, c.rgb, mk); }\n"                                            /* lighter patches, tar-sealed cracks */
+    "  if (abs(i.c.a - 0.9333) < 0.0015) { float3 rn2 = normalize(n); if (dot(rn2, eye.xyz - i.w) < 0) rn2 = -rn2; float3 ld = sun.w > 0 ? sun.xyz : normalize(float3(0.3, 1, 0.2));\n"   /* a rock (vertex alpha 238, */
+    "    c.rgb *= (0.55 + 0.65 * saturate(dot(rn2, ld))) * (0.9 + 0.2 * Nu(i.w.xz / 6 + i.w.y / 9)); }\n"   /* course3d.h C3_Rock): its facets lit and shaded, a grain */
+    "  float facK = 0, facLit = 0; float3 facE = 0, facN = 0;\n"   /* the City set's facades (CITY_SCENERY.md, world3d.inc W3LoadCityArt): texels (0,0) / (1,0) = the layout */
+    "  if (abs(i.c.a - 0.996) < 0.002) { float4 L0 = T.Load(int3(0, 0, 0)), L1 = T.Load(int3(1, 0, 0));\n"
+    "    if (abs(L0.a - 0.996) < 0.003 && abs(L1.a - 0.996) < 0.003) {\n"
+    "      float F = max(1, round(L0.r * 255)), C = max(1, round(L0.g * 255)), ct = L0.b, sv = L1.r, B = max(1, round(L1.g * 255));\n"   /* floors, bays, cornice / shop line (v), shop bays */
+    "      float2 tu = ddx(i.t), tv = ddy(i.t); float det = tu.x * tv.y - tv.x * tu.y; det = abs(det) < 1e-14 ? 1e-14 : det;\n"
+    "      float3 eu = (ddx(i.w) * tv.y - ddy(i.w) * tu.y) / det, ev = (ddy(i.w) * tu.x - ddx(i.w) * tv.x) / det, nf = normalize(n); if (dot(nf, eye.xyz - i.w) < 0) nf = -nf;\n"   /* world per u / v; facing the eye */
+    "      float wg = abs(c.a - 0.698) < 0.02 ? 1 : abs(c.a - 0.600) < 0.02 ? 2 : 0;\n"   /* window glass (0xB2) / a shop window (0x99) */
+    "      if (wg > 0 && i.d < 7000) { float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, cells = wg > 1 ? B : C, cu = min(floor(fu * cells), cells - 1), u0 = cu / cells, u1 = (cu + 1) / cells, v0, v1, fl;\n"
+    "        if (wg > 1) { v0 = sv + 0.04; v1 = 0.988; fl = 99; } else { float fh = (sv - ct) / F; fl = clamp(floor((v - ct) / fh), 0, F - 1); v0 = ct + fl * fh; v1 = v0 + fh; }\n"   /* the room: its bay, its floor */
+    "        float3 r = normalize(i.w - eye.xyz); float lu2 = max(dot(eu, eu), 1e-6), lv2 = max(dot(ev, ev), 1e-6), ru = dot(r, eu) / lu2, rv = dot(r, ev) / lv2, rz = max(dot(r, -nf), 0.04);\n"   /* the view ray in (u, v, depth) */
+    "        float D = (u1 - u0) * sqrt(lu2) * (wg > 1 ? 1.3 : 0.9), su = ru > 0 ? (u1 - fu) / max(ru, 1e-9) : (u0 - fu) / min(ru, -1e-9), sw = rv > 0 ? (v1 - v) / max(rv, 1e-9) : (v0 - v) / min(rv, -1e-9), sd = D / rz, s = min(min(su, sw), sd);\n"
+    "        float hu = saturate((fu + ru * s - u0) / (u1 - u0)), hv = saturate((v + rv * s - v0) / (v1 - v0)), hz = saturate(rz * s / D), rs = Hu(float2(cu + base * 11 + (nf.x > 0 ? 500 : 0), fl * 3 + (nf.z > 0 ? 77 : 0))), rs2 = frac(rs * 7.31 + 0.17);\n"   /* where it meets the room (interior mapping) */
+    "        float3 wc = rs < 0.3 ? float3(0.62, 0.68, 0.74) : rs < 0.6 ? float3(0.84, 0.74, 0.58) : rs < 0.8 ? float3(0.70, 0.76, 0.62) : float3(0.86, 0.84, 0.80), col; float sh;\n"   /* each room's walls a colour of its own */
+    "        if (s == sd) { col = wc; sh = 0.95;\n"   /* the back wall: a picture, or (a shop) shelves of goods */
+    "          if (wg < 2 && rs2 > 0.45 && abs(hu - 0.5) < 0.17 && abs(hv - 0.45) < 0.12) col = lerp(float3(0.20, 0.26, 0.32), float3(0.72, 0.50, 0.30), rs2);\n"
+    "          if (wg > 1) { float2 g = floor(float2(hu * 16, hv * 5)); col = frac(hv * 5) < 0.12 ? float3(0.36, 0.30, 0.25) : float3(Hu(g + rs * 9), Hu(g + 3.3), Hu(g + 7.7)) * 0.7 + 0.18; } }\n"
+    "        else if (s == su) { col = wc * 0.82; sh = 0.75; }\n"   /* a side wall */
+    "        else if (rv > 0) { col = wg > 1 ? float3(0.56, 0.53, 0.49) : (rs2 < 0.5 ? float3(0.44, 0.31, 0.20) : float3(0.36, 0.37, 0.42)); sh = 0.65; }\n"   /* the floor (wood / carpet) */
+    "        else { col = float3(0.90, 0.89, 0.86); sh = 0.85; if (length(float2(hu - 0.5, hz - 0.5)) < 0.09) col = float3(1.5, 1.4, 1.2); }\n"   /* the ceiling, a lamp */
+    "        col *= sh * lerp(1.0, 0.55, hz);\n"   /* darker deeper in */
+    "        { float rc = 7 / rz; float ra = T.SampleLevel(S, float2(U + ru * rc, v + rv * rc), 0).a; bool rev = abs(ra - c.a) > 0.03 && i.d < 5000;\n"   /* the glass set back 7 units: at a slant the */
+    "          float3 tx = c.rgb; c.rgb = rev ? T.SampleLevel(S, float2(U + ru * rc * 1.4, v + rv * rc * 1.4), 0).rgb * 0.45 : lerp(col * (wg > 1 ? 1.0 : 0.72), tx, wg > 1 ? 0.10 : 0.25);\n"   /* reveal (the wall's side, in shade); the room, the pane's own (curtains) */
+    "          facLit = rev ? 0 : wg > 1 ? step(0.12, rs2) : step(rs, 0.5) * step(0.25, H(floor(i.w.xz / 900) + 3.1)); }\n"   /* night: half the rooms of three buildings in four; nearly every shop */
+    "        facE = col * (rs2 < 0.3 ? float3(0.75, 0.85, 1.0) : float3(1.0, 0.80, 0.52)) * (wg > 1 ? 1.5 : 1.25); facK = wg; }\n"   /* warm or cool light */
+    "      else if (trk.w > 0 && c.a < 0.985 && c.a > 0.55 && (i.t.y < sv || i.t.y > sv + 0.045)) { float U = i.t.x, base = floor(U), fu = U - base, v = i.t.y, sp = v > sv ? 1 : 0;\n"   /* far off at night (user: "the window lights */
+    "        float cells = sp > 0 ? B : C, cu = min(floor(fu * cells), cells - 1), fl = sp > 0 ? 99 : clamp(floor((v - ct) / ((sv - ct) / F)), 0, F - 1);\n"   /* dont show until the player is close"): the */
+    "        float rs = Hu(float2(cu + base * 11 + (nf.x > 0 ? 500 : 0), fl * 3 + (nf.z > 0 ? 77 : 0))), rs2 = frac(rs * 7.31 + 0.17), f = saturate((1 - c.a) / (sp > 0 ? 0.40 : 0.302));\n"   /* mips blend glass into wall: */
+    "        facK = 3; facLit = (sp > 0 ? step(0.12, rs2) : step(rs, 0.5) * step(0.25, H(floor(i.w.xz / 900) + 3.1))) * f;\n"   /* how much of the texel is glass (from its alpha) */
+    "        facE = (rs2 < 0.3 ? float3(0.75, 0.85, 1.0) : float3(1.0, 0.80, 0.52)) * (sp > 0 ? 0.75 : 0.62); }\n"   /* lit by the same room rule, no rooms drawn */
+    "      else if (wg == 0 && c.a > 0.9 && i.d < 3500) { float2 o1 = float2(1 / sz.x, 0), o2 = float2(0, 1 / sz.y); float3 lw = float3(0.3, 0.59, 0.11);\n"   /* a wall: bump mapped from its brightness */
+    "        float h0 = dot(c.rgb, lw), h1 = dot(T.SampleGrad(S, uv + o1, dx, dy).rgb, lw), h2 = dot(T.SampleGrad(S, uv + o2, dx, dy).rgb, lw), bk = 5 * saturate(1 - i.d / 3500);\n"   /* (mortar, joints, ornament: */
+    "        facN = normalize(nf + (normalize(eu) * (h0 - h1) + normalize(ev) * (h0 - h2)) * bk); } } }\n"   /* darker = lower) */
+    "  if (abs(i.c.a - 0.9608) < 0.0015) { float3 V = normalize(eye.xyz - i.w); float th = N(i.w.xz / 45) * 0.6 + N(i.w.xz / 14 + 2.1) * 0.4 + V.y * 1.8;\n"   /* an oil patch (vertex alpha 245, course3d.h C3_Patch): */
+    "    float3 ir = 0.5 + 0.5 * cos(6.2832 * (th + float3(0, 0.33, 0.67))); float gz = pow(1 - saturate(V.y), 2);\n"   /* black, a thin film's rainbow that shifts as */
+    "    c.rgb = float3(0.025, 0.025, 0.03) + ir * (0.10 + 0.22 * gz) * saturate(1 - 0.5 * (1 - y)); if (sun.w > 0) c.rgb += pow(saturate(dot(reflect(-V, float3(0, 1, 0)), sun.xyz)), 30) * 0.5 * sun.w; }\n"   /* you move, a glossy shine */
+    "  if (abs(i.c.a - 0.9569) < 0.0015 || abs(i.c.a - 0.9529) < 0.0015) { float3 V = normalize(eye.xyz - i.w), Rw = reflect(-V, normalize(float3((N(i.w.xz / 30 + fad.w * 0.3) - 0.5) * 0.08, 1, (N(i.w.xz / 30 + 5.1) - 0.5) * 0.08)));\n"   /* a water / ice patch (vertex alpha 244 / 243): */
+    "    bool ice = abs(i.c.a - 0.9529) < 0.0015; float fr = 0.25 + 0.6 * pow(1 - saturate(V.y), 4); float3 sk = lerp(fogc.rgb, float3(0.30, 0.46, 0.75) * max(tint.r, 0.35), saturate(Rw.y * 2.5)) / max(tint.rgb, 0.25);\n"   /* a puddle - the sky in it, more */
+    "    c.rgb = lerp(ice ? float3(0.70, 0.78, 0.86) : float3(0.05, 0.06, 0.07), sk, ice ? fr * 0.5 : fr);\n"   /* the flatter you look; ice pale and frosted */
+    "    if (sun.w > 0) c.rgb += pow(saturate(dot(Rw, sun.xyz)), ice ? 40 : 120) * (ice ? 0.6 : 1.4) * sun.w * float3(1, 0.96, 0.88) / max(tint.rgb, 0.25); }\n"   /* the sun's glint */
+    "  float3 rn = float3(0, 1, 0); float pol = 0;\n"   /* the road's surface normal and polish for the sun (the improved road: bumped) */
+    "  if (opt.x > 0 && road) { float2 q = i.w.xz; float mk = saturate(smoothstep(0.42, 0.55, y) + saturate((c.r - c.b) * 3 - 0.2)), gn = saturate(1 - i.d / 2600), nk = Nu(q / 260 + 9.1);\n"   /* the improved road (opt.x): the course's own */
+    "    float mott = Nu(q / 600) * 0.6 + Nu(q / 170 + 2.2) * 0.4, gr = Nu(q / 2.2 + 5.1) * 0.5 + Nu(q / 5.5 + 1.7) * 0.5, u = i.t.x;\n"   /* asphalt kept (its colour, its gradient), with wear */
+    "    pol = (exp(-pow((u - 0.28) / 0.08, 2)) + exp(-pow((u - 0.72) / 0.08, 2))) * (0.7 + 0.3 * Nu(q / 90 + 4.4));\n"   /* the wheel tracks in each lane: darker, polished */
+    "    float3 asp = c.rgb * (0.90 + 0.18 * mott) * lerp(1, 0.86 + 0.28 * gr, gn) * (1 - 0.10 * pol);\n"   /* patches, a fine grain near, the tracks */
+    "    asp *= 1 - 0.35 * smoothstep(0.494, 0.5, nk) * smoothstep(0.506, 0.5, nk); c.rgb = lerp(asp, c.rgb, mk);\n"   /* tar-sealed cracks; the paint as it was */
+    "    { float e = 0.35, hx = Nu((q + float2(e, 0)) / 0.9) - Nu((q - float2(e, 0)) / 0.9) + 0.6 * (Nu((q + float2(e, 0)) / 2 + 3.3) - Nu((q - float2(e, 0)) / 2 + 3.3)),\n"   /* the bump map: a fine */
+    "        hz = Nu((q + float2(0, e)) / 0.9) - Nu((q - float2(0, e)) / 0.9) + 0.6 * (Nu((q + float2(0, e)) / 2 + 3.3) - Nu((q - float2(0, e)) / 2 + 3.3)), bn = saturate(1 - i.d / 1500);\n"   /* aggregate (~1 and 2 units: a lane is ~250) */
+    "      rn = normalize(float3(-hx * 1.1 * bn * (1 - 0.6 * pol), 1, -hz * 1.1 * bn * (1 - 0.6 * pol))); } }\n"   /* -> a normal per pixel (the polished tracks smoother), near only */
+    "  bool tile = abs(i.c.a - 0.9490) < 0.0015, walk = abs(i.c.a - 0.9647) < 0.0015 || tile, kerb = abs(i.c.a - 0.9686) < 0.0015, gut = abs(i.c.a - 0.9451) < 0.0015; float gloss = 0;\n"   /* the footpath (concrete 246 / tiles 242), the curb (247), the gutter (241): course3d.h C3_Roadside */
+    "  if (opt.x > 0 && (walk || kerb)) { float2 tu = ddx(i.t), tv = ddy(i.t); float det = tu.x * tv.y - tv.x * tu.y, fp = length(ddx(i.w)) + length(ddy(i.w));\n"   /* improved street textures: */
+    "    float3 wu = (ddx(i.w) * tv.y - ddy(i.w) * tu.y) / det, wv = (ddy(i.w) * tu.x - ddx(i.w) * tv.x) / det; float lu = length(wu), lv = length(wv);\n"   /* world units per texture u / v */
+    "    if (abs(det) < 1e-14 || lu > 1e5 || lv > 1e5) { lu = 512; lv = 512; }\n"                                                                          /* (from the screen derivatives) */
+    "    float gr = (Hu(floor(i.w.xz / 3 + i.w.y / 7)) - 0.5) * 0.07 * saturate(1 - i.d / 2500), st = 0.86 + 0.14 * Nu(i.w.xz / 90 + 4.1);\n"            /* grain, stains */
+    "    if (walk) { float ku = i.t.x * lu, kl = max(1, round(lv / 300)), sz = tile ? 30 : 62, ns = max(1, round(lv / sz)), nx = max(1, round(max(lu - 40, 1) / sz));\n"
+    "      float2 g = float2((ku - 40) / max(lu - 40, 1) * nx, i.t.y * ns), f = frac(g), id = floor(g); float3 p;\n"   /* slabs ~62 units (~0.9 m: a lane is ~250), a granite kerb top 40 wide at the road */
+    "      float j = min(min(f.x, 1 - f.x) * max(lu - 40, 1) / nx, min(f.y, 1 - f.y) * lv / ns), jt;\n"
+    "      float3 ctr = i.w + wu * ((id.x + 0.5 - g.x) * max(lu - 40, 1) / nx / lu) + wv * ((id.y + 0.5 - g.y) / ns);\n"
+    "      float h = Hu(floor(ctr.xz / 20)), h2 = Hu(floor(ctr.xz / 20) + 7.3), ag = Nu(i.w.xz / 1.1 + 2.7) * 0.6 + Nu(i.w.xz / 3 + 8.1) * 0.4;\n"
+    "      if (tile) { float hb = Hu(floor(ctr.xz / 2500) + 1.9); float3 tb = hb < 0.34 ? float3(0.40, 0.40, 0.43) : hb < 0.67 ? float3(0.60, 0.37, 0.27) : float3(0.78, 0.74, 0.66);\n"   /* glossy tiles ~30 units: a block of */
+    "        p = tb * (0.91 + 0.14 * h) + (h2 - 0.5) * 0.03; p *= 0.95 + 0.10 * Hu(floor(i.w.xz * 0.8)) * saturate(1 - i.d / 1500); gloss = 1; }\n"   /* polished granite, terracotta or cream stone, each tile a shade, a fine speckle */
+    "      else { p = float3(0.63, 0.62, 0.59) * (0.95 + 0.08 * h) + float3(0.012, 0.006, -0.008) * h2;\n"   /* light concrete in the road's grey family, each slab a shade of its own, */
+    "        p *= 0.93 + 0.13 * lerp(0.5, ag, saturate(1 - i.d / 1800)); }\n"   /* the road's fine aggregate grain */
+    "      if (ku < 40) { float fk = frac(i.t.y * kl); j = min(min(fk, 1 - fk) * lv / kl, 40 - ku); p = float3(0.68, 0.67, 0.65) * (1.03 - 0.07 * smoothstep(28, 40, ku)); }\n"   /* the kerb top: granite */
+    "      jt = 1 - smoothstep(1.2 - fp * 0.5, 1.2 + fp * 0.5 + 0.8, j); c.rgb = (p * (tile ? 1 : st) + (tile ? 0 : gr)) * (1 - (tile ? 0.45 : 0.32) * jt); gloss *= 1 - jt;\n"   /* the joints, thin (the tiles' grout darker) */
+    "      { float3 du = normalize(wu), dv = normalize(wv); float bn = saturate(1 - i.d / 2500), sl = ku >= 40 ? 1 : 0;\n"   /* the bump map (visible at a distance: a lane is ~250 units): */
+    "        float ju = min(f.x, 1 - f.x) * max(lu - 40, 1) / nx, jv = min(f.y, 1 - f.y) * lv / ns;\n"
+    "        float bu = (1 - smoothstep(0, 4, ju)) * (f.x < 0.5 ? -1 : 1) * sl, bv = (1 - smoothstep(0, 4, jv)) * (f.y < 0.5 ? -1 : 1);\n"   /* each slab's edges rounded off towards its joints, */
+    "        float rg = cos(6.2832 * i.t.y * lv / 3) * 0.30 * sl; float2 q = i.w.xz; float e = 0.5;\n"   /* broom-finish ridges across the slab every 3 units, */
+    "        float gx = (Nu((q + float2(e, 0)) / 3) - Nu((q - float2(e, 0)) / 3)) * 3 + (Nu((q + float2(e, 0)) / 8 + 4.4) - Nu((q - float2(e, 0)) / 8 + 4.4)) * 4,\n"   /* the concrete's own unevenness */
+    "              gz = (Nu((q + float2(0, e)) / 3) - Nu((q - float2(0, e)) / 3)) * 3 + (Nu((q + float2(0, e)) / 8 + 4.4) - Nu((q - float2(0, e)) / 8 + 4.4)) * 4;\n"   /* (3 and 8 units) */
+    "        rn = normalize(float3(0, 1, 0) + ((du * bu + dv * bv) * (tile ? 0.25 : 0.6) + (tile ? 0 : 1) * (dv * rg + float3(-gx, 0, -gz) * 0.22)) * bn); } }\n"   /* (the tiles: flat, only their edges eased) */
+    "    else { float nk = max(1, round(lu / 300)), fk = frac(i.t.x * nk), j = min(fk, 1 - fk) * lu / nk, v = i.t.y, jt = 1 - smoothstep(2 - fp * 0.5, 3.5 + fp * 0.5, j);\n"
+    "      float3 p = float3(0.64, 0.63, 0.61) * (0.92 + 0.12 * Hu(floor(i.t.x * nk) + 31.0 * floor(i.w.xz / 900)));\n"   /* the curb face: granite kerbstones ~300 units long, */
+    "      p *= v < 0.14 ? 1.14 : 1.0; p *= 1 - 0.32 * smoothstep(0.55, 1.0, v); c.rgb = (p * st + gr) * (1 - 0.45 * jt); } }\n"   /* a bright chamfer on top, road grime at the foot */
+    "  if (opt.x > 0 && gut) { float u = i.t.x, pc = floor(i.t.y), fv = frac(i.t.y), gh = Hu(float2(pc, 3.7)), run = Hu(float2(floor(pc / 6), 9.1)) < 0.25 ? 1 : 0, glo = Hu(float2(pc, 5.3)) > 0.4 ? 0.02 : 0.16;\n"   /* the gutter (u 0 at the curb .. 1 out, v = piece) */
+    "    float2 tu = ddx(i.t), tv = ddy(i.t); float det = tu.x * tv.y - tv.x * tu.y; float3 wu = (ddx(i.w) * tv.y - ddy(i.w) * tu.y) / (abs(det) < 1e-14 ? 1 : det), du = normalize(wu + 1e-6);\n"   /* (world direction of u) */
+    "    float3 p = float3(0.40, 0.40, 0.41) * (0.94 + 0.10 * Nu(i.w.xz / 9 + 1.3)) * (1 - 0.22 * smoothstep(0.35, 0.0, u));\n"   /* a pan in the asphalt's grey, grimy at the curb, */
+    "    float step0 = smoothstep(0.84, 0.97, u), sh = (1 - step0) * smoothstep(0.70, 0.86, u), dish = sin(saturate(u / 0.86) * 3.1416);\n"   /* recessed: a shallow dish, then a step up to */
+    "    p *= (1 - 0.18 * exp(-pow((u - 0.12) / 0.05, 2))) * (1 - 0.10 * dish) * (1 - 0.25 * sh) * (1 + 0.10 * step0 * (1 - step0) * 4); gloss = 0.35;\n"   /* the road (its shade, a lit lip); a damp line */
+    "    rn = normalize(float3(0, 1, 0) + du * (0.9 * (step0 * (1 - step0) * 4) - 0.12 * cos(saturate(u / 0.86) * 3.1416)));\n"   /* (the normal: the dish's slopes, the step) */
+    "    if (run > 0 && u > 0.14 && u < 0.86) { float gu = (u - 0.14) / 0.72, fr = gu < 0.08 || gu > 0.92 ? 1 : 0, bar = step(0.5, frac(fv * 24));\n"   /* some stretches: a slot grate along the whole */
+    "      p = fr > 0 ? float3(0.30, 0.29, 0.28) : bar > 0 ? float3(0.23, 0.21, 0.19) * (0.9 + 0.2 * Hu(floor(i.w.xz))) : float3(0.025, 0.025, 0.03); gloss = fr > 0 || bar > 0 ? 0.8 : 0; }\n"   /* gutter */
+    "    else if (gh > 0.55 && fv > 0.38 && fv < 0.62 && u > glo && u < 0.86) { float gv = (fv - 0.38) / 0.24, gu = (u - glo) / (0.86 - glo), fr = gv < 0.09 || gv > 0.91 || gu < 0.08 || gu > 0.92 ? 1 : 0;\n"   /* else a drain on about */
+    "      float bar = step(0.55, frac(gv * 10)); p = fr > 0 ? float3(0.32, 0.31, 0.30) : bar > 0 ? float3(0.24, 0.22, 0.20) * (0.9 + 0.2 * Hu(floor(i.w.xz))) : float3(0.025, 0.025, 0.03);\n"   /* half the pieces: an iron frame, */
+    "      gloss = fr > 0 || bar > 0 ? 0.8 : 0; }\n"   /* bars across, the dark drop under them */
+    "    if (fad.z > 0) { float wm = smoothstep(0.62, 0.42, u) * saturate(fad.z) * (run > 0 && u > 0.14 ? 0.3 : 1), fl = Nu(float2(u * 5, i.t.y * 9 - fad.w * 2.2)) - 0.5;\n"   /* rain: water running in it */
+    "      float3 V = normalize(eye.xyz - i.w); float fz = 0.25 + 0.6 * pow(1 - saturate(V.y), 3);\n"   /* - dark, the sky in it, ripples flowing along */
+    "      p = lerp(p, p * 0.35 + fogc.rgb * tint.rgb * fz * 0.6 + fl * 0.05, wm); gloss = lerp(gloss, 1.2, wm); rn = normalize(lerp(rn, float3(fl * 0.15, 1, fl * 0.1), wm)); }\n"
+    "    c.rgb = p; }\n"
     "  if (abs(i.c.a - 0.988) < 0.002) { float2 q = float2((i.w.x + i.w.z) / 70, i.w.y / 26), st; float cr, ny = abs(normalize(n).y);\n"   /* a cliff face (vertex alpha 252, course3d.h): strata, */
     "    st = float2(N(float2(i.w.y / 55, (i.w.x - i.w.z) / 900)), N(q * float2(0.3, 1)));\n"                                                           /* cracks running down it, */
     "    cr = smoothstep(0.47, 0.5, N(float2((i.w.x + i.w.z) / 45, i.w.y / 700))) * smoothstep(0.53, 0.5, N(float2((i.w.x + i.w.z) / 45, i.w.y / 700)));\n"
@@ -80,8 +171,14 @@ static const char r3_hlsl[] =
     "    [loop] for (k = 0; k < 16; k++) { if (k >= (int)lit.x) break; { float3 d = lp[k].xyz - i.w; float q = saturate(1 - dot(d, d) / (lp[k].w * lp[k].w)); a += lc[k].rgb * q * q; } }\n"   /* point lights (lamps, police) */
     "    [loop] for (k = 0; k < 6; k++) { if (k >= (int)trk.z) break; { float3 d = i.w - spP[k].xyz; float l = length(d), q = saturate(1 - l / spP[k].w);\n"
     "      a += spC[k].rgb * q * q * smoothstep(spD[k].w, spC[k].w, dot(d, spD[k].xyz) / max(l, 1)); } } }\n"   /* the headlights' cones */
-    "  if (sun.w > 0 && abs(i.c.a - 0.996) < 0.002) { float3 nn = normalize(n); if (dot(nn, eye.xyz - i.w) < 0) nn = -nn;\n"   /* a building's wall (vertex alpha 254): lit by the sun - */
-    "    c.rgb *= lerp(1, 0.66 + 0.52 * saturate(dot(nn, sun.xyz)), sun.w); }\n"                                                                /* brighter facing it, in shade away from it */
+    "  if (sun.w > 0 && abs(i.c.a - 0.996) < 0.002) { float3 nn = normalize(n); if (dot(nn, eye.xyz - i.w) < 0) nn = -nn; if (any(facN != 0)) nn = facN;\n"   /* a building's wall (vertex alpha 254): lit by the sun - */
+    "    c.rgb *= lerp(1, 0.66 + 0.52 * saturate(dot(nn, sun.xyz)), sun.w);\n"                                                                  /* brighter facing it, in shade away from it, */
+    "    { float3 V = normalize(eye.xyz - i.w); float sr = saturate(dot(reflect(-V, nn), sun.xyz)), gl = 0.6 + 1.6 * saturate(0.45 - dot(c.rgb, float3(0.3, 0.59, 0.11)));\n"   /* and a sheen: the sun caught */
+    "      c.rgb += ((pow(sr, 10) * 0.12 + pow(sr, 70) * 0.30) * float3(1, 0.96, 0.88) + pow(1 - saturate(abs(dot(V, nn))), 4) * 0.10 * fogc.rgb) * gl * sun.w; }\n"   /* towards it, the sky at a glancing angle - the dark glass more than the brick */
+    "    if (abs(c.a - 0.75) < 0.03 || facK > 0) { float3 V2 = normalize(eye.xyz - i.w), Rg = reflect(-V2, facK > 0 ? normalize(n) * sign(dot(normalize(n), V2)) : nn); float fz = 0.30 + 0.55 * pow(1 - saturate(abs(dot(V2, nn))), 3), pv = Hu(floor(i.w.xz / 120 + i.w.y / 160)) * 0.14;\n"   /* a window in the sun (texel alpha 0.75): */
+    "      float3 sky = lerp(fogc.rgb, float3(0.30, 0.48, 0.80) * max(max(tint.r, tint.g), 0.4), saturate(Rg.y * 2.5)) * (0.86 + pv);\n"   /* reflective glass - the sky it faces, a pane a shade of its own, */
+    "      sky = lerp(sky, float3(0.95, 0.96, 1.0) * max(tint.r, 0.5), smoothstep(0.55, 0.78, N(Rg.xz / max(Rg.y, 0.06) * 2.5 + 1.3)) * saturate(Rg.y * 4) * 0.55);\n"   /* the clouds in it, */
+    "      c.rgb = lerp(c.rgb, sky / max(tint.rgb, 0.25), fz * sun.w * (facK > 1 ? 0.28 : facK > 0 ? 0.5 : 1)) + pow(saturate(dot(Rg, sun.xyz)), 250) * 2.4 * sun.w * float3(1, 0.95, 0.85) / max(tint.rgb, 0.25); } }\n"   /* more at a glancing angle (Fresnel), the sun's glint */
     "  if (abs(i.c.a - 0.992) < 0.002) { float2 p = i.w.xz, g = 0; float t = fad.w, h = 0, fr, sp, fo, lod = saturate(i.d / 30000); float3 V = normalize(eye.xyz - i.w), Nw, Rv, sk, L;\n"   /* water (vertex alpha 253, course3d.h C3_Sea): a sea */
     "    [unroll] for (k = 0; k < 6; k++) { float wl = 2200 * pow(0.6, k), am = wl * 0.022 * saturate(1.5 - i.d / (wl * 9)), an = k * 1.7 + 0.4, ph; float2 dd = float2(cos(an), sin(an));\n"   /* of directional swells, long to short (the short */
     "      ph = dot(p, dd) * 6.2832 / wl + t * sqrt(9.8 * 6.2832 / wl * 900); h += am * sin(ph); g += am * cos(ph) * 6.2832 / wl * dd; }\n"                                         /* ones fade with the distance), their slopes */
@@ -94,6 +191,10 @@ static const char r3_hlsl[] =
     "    L = normalize(float3(-V.x, 0.22, -V.z)); sp = min(pow(saturate(dot(Rv, L)), 300) * 1.6, 1.2) * smoothstep(0.62, 0.85, N(p / 9 + t * 1.5));\n"                                                                                              /* the sun's glints, small */
     "    fo = smoothstep(0.85, 1.05, h / 110 + N(p / 35 + t * 0.3) * 0.3) * saturate(1 - i.d / 7000);\n"                                                                                     /* a few white caps */
     "    c.rgb = lerp(c.rgb, float3(0.8, 0.84, 0.86), fo * 0.35) + sp * wat.w * float3(1, 0.95, 0.82) / max(tint.rgb, 0.2); c.a = 1; }\n"
+    "  if (shp.x > 0 && lit.w == 0 && rfl.y == 0 && sun.w > 0) { float3 gn = normalize(n); if (dot(gn, eye.xyz - i.w) < 0) gn = -gn;\n"   /* the buildings' shadows (the sun's shadow map): */
+    "    if (dot(gn, sun.xyz) > 0.02) { float4 sp = mul(float4(i.w + gn * (3 + i.d * 0.0008), 1), svp); float2 su = float2(sp.x * 0.5 + 0.5, 0.5 - sp.y * 0.5); int ix, iy;\n"   /* on whatever faces the sun (the road, */
+    "      if (all(su > 0.002) && all(su < 0.998) && sp.z > 0) { float s2 = 0; [unroll] for (iy = -1; iy <= 1; iy++) [unroll] for (ix = -1; ix <= 1; ix++) s2 += Sm.SampleCmpLevelZero(SC, su + float2(ix, iy) * shp.y, sp.z + shp.z);\n"   /* the footpath, */
+    "        c.rgb *= 1 - shp.x * (1 - s2 / 9) * saturate(min(min(su.x, su.y), min(1 - su.x, 1 - su.y)) * 25); } } }\n"   /* the other buildings), soft edged (3 x 3), faded at the map's edge */
     "  { float2 p = i.w.xz; float nn = Nu(p / 300 + 17.3) * 0.72 + Nu(p / 85 + 3.3) * 0.28, fl = saturate((abs(normalize(n).y) - 0.8) * 8), on = fad.z > 0 && lit.w == 0 && rfl.y == 0 && abs(i.c.a - 0.992) >= 0.002 && abs(i.c.a - 0.976) > 0.0015 ? min(fad.z, 1) * fl : 0, th = 0.59 - saturate(fad.z - 1) * 0.06;\n"   /* rain: puddles on what lies flat */
     "    float pd = smoothstep(th, th + 0.025, nn) * on, wet = smoothstep(th - 0.11, th + 0.01, nn) * on; float3 V = normalize(eye.xyz - i.w); c.rgb *= a;\n"                                      /* (irregular, a damp rim round them) */
     "    if (pd > 0) { float2 rg = 0, cl, q; float t = fad.w, fr; float3 sk = fogc.rgb * tint.rgb * 0.35, bd;\n"
@@ -111,8 +212,14 @@ static const char r3_hlsl[] =
     "  if (trk.w > 0 && abs(i.c.a - 0.996) < 0.002 && abs(c.a - 0.75) < 0.03) { float3 ec = H(floor(i.w.xz / 700)) < 0.3 ? float3(0.75, 0.85, 1.0) : float3(1.0, 0.76, 0.42);\n"   /* a facade's window (alpha 0.75, world3d.inc): lit at night in */
     "    c.rgb = lerp(c.rgb, ec * saturate(0.3 + 1.5 * y) * 0.85, trk.w * step(0.25, H(floor(i.w.xz / 900) + 3.1))); }\n"                                        /* three buildings out of four, warm or cool */
     "  if (trk.w > 0 && abs(i.c.a - 0.996) < 0.002 && abs(c.a - 0.65) < 0.03) c.rgb = lerp(c.rgb, c.rgb * 1.6 / max(max(tint.r, tint.g), 0.3) + 0.08, trk.w);\n"                 /* a shop sign (alpha 0.65): glowing in its own colour */
-    "  if (opt.x > 0 && road && sun.w > 0) { float3 V = normalize(eye.xyz - i.w), R = reflect(-V, float3(0, 1, 0)); float d2 = saturate(dot(R, sun.xyz));\n"   /* the new road in the sun: a */
-    "    c.rgb += (pow(d2, 8) * 0.22 + pow(d2, 60) * 0.35 + pow(d2, 400) * 0.6) * sun.w * float3(1, 0.97, 0.9) + pow(1 - saturate(V.y * 4), 3) * 0.07 * sun.w * fogc.rgb; }\n"   /* sheen towards the sun, glossy far off */
+    "  if (trk.w > 0 && facK > 0) c.rgb = lerp(c.rgb, facE, trk.w * facLit);\n"   /* the City set at night: the lit rooms / shops (facLit, above) glow */
+    "  if (abs(i.c.a - 0.996) < 0.002 && abs(c.a - 0.549) < 0.02) { float3 nc = c.rgb / max(max(max(c.r, c.g), c.b), 0.02);\n"   /* a neon tube (0x8C): its own colour, */
+    "    nc = pow(saturate(nc), 4); c.rgb = lerp(c.rgb * 1.15, nc * 1.8 + 0.10, saturate(trk.w * 1.2 + 0.2)); }\n"   /* faintly by day, blazing at night */
+    "  if ((road || walk || gut) && sun.w > 0) { float3 V = normalize(eye.xyz - i.w), R = reflect(-V, rn); float d2 = saturate(dot(R, sun.xyz)), gk = walk || gut ? (tile ? 0.6 : 1.0) : (opt.x > 0 ? 1.25 : 0.85) * (1 + 0.6 * pol);\n"   /* the road / footpath / gutter in the sun: a sheen off the (bumped) surface, */
+    "    c.rgb *= 1 + (walk ? 0.55 : 0.30) * (dot(rn, sun.xyz) - sun.y) * sun.w;\n"   /* the bumps lit and shaded by the sun (the footpath's more), */
+    "    c.rgb += ((pow(d2, 2) * 0.10 + pow(d2, 8) * 0.22 + pow(d2, 60) * 0.35 + pow(d2, 400) * 0.6) * float3(1, 0.97, 0.9) + pow(1 - saturate(V.y * 4), 3) * 0.07 * fogc.rgb) * sun.w * gk;\n"   /* towards the sun, glossy far off (the course's own road a little less) */
+    "    c.rgb += (pow(d2, 140) * 1.4 + pow(d2, 24) * 0.25) * gloss * sun.w * float3(1, 0.97, 0.92); }\n"   /* glossy (the tiles, the wet gutter, the grates' iron): a sharp glint */
+    "  if ((walk || gut) && lit.w == 0) { float3 V = normalize(eye.xyz - i.w); float fr = pow(1 - saturate(dot(V, rn)), tile ? 3 : 4); c.rgb += fr * (tile ? 0.45 : 0.22) * fogc.rgb * (0.5 + 0.5 * sun.w); }\n"   /* the footpath: the sky in it at a glancing angle, whichever way (daytime; the tiles more) */
     "  float f = Fog(i.d, i.w), fa = 1 - saturate((i.d - fad.x) * fad.y); c.rgb = lerp(c.rgb, fogc.rgb, f) * fogp.w;\n"   /* fogp.w = brightness (fades) */
     "  return float4(c.rgb * fa, fa); }\n"   /* towards the draw distance the world fades into the sky behind it (premultiplied: GpuCompose) - nothing pops in */
     "float4 psglow(VO i) : SV_Target { float4 c = T.Sample(S, i.t) * i.c; float f = Fog(i.d, i.w);\n"   /* light halos (batch alpha 3): added, the target's alpha kept */
@@ -222,7 +329,9 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb), NULL, &r->psGlow); ID3D10Blob_Release(psb);
     if (!(psb = R3_Compile(r, cc, "pslens", "ps_4_0"))) return 0;
     ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb), NULL, &r->psLens); ID3D10Blob_Release(psb);
-    memset(&bd, 0, sizeof bd); bd.ByteWidth = 264 * 4;   /* (R3_Render: the constants) */ bd.Usage = D3D11_USAGE_DYNAMIC; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if ((vsb = R3_Compile(r, cc, "vsshadow", "vs_4_0")) != NULL) { ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb), ID3D10Blob_GetBufferSize(vsb), NULL, &r->vsSh); ID3D10Blob_Release(vsb); }
+    if ((psb = R3_Compile(r, cc, "psshadow", "ps_4_0")) != NULL) { ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb), NULL, &r->psSh); ID3D10Blob_Release(psb); }
+    memset(&bd, 0, sizeof bd); bd.ByteWidth = 284 * 4;   /* (R3_Render: the constants) */ bd.Usage = D3D11_USAGE_DYNAMIC; bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Device_CreateBuffer(dev, &bd, NULL, &r->cb);
     memset(&rd, 0, sizeof rd); rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
     ID3D11Device_CreateRasterizerState(dev, &rd, &r->rs);
@@ -249,6 +358,9 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     memset(&sm, 0, sizeof sm); sm.Filter = D3D11_FILTER_ANISOTROPIC; sm.MaxAnisotropy = 16; sm.MipLODBias = -0.5f;   /* crisper ground at grazing angles (the game draws unfiltered texels) */ sm.AddressU = sm.AddressV = sm.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     sm.MaxLOD = D3D11_FLOAT32_MAX; sm.ComparisonFunc = D3D11_COMPARISON_NEVER;
     ID3D11Device_CreateSamplerState(dev, &sm, &r->smp);
+    memset(&sm, 0, sizeof sm); sm.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT; sm.AddressU = sm.AddressV = sm.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;   /* the shadow map: compared, */
+    sm.BorderColor[0] = 0; sm.ComparisonFunc = D3D11_COMPARISON_GREATER_EQUAL; sm.MaxLOD = D3D11_FLOAT32_MAX;   /* lit where nothing nearer the sun (reversed depth: greater = nearer) */
+    ID3D11Device_CreateSamplerState(dev, &sm, &r->smpCmp);
     r->white = R3_MakeTexture(r, whitePx, 2, 2);
     return r->vs && r->ps && r->psGlow && r->psLens && r->il && r->cb && r->bsAdd && r->white;
 }
@@ -319,6 +431,7 @@ typedef struct R3Frame {
     float sun[4];                       /* the sun: direction to it (world) + how strongly it shapes the buildings' walls (0 = none) */
     int reflect; float reflectY;        /* 1 = the puddles mirror the world: it is drawn mirrored in the plane y = reflectY first (half size) */
     ID3D11ShaderResourceView *tracks; float trackScale, trackAmt;   /* snow tracks map (world x / z, wrapping every 1 / trackScale units), how much it clears the snow */
+    float shadow; float shadowVP[16];   /* the buildings' shadows: how dark (0 = none), the sun's view-projection (orthographic, reversed depth): R3_Render draws the walls' depth map first */
     const R3Batch *staticBatches; int nStatic;
     const R3Batch *liveBatches; int nLive;   /* the live part (R3_SetLive) */
     const R3Vert *dyn; int nDyn; const R3Batch *dynBatches; int nDynBatches;   /* per-frame geometry (billboards) */
@@ -401,6 +514,22 @@ static int R3_EnsureRefl(R3 *r, int w, int h)
     r->rw = w; r->rh = h; return 1;
 }
 
+/* the sun's shadow map: a depth texture R3_SHMAP square, drawn from the sun (R3Frame.shadowVP) and compared in the main pass (t3 / s1) */
+#define R3_SHMAP 2048
+static int R3_EnsureShadow(R3 *r)
+{
+    D3D11_TEXTURE2D_DESC td; D3D11_DEPTH_STENCIL_VIEW_DESC dv; D3D11_SHADER_RESOURCE_VIEW_DESC sv;
+    if (r->shSrv) return 1;
+    if (!r->vsSh || !r->psSh || !r->smpCmp) return 0;
+    memset(&td, 0, sizeof td); td.Width = td.Height = R3_SHMAP; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_R32_TYPELESS; td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(ID3D11Device_CreateTexture2D(r->dev, &td, NULL, &r->shTex))) return 0;
+    memset(&dv, 0, sizeof dv); dv.Format = DXGI_FORMAT_D32_FLOAT; dv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    memset(&sv, 0, sizeof sv); sv.Format = DXGI_FORMAT_R32_FLOAT; sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sv.Texture2D.MipLevels = 1;
+    if (FAILED(ID3D11Device_CreateDepthStencilView(r->dev, (ID3D11Resource *)r->shTex, &dv, &r->shDsv)) || FAILED(ID3D11Device_CreateShaderResourceView(r->dev, (ID3D11Resource *)r->shTex, &sv, &r->shSrv))) {
+        R3_REL(r->shDsv); R3_REL(r->shSrv); R3_REL(r->shTex); r->shDsv = NULL; r->shSrv = NULL; r->shTex = NULL; return 0; }
+    return 1;
+}
 /* the frame's constants (render3d.h r3_hlsl cbuffer C); vpm = the view-projection to draw with, rfl = its rfl row */
 static void R3_Consts(R3 *r, const R3Frame *f, const float *vpm, const float *rfl)
 {
@@ -414,6 +543,7 @@ static void R3_Consts(R3 *r, const R3Frame *f, const float *vpm, const float *rf
         c[240] = f->trackScale; c[241] = f->tracks ? f->trackAmt : 0.0f; c[242] = (float)(f->nSpots < 6 ? f->nSpots : 6); c[243] = f->night;
         c[244] = f->fadeStart; c[245] = f->fadeEnd > f->fadeStart ? 1.0f / (f->fadeEnd - f->fadeStart) : 0.0f; c[246] = f->puddles; c[247] = f->time; memcpy(c + 248, f->water, 16);
         memcpy(c + 252, rfl, 16); memcpy(c + 256, f->sun, 16); memcpy(c + 260, f->opt, 16);
+        memcpy(c + 264, f->shadowVP, 64); c[280] = r->shSrv ? f->shadow : 0.0f; c[281] = 1.0f / R3_SHMAP; c[282] = 0.0004f; c[283] = 0;
         ID3D11DeviceContext_Unmap(r->ctx, (ID3D11Resource *)r->cb, 0);
     }
 }
@@ -460,6 +590,22 @@ static int R3_Render(R3 *r, const R3Frame *f)
             dyn = 1;
         }
     }
+    ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &none);
+    if (f->shadow > 0 && !f->clipSpace && R3_EnsureShadow(r)) {   /* the buildings' walls' depth from the sun (vsshadow / psshadow), no colour */
+        D3D11_VIEWPORT sv; float z4[4] = { 0, 0, 0, 0 };
+        R3_Consts(r, f, f->shadowVP, z4);
+        ID3D11DeviceContext_OMSetRenderTargets(r->ctx, 0, NULL, r->shDsv);
+        ID3D11DeviceContext_ClearDepthStencilView(r->ctx, r->shDsv, D3D11_CLEAR_DEPTH, 0.0f, 0);   /* (reversed: 0 = far, nothing) */
+        sv.TopLeftX = sv.TopLeftY = 0; sv.Width = sv.Height = (float)R3_SHMAP; sv.MinDepth = 0; sv.MaxDepth = 1;
+        ID3D11DeviceContext_RSSetViewports(r->ctx, 1, &sv);
+        { D3D11_RECT ss; ss.left = ss.top = 0; ss.right = ss.bottom = R3_SHMAP; ID3D11DeviceContext_RSSetScissorRects(r->ctx, 1, &ss); }
+        ID3D11DeviceContext_VSSetShader(r->ctx, r->vsSh, NULL, 0); ID3D11DeviceContext_PSSetShader(r->ctx, r->psSh, NULL, 0);
+        if (r->vbStatic && f->nStatic) R3_DrawPass(r, r->vbStatic, f->staticBatches, f->nStatic, 0);
+        if (r->vbLive && f->nLive) R3_DrawPass(r, r->vbLive, f->liveBatches, f->nLive, 0);
+        ID3D11DeviceContext_OMSetRenderTargets(r->ctx, 0, NULL, NULL);
+        ID3D11DeviceContext_VSSetShader(r->ctx, r->vs, NULL, 0); ID3D11DeviceContext_PSSetShader(r->ctx, r->ps, NULL, 0);
+        ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &r->shSrv); ID3D11DeviceContext_PSSetSamplers(r->ctx, 1, 1, &r->smpCmp);
+    }
     if (mirror) {   /* the world mirrored in the plane y = reflectY (p' = p * M * vp, M: y -> 2 reflectY - y), what is above it only, at half size */
         float mm[16], mvp[16], clr[4] = { 0, 0, 0, 0 }; D3D11_VIEWPORT hv; D3D11_RECT hs;
         memset(mm, 0, sizeof mm); mm[0] = 1; mm[5] = -1; mm[10] = 1; mm[13] = 2 * f->reflectY; mm[15] = 1;
@@ -487,7 +633,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
     ID3D11DeviceContext_RSSetViewports(r->ctx, 1, &vpt);
     ID3D11DeviceContext_RSSetScissorRects(r->ctx, 1, &sc);
     R3_DrawWorld(r, f, &vpt, dyn);
-    ID3D11DeviceContext_PSSetShaderResources(r->ctx, 2, 1, &none);
+    ID3D11DeviceContext_PSSetShaderResources(r->ctx, 2, 1, &none); ID3D11DeviceContext_PSSetShaderResources(r->ctx, 3, 1, &none);
     if (r->deferred) {
         ID3D11CommandList *cl = NULL;
         if (SUCCEEDED(ID3D11DeviceContext_FinishCommandList(r->ctx, FALSE, &cl))) { ID3D11DeviceContext_ExecuteCommandList(r->imm, cl, TRUE); ID3D11CommandList_Release(cl); }

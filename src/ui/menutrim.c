@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include <string.h>
 
 RR_DATA(char, tbl_menuEnable);  RR_DATA(int, g_gameMode);  RR_DATA(char, g_playerFilePath);  
 RR_DATA(char *, g_menuEnableDefault);RR_DATA(char *, g_menuEnableSavedPlayer);  RR_DATA(char *, g_menuEnableUnsavedPlayer);  RR_DATA(char *, g_menuEnableNoCharacter);
@@ -39,9 +40,40 @@ static void RestroomLayout(void)
     }
 }
 
+/* The Street (screen 0xf): a fourth item, Hurt Hardware (race\arsenal.c rr_StreetShop; label / help strings.c g_shopTextId).  The screen's three
+   0x38-byte records (Der Panzer Klub, Olley's Skoot-A-Rama, Go Home - one row of 213 px wide items) are copied into g_street with the new one as
+   record 3, laid out two by two as the Klub's items: Klub | Olley's over Hurt Hardware | Go Home.  Links: +0x1c left, +0x1d right, +0x1e up,
+   +0x1f down, +0x20 next, +0x21 previous (Left / Right from the Klub still reach Olley's) */
+#define SCREEN_RECS(s) (*(unsigned char **)((char *)&g_menuScreens + (s) * 0x14 + 4))
+#define SCREEN_COUNT(s) (*(int *)((char *)&g_menuScreens + (s) * 0x14))
+static unsigned char g_street[4 * 0x38];
+static void StreetLayout(void)
+{
+    extern int g_shopTextId;
+    int __fastcall rr_StreetShop(int *item);
+    static const short pos[4][2] = { { 0x50, 0x1a4 }, { 0x168, 0x1a4 }, { 0x168, 0x1c2 }, { 0x50, 0x1c2 } };
+    static const unsigned char link[4][6] = { { 1, 1, 3, 3, 1, 2 }, { 0, 0, 2, 2, 3, 0 }, { 3, 3, 1, 1, 0, 3 }, { 2, 2, 0, 0, 2, 1 } };
+    int k;
+    if (!g_shopTextId || SCREEN_COUNT(0xf) != 3) return;
+    memcpy(g_street, SCREEN_RECS(0xf), 3 * 0x38);
+    memcpy(g_street + 3 * 0x38, g_street, 0x38);   /* (the Klub's record as the pattern: flags, style) */
+    *(int *)(g_street + 3 * 0x38 + 4) = 0;   /* (no target screen: the action returns it) */
+    *(int *)(g_street + 3 * 0x38 + 8) = g_shopTextId;
+    *(int *)(g_street + 3 * 0x38 + 0x30) = g_shopTextId + 1;
+    *(unsigned *)(g_street + 3 * 0x38 + 0x2c) = (unsigned)rr_StreetShop;
+    for (k = 0; k < 4; k++) {
+        unsigned char *r = g_street + k * 0x38;
+        *(int *)(r + 0xc) = pos[k][0]; *(int *)(r + 0x10) = pos[k][1]; *(int *)(r + 0x14) = 0xc8; *(int *)(r + 0x18) = 0x1e;
+        memcpy(r + 0x1c, link[k], 6);
+    }
+    SCREEN_RECS(0xf) = g_street;
+    SCREEN_COUNT(0xf) = 4;
+}
+
 void rr_MenuTrimInit(void)
 {
     RestroomLayout();
+    StreetLayout();
     *(&tbl_menuEnable + 2 * 0x38 + 0x28) = 0;
     *(&tbl_gameModeMenu + 2 * 0x38 + 0x28) = 1;
     *(unsigned *)(&tbl_gameModeMenu + 2 * 0x38 + 0x2c) = (unsigned)rr_GameModeLoad;

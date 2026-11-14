@@ -123,6 +123,7 @@ void __fastcall rr_RiderApplyHit(int r, int *p2, int *p3, int kind)
         if ((unsigned char)x != *(unsigned char *)(g_playerRider + 0x328) && (unsigned char)x != 0xff) return;
     }
     if (*(int *)(r + 0x2f4) != 0) return;
+    { void rr_ArsenalDown(int r); rr_ArsenalDown(r); }   /* (a bounty's target taken out: arsenal.c) */
     {   /* the shim (world3d.inc RR_HitFx): blood sprays from the rider who is hit (object f) - drawing only, nothing here changes */
         static void (__stdcall *fx)(unsigned); static int init;
         if (!init) { HMODULE m = GetModuleHandleA("ddraw.dll"); init = 1; fx = m ? (void (__stdcall *)(unsigned))GetProcAddress(m, "RR_HitFx") : 0; }
@@ -640,6 +641,7 @@ void __cdecl rr_RaceSpawnRiders(void)
     RrRiders()[0] = g_playerRider;
     RrRankRiders()[0] = *(int *)(g_playerRider + 0x2fc);
     ParamBlockLoad((&(*(int *)&g_songState.tbl_riderSpecChunks))[*(unsigned char *)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1e0) + 5)] + 0x14c);
+    { void rr_ArsenalNitroSetup(int bike); rr_ArsenalNitroSetup(*(unsigned char *)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1e0) + 5)); }   /* (the nitro block just loaded: Hurt Hardware's packs on top, race\arsenal.c) */
     RiderColoursApply(*(unsigned char *)(*(int *)(*(int *)(g_playerRider + 0x2fc) + 0x1e0) + 5));   /* the player's colour row (rankings.c rr_RiderRankLookup) */
     for (i = 1; i < g_riderCount - 1; i++) {
         if ((g_gameMode == 2 && (*(signed char *)&rec_fadeFactors.g_selectedRecordSet) == i) || i > rr_opponents) { RrRiders()[i] = 0; RrRankRiders()[i] = 0; continue; }   /* (fewer opponents: the slots past the count stay empty) */

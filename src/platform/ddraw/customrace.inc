@@ -200,8 +200,8 @@ static void CrDraw(Surf *tmp,const Surf *base,const CrState *s,DWORD now)
     CrCurve();
     memcpy(tmp->bits,base->bits,(size_t)tmp->pitch*tmp->h); SdDarken(tmp,0,0,tmp->w,tmp->h); SdDarken(tmp,8,8,632,472);
     S_GetDC(&tmp->itf,&dc); SetBkMode(dc,TRANSPARENT);
-    title=CreateFontA(44,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,"Impact"); fRow=CreateFontA(20,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,"Impact");
-    fSm=CreateFontA(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,"Arial"); fMid=CreateFontA(15,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,"Arial");
+    title=CreateFontA(44,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,RrFont(RR_FONT_IMPACT)); fRow=CreateFontA(20,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,RrFont(RR_FONT_IMPACT));
+    fSm=CreateFontA(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,RrFont(RR_FONT_ARIAL)); fMid=CreateFontA(15,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,RrFont(RR_FONT_ARIAL));
     old=(HFONT)SelectObject(dc,title); IcText(dc,18,0,"Custom Race",RGB(255,96,40),TA_LEFT|TA_TOP);
     IcBox(dc,CR_MX-8,CR_MY-8,CR_MS+16,CR_MS+16,RGB(20,34,20),RGB(70,110,70),6);   /* the ground */
     SaveDC(dc); IntersectClipRect(dc,CR_MX-6,CR_MY-6,CR_MX+CR_MS+6,CR_MY+CR_MS+6);

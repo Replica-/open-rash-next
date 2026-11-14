@@ -684,6 +684,7 @@ void __fastcall rr_AiAttackResolve(int a)
     bHit = (char)RiderInLaneSlotsB(a);
     if (*(unsigned *)(*(int *)(b + 0x2fc) + 0x1d0) < (*(unsigned *)&rec_featureAccum1.g_raceTime)) {
         int r;
+        { void rr_ArsenalHit(int a, int b); rr_ArsenalHit(a, b); }   /* (a hit that lands: the bounty, backhand boost, charms - arsenal.c) */
         RiderHitBonus(a, b);
         RiderVectorAccumulate(b, a, 2);
         RiderVectorAccumulate(a, b, 4);
@@ -695,7 +696,7 @@ void __fastcall rr_AiAttackResolve(int a)
         *(int *)(b + 0x288) += (bHit == 0 ? 0xffffe890 : 0) + 3000;
         *(int *)(a + 0x288) += (bHit == 0 ? 0x7d0 : 0) - 0x3e8;
     }
-    if (*(int *)(*(int *)(a + 0x2fc) + 0x1d4) == 3) *(int *)(b + 0x288) += (bHit == 0 ? 0xffffc180 : 0) + 8000;
+    if (*(int *)(*(int *)(a + 0x2fc) + 0x1d4) == 3) { int rr_ArsenalKickPush(int a, int v); *(int *)(b + 0x288) += rr_ArsenalKickPush(a, (bHit == 0 ? 0xffffc180 : 0) + 8000); }   /* (a kick's shove; the boots: arsenal.c) */
     { int lim = *(int *)(a + 0x29c); if (*(int *)(a + 0x288) > lim) *(int *)(a + 0x288) = lim; if (*(int *)(a + 0x288) < -lim) *(int *)(a + 0x288) = -lim; }
     { int lim = *(int *)(b + 0x29c); if (*(int *)(b + 0x288) > lim) *(int *)(b + 0x288) = lim; if (*(int *)(b + 0x288) < -lim) *(int *)(b + 0x288) = -lim; }
 }
@@ -711,6 +712,7 @@ void __fastcall rr_RiderHitBonus(int a, int b)
     floorv = I32(rec, 0x30) / 2;
     if (base < floorv) base = floorv;
     t = *(int *)((char *)&tbl_aiThrottleByClass + I32(owner, 0x1d4) * 4) * base;
+    { int rr_ArsenalStrength(int a, int b, int cls, int t); t = rr_ArsenalStrength(a, b, I32(owner, 0x1d4), t); }   /* (the player's weapon upgrades, vest, adrenaline: arsenal.c) */
     t = t + ((t >> 31) & 0xff);
     v = t >> 8;
     if (a == g_playerRider || b == g_playerRider) {
@@ -749,7 +751,8 @@ unsigned __fastcall rr_RidersAlongside(int a, int b, unsigned char side, int cls
             limit = 5;
             if (cls == 1) limit = 7;
             else if (cls == 2) limit = 8;
-            if ((int)v < limit * 0x1000) {
+            { int rr_ArsenalReach(int a, int cls, int limit); limit = rr_ArsenalReach(a, cls, limit); }   /* (x 0x1000; the player's weapon: arsenal.c) */
+            if ((int)v < limit) {
                 unsigned e = I32(a, 0x20) - I32(b, 0x20);
                 unsigned s = (int)e >> 31;
                 int dist = (e ^ s) - s;

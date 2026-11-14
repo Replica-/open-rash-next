@@ -196,6 +196,7 @@ LRESULT __stdcall rr_MenuItemWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     case 0x100:
     case 0x104:                                                  /* WM_KEYDOWN / WM_SYSKEYDOWN */
         if (g_musicBusy != 0) { TextEditKey((int)hwnd, (int)msg, (int)wp); return 0; }
+        { int rr_ArsenalOfferKey(int vk); if (rr_ArsenalOfferKey((int)wp)) return 0; }   /* (a Schmooze offer: Left / Right, Y / N - race\arsenal.c) */
         switch (wp) {
         case 9:                                                  /* TAB */
             if (g_tabLock == 0) mi_focus_chain((int)(unsigned char)I8(rec, 0x20) + g_focusBase, 0x20);
@@ -570,6 +571,13 @@ LRESULT __stdcall rr_MainWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 mouse_down:
     g_clickedWindow = hwnd;
+    if ((*(int *)&rec_menuScreen.g_menuScreen) == 0x1a) {   /* a Schmooze offer: only a click on its Yes / No counts (race\arsenal.c; the shim maps the click to frame pixels) */
+        int rr_ArsenalOfferClick(int x, int y);
+        static void (__stdcall *fp)(HWND, LPARAM, int *, int *); static int looked; int x = -1, y = -1;
+        if (!looked) { HMODULE m = GetModuleHandleA("ddraw.dll"); looked = 1; fp = m ? (void (__stdcall *)(HWND, LPARAM, int *, int *))GetProcAddress(m, "RR_FramePos") : 0; }
+        if (fp) fp(hwnd, lp, &x, &y);
+        if (rr_ArsenalOfferClick(x, y)) return 0;
+    }
     switch ((*(int *)&rec_menuScreen.g_menuScreen)) {
     case 7: case 0x1a: case 0x1c: case 0x1d: case 0x1e: case 0x1f: case 0x20: case 0x21: case 0x22: case 0x23:
         MenuItemActivate(tbl_controlRecords);

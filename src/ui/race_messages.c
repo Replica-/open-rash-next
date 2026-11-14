@@ -175,6 +175,7 @@ char * __fastcall rr_CommentaryText(int prev, unsigned ev, int arg)
             slot = (((unsigned char)r ^ sign) - sign & 7 ^ sign) - sign;
         } while ((1 << (slot & 0x1f) & (unsigned)g_pitSlotsUsed) != 0);
         g_pitSlotsUsed = g_pitSlotsUsed | '\x01' << (slot & 0x1f);
+        { void rr_ArsenalSchmoozeChar(int c); rr_ArsenalSchmoozeChar(slot + 1); }   /* (who may make an offer, drawn under the quote: race\arsenal.c) */
         crew = (char)PitCrewLine(slot);
         p = (char *)CharacterNameOf(slot + 1);
         sprintf(&g_pitMessageBuf, &(*(char *)&rec_reciprocal.s_Chars_pcts_pctc), p, (int)crew);
@@ -190,6 +191,10 @@ char * __fastcall rr_TauntText(int ev, int rec)
     int state = I32(rec, 8);
     unsigned r, s;
 
+    {   /* The Street's Hurt Hardware (menutrim.c, strings.c): no highlight picture of its own - the plain street (clears the last one) */
+        extern int g_shopTextId;
+        if (g_shopTextId && state == g_shopTextId) return ev == 0xf ? &s_pictureNames.s_StreetPicture : 0;
+    }
     if (state < 0xe) {
         if (state == 0xd) {
             if (ev == 0xc)

@@ -62,6 +62,17 @@ typedef struct RrCourseProgress {
     float miles;                            /* the same in miles */
     int nRivals;
     float rival[64];                        /* the other riders' distances to the finish line in segments (up to 50 opponents + the police: race\rider_slots.c) */
+    int target;                             /* Big Game bounty (race\arsenal.c): the rival[] entry to take out, -1 = none in this race */
+    int targetDone;                         /* 1 = taken out */
+    char targetName[32];
+    int medikits;                           /* Big Game supplies on board (-1 = not a Big Game: no item HUD) */
+    int nitro;                              /* nitro charges left (-1 = no nitro on this bike) */
+    int medKey;                             /* the medikit key's letter */
+    int adrenaline, adrKey;                 /* adrenaline shots left, their key */
+    int adrLeft;                            /* race ticks of the running shot (0 = none) */
+    int healAge;                            /* race ticks since the last medikit (-1 = none) */
+    int scanner;                            /* a police scanner works this race */
+    int cop;                                /* the rival[] entry of the police (-1 = none) */
 } RrCourseProgress;
 
 /* True-3D world (analysis\TRUE3D_PROJECT.md M4; game side src\render\world3d_feed.c, shim src\platform\ddraw\world3d.inc).
