@@ -369,7 +369,11 @@ static void C3_Span(C3Course *c, int k, double u0, double h0, double u1, double 
    The lane grid is anchored on the centre line: it starts lanesL whole lanes left of it (rr_RoadsideStripDraw / PieceTablePick count from there and give lane
    lanesL the yellow), so the centre line stays at lateral 0 - where the traffic keeps to - while a lane is being added on one side or the road narrows
    (fractional laneL / laneR).  Each lane is clipped to the lane edges of its end of the piece, u with it, so the lines keep their places. */
-static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const RoadSection *s1, double o1, const RxAssets *ra)
+/* the gutter along a town street's curbs (C3_Roadside draws its concrete pan): C3_GUTW units of road beside the curb slope down to C3_GUTD below the road
+   at the curb's foot (user, 2026-11-15: "make the city gutters dip a little bit") - the outermost lanes end in that slope (C3_Lanes, gut) */
+#define C3_GUTW 45.0
+#define C3_GUTD 6.0
+static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const RoadSection *s1, double o1, const RxAssets *ra, double gut)
 {
     int nl = (int)s0->lanesL + (int)s0->lanesR, j;
     double l0 = -250.0 * s0->lanesL, w0 = 250;   /* rr_RoadsideStripDraw: lanes of a fixed 250 units (lane record +0x24 = scale * 0xfa); one grid for the whole piece */
@@ -410,13 +414,23 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
         if (n1 < n0) n1 = n0;
         if (f1 < f0) f1 = f0;
         {   float a[3], b[3], cc[3], d[3], uv[8], e = (ra && tex >= 0 && tex < ra->ntex && ra->tex[tex].w > 0) ? 0.5f / ra->tex[tex].w : 0.0f;   /* u half a texel inside: the wrap must not bleed the line of the far edge into a lane that ends in the road */
+            /* across the lane in up to 3 parts: the gutter's slope where the lane ends at a curb (gut > 0), the flat road between */
+            double nx[4], fx[4], hy[4]; int np = 0, q;
+            int gl = gut > 0 && n0 <= el0 + 0.01 && f0 <= el1 + 0.01, gr = gut > 0 && n1 >= er0 - 0.01 && f1 >= er1 - 0.01;
+            if ((gl + gr) * C3_GUTW >= (n1 - n0 < f1 - f0 ? n1 - n0 : f1 - f0)) gl = gr = 0;   /* (a lane narrower than its gutter: flat) */
+            nx[np] = n0; fx[np] = f0; hy[np++] = gl ? -gut : 0;
+            if (gl) { nx[np] = n0 + C3_GUTW; fx[np] = f0 + C3_GUTW; hy[np++] = 0; }
+            if (gr) { nx[np] = n1 - C3_GUTW; fx[np] = f1 - C3_GUTW; hy[np++] = 0; }
+            nx[np] = n1; fx[np] = f1; hy[np++] = gr ? -gut : 0;
 #define C3_LU(x) (float)((x) - x0 <= 0 ? e : ((x) - x0 >= w0 ? 1 - e : ((x) - x0) / w0))   /* u of lateral x in this lane */
-            C3_Point(c, k, n0 + o0, 0, a); C3_Point(c, k, n1 + o0, 0, b); C3_Point(c, k + 1, f1 + o1, 0, cc); C3_Point(c, k + 1, f0 + o1, 0, d);
-            uv[0] = C3_LU(n0); uv[1] = 1; uv[2] = C3_LU(n1); uv[3] = 1; uv[4] = C3_LU(f1); uv[5] = 0; uv[6] = C3_LU(f0); uv[7] = 0;
+            for (q = 0; q + 1 < np; q++) {
+                C3_Point(c, k, nx[q] + o0, hy[q], a); C3_Point(c, k, nx[q + 1] + o0, hy[q + 1], b); C3_Point(c, k + 1, fx[q + 1] + o1, hy[q + 1], cc); C3_Point(c, k + 1, fx[q] + o1, hy[q], d);
+                uv[0] = C3_LU(nx[q]); uv[1] = 1; uv[2] = C3_LU(nx[q + 1]); uv[3] = 1; uv[4] = C3_LU(fx[q + 1]); uv[5] = 0; uv[6] = C3_LU(fx[q]); uv[7] = 0;
+                if (s0->kindFlags & 0x10) { uv[1] = uv[3] = 0; uv[5] = uv[7] = 1; }   /* rr_RoadsideStripDraw swaps the near and far edges of a 0x10 piece: the crossing
+                                                                                       after a junction is the one before it turned round (zebra at the junction, the lane lines after it) */
+                C3_QuadT(c, a, b, cc, d, C3_Colour(M_ROAD, 0, k), tex, uv); }
 #undef C3_LU
-            if (s0->kindFlags & 0x10) { uv[1] = uv[3] = 0; uv[5] = uv[7] = 1; }   /* rr_RoadsideStripDraw swaps the near and far edges of a 0x10 piece: the crossing
-                                                                                   after a junction is the one before it turned round (zebra at the junction, the lane lines after it) */
-            C3_QuadT(c, a, b, cc, d, C3_Colour(M_ROAD, 0, k), tex, uv); }
+        }
     }
 }
 
@@ -776,22 +790,22 @@ static void C3_Roadside(C3Course *c, int k, int h, const RoadSection *s0, double
         int curb = RX_SideTex(ra, s0, k, h, side, 2), walk = RX_SideTex(ra, s0, k, h, side, 1), fac = RX_SideTex(ra, s0, k, h, side, 0);
         double fh = fac >= 0 ? RX_FacadeHeight(ra, s0, k, h, side) : 0;
         C3_FacadeVary(ra, k, h, side, &fac, &fh);
-        { int m0 = c->nv; C3_Span(c, k, e0, 0, e0, t0, e1, 0, e1, t1, C3_Colour(M_CURB, 0, k), curb, 1); C3_Mark(c, m0, 0xf7); }   /* (vertex alpha 247: the curb, 246: the sidewalk - render3d.h, the improved street textures) */
+        { int m0 = c->nv; C3_Span(c, k, e0, -C3_GUTD, e0, t0, e1, -C3_GUTD, e1, t1, C3_Colour(M_CURB, 0, k), curb, 1); C3_Mark(c, m0, 0xf7); }   /* (vertex alpha 247: the curb, 246: the sidewalk - render3d.h, the improved street textures) */
         {   /* the footpath: concrete slabs (vertex alpha 246) or, a block of ~24 pieces at a time, glossy tiles (242) - render3d.h */
             unsigned bh = ((unsigned)(k / 24) * 2654435761u + (unsigned)side * 40503u) >> 16;
             int m0 = c->nv; C3_Span(c, k, e0, t0, x0, t0, e1, t1, x1, t1, C3_Colour(M_WALK, 0, k), walk, 0); C3_Mark(c, m0, (bh & 3) == 1 || (bh & 3) == 2 ? 0xf2 : 0xf6); }
         {   /* the gutter along the curb (vertex alpha 241: render3d.h draws the concrete pan and the drains): a strip ~45 units wide on the road at the
                curb's foot, u = 0 at the curb .. 1 out, v = the piece number (the drains' places) */
-            float a[3], b[3], cc[3], d[3], uv[8]; double gw = 45, ga, gb, gc, gd; int m0 = c->nv;
-            if (side == 0) { ga = e0; gb = e0 + gw; gc = e1 + gw; gd = e1; uv[0] = 0; uv[2] = 1; uv[4] = 1; uv[6] = 0; }
-            else { ga = e0 - gw; gb = e0; gc = e1; gd = e1 - gw; uv[0] = 1; uv[2] = 0; uv[4] = 0; uv[6] = 1; }
+            float a[3], b[3], cc[3], d[3], uv[8]; double gw = C3_GUTW, ga, gb, gc, gd, ya, yb; int m0 = c->nv;   /* (sunk: C3_GUTD at the curb, the road's level at its outer edge) */
+            if (side == 0) { ga = e0; gb = e0 + gw; gc = e1 + gw; gd = e1; uv[0] = 0; uv[2] = 1; uv[4] = 1; uv[6] = 0; ya = 0.6 - C3_GUTD; yb = 0.6; }
+            else { ga = e0 - gw; gb = e0; gc = e1; gd = e1 - gw; uv[0] = 1; uv[2] = 0; uv[4] = 0; uv[6] = 1; ya = 0.6; yb = 0.6 - C3_GUTD; }
             uv[1] = (float)k; uv[3] = (float)k; uv[5] = (float)(k + 1); uv[7] = (float)(k + 1);
-            C3_Point(c, k, ga, 0.6, a); C3_Point(c, k, gb, 0.6, b); C3_Point(c, k + 1, gc, 0.6, cc); C3_Point(c, k + 1, gd, 0.6, d);
+            C3_Point(c, k, ga, ya, a); C3_Point(c, k, gb, yb, b); C3_Point(c, k + 1, gc, yb, cc); C3_Point(c, k + 1, gd, ya, d);
             C3_QuadT(c, a, b, cc, d, 0xff8a8a86u, -1, uv); C3_Mark(c, m0, 0xf1);
             if (C3_Hu(k, 3.7) > 0.55f && C3_Hu(k / 6, 9.1) >= 0.25f && C3_Hu(k, 5.3) > 0.4f) {   /* a drain (render3d.h: Hu(pc, 3.7) > 0.55, not a grate run) with a
                                                                                     kerb inlet (Hu(pc, 5.3) > 0.4, its grate then reaching the curb): the dark mouth in the curb face behind it */
                 double f0 = 0.39, f1 = 0.61, xa = e0 + (e1 - e0) * f0 + (side ? -1 : 1), xb = e0 + (e1 - e0) * f1 + (side ? -1 : 1), y1 = (t0 + (t1 - t0) * 0.5) * 0.42;
-                if (y1 > 1.5) { C3_Point(c, k + f0, xa, 0.6, a); C3_Point(c, k + f0, xa, y1, b); C3_Point(c, k + f1, xb, y1, cc); C3_Point(c, k + f1, xb, 0.6, d);
+                if (y1 > 1.5) { C3_Point(c, k + f0, xa, 0.6 - C3_GUTD, a); C3_Point(c, k + f0, xa, y1, b); C3_Point(c, k + f1, xb, y1, cc); C3_Point(c, k + f1, xb, 0.6 - C3_GUTD, d);
                     C3_Quad(c, a, b, cc, d, 0xff0c0d0eu); C3_Quad(c, d, cc, b, a, 0xff0c0d0eu); } } }
         {   double pc = 0, f = C3_Corner(c, k, h, side, s0, e0, x0, t0, e1, x1, t1, ra, &pc), pa = k, pb = k + 1, xa = x0, xb = x1, ta = t0, tb = t1;
             int corner[2] = { 0, 0 };
@@ -912,7 +926,7 @@ static void C3_Leaves(C3Course *c, double p, double x, double half, double g, do
         double lx, lz, y, ang = C3_RND() * 6.2832, len = 18 + C3_RND() * 12, wid = len * (0.45 + C3_RND() * 0.15), ca, sa, k = 0.72 + C3_RND() * 0.42, dry = C3_RND() < 0.22 ? 0.45 : 0;
         float pt[4][3]; double ox[4], oz[4]; int j; unsigned r, gg, b;
         if (i < 20) {   /* in the gutter: along the curb's foot, spread further along the road, a drift close in */
-            double d = C3_RND(); lx = curb + dir * (2 + d * d * 34); lz = (C3_RND() - 0.5) * 2 * (half * 3.2); y = 1.0;
+            double d = C3_RND(); lx = curb + dir * (2 + d * d * 34); lz = (C3_RND() - 0.5) * 2 * (half * 3.2); y = 1.0 - C3_GUTD * (1 - (2 + d * d * 34) / C3_GUTW);   /* (down in the gutter's slope) */
         } else {   /* on the paving / the pit: round the trunk, denser near it */
             double rr = (0.25 + C3_RND() * C3_RND() * 2.2) * rimO, a = C3_RND() * 6.2832;
             lx = x + cos(a) * rr; lz = sin(a) * rr;
@@ -1350,7 +1364,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
             if (ra && c->skirts && (c->skirtEnd <= 0 || k < c->skirtEnd) && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
             if (ra && s0->kind >= SEC_WALL1 && s0->kind <= SEC_WALL_SPLIT) C3_Sea(c, k, s0, o0, s1, o1, ra);
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) C3_Tunnel(c, k, h, s0, o0, s1, o1, ra, tex[2]);   /* (Peninsula 385..413, 475..499; the rock: the left cliff face's texture) */
-            {   int nr0 = c->nv, j; C3_Lanes(c, k, s0, o0, s1, o1, ra);   /* the road surface: vertex alpha 248 (render3d.h: Video / Esc "Road" = new asphalt, a sheen in the sun) */
+            {   int nr0 = c->nv, j; C3_Lanes(c, k, s0, o0, s1, o1, ra, walk && !(s0->kindFlags & 0x20) ? C3_GUTD : 0);   /* the road surface: vertex alpha 248 (render3d.h: Video / Esc "Road" = new asphalt, a sheen in the sun) */
                 for (j = nr0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf8000000u; }
             if (walk) C3_Roadside(c, k, h, s0, o0, s1, o1, ra);
             if (ra) { C3_Sprites(c, k, h, s0, o0, ra); C3_SideStructs(c, k, h, s0, o0, s1, o1, ra); }

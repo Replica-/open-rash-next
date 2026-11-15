@@ -3,14 +3,14 @@
  * The original asked Windows for a "Save As" / "Open" box via comdlg32 GetSaveFileNameA / GetOpenFileNameA (RestroomBlankItem -> SavePlayerFile, struct at g_openFileName, file buffer g_playerFilePath).
  * The game calls RR_FileDialog instead (no comdlg32 import) and gets a modal screen drawn over the game picture, in the style of Video Options / Configure Input:
  * every save is a tile (the rider's portrait, the player's name, money, level, the five races (bright = qualified at the save's level), the bike's name, and when it was saved).
- * The two auto saves (saves\Autosave1/2.RRS, written after every race by src\system\savegame.c rr_AutoSave) come first (after "+" when saving): loadable, not saved over.
+ * The two auto saves (saves\Autosave1/2.RRN, written after every race by src\system\savegame.c rr_AutoSave) come first (after "+" when saving): loadable, not saved over.
  *   SAVE: the first tile is "+ Save new game" (saved at once under a hidden name: the date and time); any other tile = overwrite that save (asks first)
  *   LOAD: the same grid without the "+" tile; Enter = load.  File names are never shown.
  *   Arrows = choose, Enter / click = take, Esc = cancel, mouse wheel = scroll
- * Files live in <current directory>\saves\<name>.RRS (the game's current directory is its data folder).  The result is returned exactly like the Windows dialog:
+ * Files live in <current directory>\saves\<name>.RRN (the game's current directory is its data folder; the old .RRS saves are not listed or loaded).  The result is returned exactly like the Windows dialog:
  * full path in ofn->lpstrFile, nFileOffset/nFileExtension set, TRUE on OK, FALSE on cancel.
  * Keys come from the thread's message queue (real keyboard, or the scripted/injected keys of the test harness).
- * Save file (src\system\savegame.c): 0x08 = the player block g_playerRecord: +1 character (1..8), +2 level (0 = 1), +3 the races won at this level (bit 0 City .. bit 4 Pacific Highway), +4 bike (0..14), +8 cash, +0xc typed name.
+ * Save file (src\system\savegame.c, RrnFile): 0x00 magic "RRN1", 0x10 = the player block g_playerRecord: +1 character (1..8), +2 level (0 = 1), +3 the races won at this level (bit 0 City .. bit 4 Pacific Highway), +4 bike (0..14), +8 cash, +0xc typed name.
  */
 #define SD_MAX 200
 typedef struct SdEntry { char name[48]; int valid; unsigned char chr, level, won, bike; unsigned cash; char player[24]; FILETIME ft; } SdEntry;
@@ -27,13 +27,13 @@ static const char *const g_sdBike[15][2] = { {"Rat","Banzai"},{"Rat","Corsair"},
     {"Super","Banzai"},{"Super","Diablo"},{"Super","Stiletto"},{"Super","Corsair"},{"Super","Kamikaze"} };
 
 static void SdRead(SdEntry *e)
-{   char p[MAX_PATH]; unsigned char b[0xa0]; FILE *f; WIN32_FILE_ATTRIBUTE_DATA fa;
+{   char p[MAX_PATH]; unsigned char b[0x30]; FILE *f; WIN32_FILE_ATTRIBUTE_DATA fa;
     e->valid=0; e->player[0]=0; memset(&e->ft,0,sizeof e->ft);
-    _snprintf(p,sizeof p,"saves\\%s.RRS",e->name); p[sizeof p-1]=0;
+    _snprintf(p,sizeof p,"saves\\%s.RRN",e->name); p[sizeof p-1]=0;
     if(GetFileAttributesExA(p,GetFileExInfoStandard,&fa)) e->ft=fa.ftLastWriteTime;
     f=fopen(p,"rb"); if(!f) return;
-    if(fread(b,1,sizeof b,f)==sizeof b && *(DWORD*)(b+4)==0xCAFEDEADu){
-        e->chr=b[9]; e->level=b[10]; e->won=b[11]; e->bike=b[12]; e->cash=*(DWORD*)(b+16); memcpy(e->player,b+20,20); e->player[20]=0; e->valid=1; }
+    if(fread(b,1,sizeof b,f)==sizeof b && *(DWORD*)b==0x314E5252u){   /* ("RRN1") */
+        e->chr=b[0x11]; e->level=b[0x12]; e->won=b[0x13]; e->bike=b[0x14]; e->cash=*(DWORD*)(b+0x18); memcpy(e->player,b+0x1c,20); e->player[20]=0; e->valid=1; }
     fclose(f); }
 
 /* the two auto saves (written after every race by the game, src\system\savegame.c rr_AutoSave): the first two tiles, not in the list of saves */
@@ -42,7 +42,7 @@ static int SdIsAuto(const char *nm){ return !_stricmp(nm,g_sdAuto[0]) || !_stric
 
 static int SdList(SdEntry *e, int max)
 {   WIN32_FIND_DATAA fd; HANDLE h; int n=0, i, j; CreateDirectoryA("saves",NULL);
-    h=FindFirstFileA("saves\\*.RRS",&fd); if(h==INVALID_HANDLE_VALUE) return 0;
+    h=FindFirstFileA("saves\\*.RRN",&fd); if(h==INVALID_HANDLE_VALUE) return 0;
     do { size_t l=strlen(fd.cFileName); if(l>4 && l-4<sizeof e[0].name && n<max){ memcpy(e[n].name,fd.cFileName,l-4); e[n].name[l-4]=0; if(SdIsAuto(e[n].name)) continue; SdRead(&e[n]); n++; } } while(FindNextFileA(h,&fd));
     FindClose(h);
     for(i=1;i<n;i++){ SdEntry t=e[i]; for(j=i-1;j>=0 && CompareFileTime(&e[j].ft,&t.ft)<0;j--) e[j+1]=e[j]; e[j+1]=t; }   /* newest first */
@@ -238,7 +238,7 @@ static BOOL SdRun(LPOPENFILENAMEA o,int saving)
             if(shot==2) done=1; else if(shot==1 && GetTickCount()-shotT>1500){ g_gpuReq=saving?901:900; shot=2; dirty=1; } }   /* RR_SHOT_SAVEDLG: the next Present is read back (gpu900 = load, gpu901 = save), then the screen closes */
         Sleep(15); }
     if(ok && s.name[0]){ char cwd[MAX_PATH]; char full[MAX_PATH]; int len; GetCurrentDirectoryA(sizeof cwd,cwd); CreateDirectoryA("saves",NULL);
-        len=_snprintf(full,sizeof full,"%s\\saves\\%s.RRS",cwd,s.name);
+        len=_snprintf(full,sizeof full,"%s\\saves\\%s.RRN",cwd,s.name);
         if(len<=0 || (DWORD)len>=o->nMaxFile){ ok=0; } else { strcpy(o->lpstrFile,full); o->nFileOffset=(WORD)(strrchr(full,'\\')-full+1); o->nFileExtension=(WORD)(strrchr(full,'.')-full+1); LOG("save/load screen -> %s",full); } }
     g_modalSurf=NULL; g_lastShown=g_primary; free(base.bits); FreeSurf(tmp); free(list);
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
@@ -252,5 +252,5 @@ __declspec(dllexport) BOOL __stdcall RR_FileDialog(LPOPENFILENAMEA o, int saving
 static void SdTestHook(void)
 {   static int fired; char *e=getenv("RR_TEST_SAVEDLG"); OPENFILENAMEA o; char buf[260]; BOOL r;
     if(fired || !e || !g_primary || g_primary->bpp!=16 || !g_clockMode) return; { DWORD fr=(GetTickCount()-g_t0)*30/1000; if(fr<120) return; }
-    fired=1; memset(&o,0,sizeof o); o.lStructSize=sizeof o; o.lpstrFile=buf; o.nMaxFile=sizeof buf; strcpy(buf,_stricmp(e,"new")?"Replica.RRS":"");   /* new: the save screen with no current save */
+    fired=1; memset(&o,0,sizeof o); o.lStructSize=sizeof o; o.lpstrFile=buf; o.nMaxFile=sizeof buf; strcpy(buf,_stricmp(e,"new")?"Replica.RRN":"");   /* new: the save screen with no current save */
     r=SdRun(&o,_stricmp(e,"load")!=0); LOG("TEST save/load screen result=%d path=%s",(int)r,r?buf:"(cancelled)"); }

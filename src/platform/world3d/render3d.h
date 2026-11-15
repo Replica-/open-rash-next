@@ -31,6 +31,7 @@ typedef struct R3 {
     ID3D11ShaderResourceView *tex[R3_MAXTEX]; int ntex;
     ID3D11ShaderResourceView *ext[R3_MAXEXT]; int next;   /* views of textures owned by others (R3_External), batch tex = R3_EXT + index; released by R3_ExternalClear */
     ID3D11ShaderResourceView *white;
+    ID3D11ShaderResourceView *waterN;   /* the sea's bump map (R3_WaterNormals), t4 */
     ID3D11Texture2D *shTex; ID3D11DepthStencilView *shDsv; ID3D11ShaderResourceView *shSrv; ID3D11SamplerState *smpCmp; ID3D11VertexShader *vsSh; ID3D11PixelShader *psSh;   /* the sun's shadow map (R3Frame.shadow) */
     ID3D11Query *qDis[4], *qTs[4][4]; int qi, qMade;   /* GPU timestamps of the passes (RR_PROFILE: R3_GpuTimes) */
     char err[512];
@@ -46,7 +47,7 @@ static const char r3_hlsl[] =
     "#define FXD (opt.z > 0 ? opt.z : 7000)\n"   /* the effects' reach (R3Frame.opt[2]: True 3D detail > Effects distance; 0 = not given: 7000) */
     "struct VI { float3 p : POSITION; float2 t : TEXCOORD0; float4 c : COLOR; float k : TEXCOORD1; float2 o : TEXCOORD2; };\n"
     "struct VO { float4 p : SV_Position; float2 t : TEXCOORD0; float4 c : COLOR; float d : TEXCOORD1; float3 w : TEXCOORD2; };\n"
-    "Texture2D T : register(t0); Texture2D K : register(t1); Texture2D Rf : register(t2); Texture2D Sm : register(t3); SamplerState S : register(s0); SamplerComparisonState SC : register(s1);\n"
+    "Texture2D T : register(t0); Texture2D K : register(t1); Texture2D Rf : register(t2); Texture2D Sm : register(t3); Texture2D Wn : register(t4); SamplerState S : register(s0); SamplerComparisonState SC : register(s1);\n"
     "VO vsshadow(VI i) { VO o; o.t = i.t; o.c = i.c; o.d = 0; o.w = i.p;\n"   /* the shadow map's pass (the sun's view, svp in vp): only the buildings' walls cast (vertex */
     "  o.p = abs(i.c.a - 0.996) < 0.002 && all(i.o == 0) ? mul(float4(i.p, 1), vp) : float4(0, 0, -1, 1); return o; }\n"   /* alpha 254, not billboards: the trees / lamps have their own) */
     "float4 psshadow(VO i) : SV_Target { if (T.Sample(S, i.t).a * i.c.a < 0.5) discard; return 0; }\n"
@@ -183,18 +184,20 @@ static const char r3_hlsl[] =
     "      float3 sky = lerp(fogc.rgb, float3(0.30, 0.48, 0.80) * max(max(tint.r, tint.g), 0.4), saturate(Rg.y * 2.5)) * (0.86 + pv);\n"   /* reflective glass - the sky it faces, a pane a shade of its own, */
     "      sky = lerp(sky, float3(0.95, 0.96, 1.0) * max(tint.r, 0.5), smoothstep(0.55, 0.78, N(Rg.xz / max(Rg.y, 0.06) * 2.5 + 1.3)) * saturate(Rg.y * 4) * 0.55);\n"   /* the clouds in it, */
     "      c.rgb = lerp(c.rgb, sky / max(tint.rgb, 0.25), fz * sun.w * (facK > 1 ? 0.28 : facK > 0 ? 0.5 : 1)) + pow(saturate(dot(Rg, sun.xyz)), 250) * 2.4 * sun.w * float3(1, 0.95, 0.85) / max(tint.rgb, 0.25); } }\n"   /* more at a glancing angle (Fresnel), the sun's glint */
-    "  if (abs(i.c.a - 0.992) < 0.002) { float2 p = i.w.xz, g = 0; float t = fad.w, h = 0, fr, sp, fo, lod = saturate(i.d / 30000); float3 V = normalize(eye.xyz - i.w), Nw, Rv, sk, L;\n"   /* water (vertex alpha 253, course3d.h C3_Sea): a sea */
-    "    [unroll] for (k = 0; k < 6; k++) { float wl = 2200 * pow(0.6, k), am = wl * 0.022 * saturate(1.5 - i.d / (wl * 9)), an = k * 1.7 + 0.4, ph; float2 dd = float2(cos(an), sin(an));\n"   /* of directional swells, long to short (the short */
-    "      ph = dot(p, dd) * 6.2832 / wl + t * sqrt(9.8 * 6.2832 / wl * 900); h += am * sin(ph); g += am * cos(ph) * 6.2832 / wl * dd; }\n"                                         /* ones fade with the distance), their slopes */
-    "    g += (float2(N(p / 60 + t * 0.6), N(p / 60 - t * 0.5 + 7.3)) - 0.5) * 0.25 * saturate(1 - i.d / 6000);\n"                                                                                   /* + ripples */
+    "  if (abs(i.c.a - 0.992) < 0.002) { float2 p = i.w.xz, g, w1, w2, w3; float t = fad.w, h, fr, sp, fo; float3 V = normalize(eye.xyz - i.w), Nw, Rv, sk, L;\n"   /* water (vertex alpha 253, course3d.h C3_Sea): a sea, */
+    "    { float3 wa = Wn.Sample(S, p / 2600 + t * float2(0.050, 0.020)).rgb, wb = Wn.Sample(S, p / 2300 + float2(0.37, 0.61) + t * float2(0.034, -0.040)).rgb;\n"   /* bump mapped (R3_WaterNormals, t4), animated (user: "make it look like its water"): */
+    "      w1 = wa.rg + wb.rg - 1; h = (wa.b + wb.b) * 0.5; }\n"                                                                                                                         /* each scale twice, moving different ways at about the speed of */
+    "    w2 = Wn.Sample(S, p / 820 + t * float2(-0.090, 0.110)).rg + Wn.Sample(S, p / 760 + float2(0.21, 0.83) + t * float2(0.120, 0.070)).rg - 1;\n"                         /* a wave that size - the sum keeps changing shape instead of */
+    "    w3 = Wn.Sample(S, p / 280 + t * float2(0.300, -0.220)).rg + Wn.Sample(S, p / 310 + float2(0.55, 0.17) + t * float2(-0.250, -0.330)).rg - 1;\n"                       /* sliding: swells, a cross sea, chop (mipmapped: calm far off) */
+    "    g = w1 * 0.26 + w2 * 0.18 + w3 * 0.11 * saturate(1.3 - i.d / 9000);\n"
     "    Nw = normalize(float3(-g.x, 1, -g.y)); Rv = reflect(-V, Nw); fr = 0.02 + 0.98 * pow(1 - saturate(dot(Nw, V)), 5);\n"                                                        /* -> normal; Fresnel */
     "    sk = lerp(wat.rgb * 0.6 + float3(0.02, 0.05, 0.08), float3(0.16, 0.30, 0.50) * (0.4 + 0.6 * max(max(wat.r, wat.g), wat.b)), saturate(Rv.y * 3));\n"   /* the sky it reflects: a deeper blue than the haze */
-    "    { float pt = N(p / 5000 + t * 0.004) * 0.6 + N(p / 1400 - t * 0.01) * 0.4; float3 body = lerp(float3(0.02, 0.10, 0.20), float3(0.03, 0.20, 0.24), pt);\n"   /* the water's own colour: navy / teal patches */
-    "      body += float3(0.02, 0.10, 0.09) * saturate(h / 80 + 0.3) * saturate(1 - V.y);\n"                                                                                                   /* light through the crests */
-    "      c.rgb = lerp(body, sk, min(fr * 1.1, 0.55)); }\n"                                                                                                                                  /* Fresnel, capped: never a mirror */
-    "    L = normalize(float3(-V.x, 0.22, -V.z)); sp = min(pow(saturate(dot(Rv, L)), 300) * 1.6, 1.2) * smoothstep(0.62, 0.85, N(p / 9 + t * 1.5));\n"                                                                                              /* the sun's glints, small */
-    "    fo = smoothstep(0.85, 1.05, h / 110 + N(p / 35 + t * 0.3) * 0.3) * saturate(1 - i.d / 7000);\n"                                                                                     /* a few white caps */
-    "    c.rgb = lerp(c.rgb, float3(0.8, 0.84, 0.86), fo * 0.35) + sp * wat.w * float3(1, 0.95, 0.82) / max(tint.rgb, 0.2); c.a = 1; }\n"
+    "    { float3 body = lerp(float3(0.03, 0.19, 0.23), float3(0.02, 0.09, 0.18), saturate(i.d / 25000));\n"                                                                        /* the water's own colour: teal near, navy far */
+    "      body += float3(0.02, 0.10, 0.09) * saturate(h * 1.4 - 0.4) * saturate(1 - V.y);\n"                                                                                     /* light through the crests */
+    "      c.rgb = lerp(body, sk, min(fr * 0.9, 0.4)); }\n"                                                                                                                        /* Fresnel, capped: never a mirror (user: "a little bit less shiny") */
+    "    L = normalize(float3(-V.x, 0.22, -V.z)); sp = min(pow(saturate(dot(Rv, L)), 500) * 0.6, 0.4);\n"                                                                           /* the sun's glints off the bumps, softer */
+    "    fo = smoothstep(0.86, 0.97, h) * saturate(1 - i.d / 7000) * 0.25;\n"                                                                                                    /* a touch of foam on the highest crests, near */
+    "    c.rgb = lerp(c.rgb, float3(0.8, 0.84, 0.86), fo) + sp * wat.w * float3(1, 0.95, 0.82) / max(tint.rgb, 0.2); c.a = 1; }\n"
     "  if (shp.x > 0 && lit.w == 0 && rfl.y == 0 && sun.w > 0) { float3 gn = normalize(n); if (dot(gn, eye.xyz - i.w) < 0) gn = -gn;\n"   /* the buildings' shadows (the sun's shadow map): */
     "    if (dot(gn, sun.xyz) > 0.02) { float4 sp = mul(float4(i.w + gn * (3 + i.d * 0.0008), 1), svp); float2 su = float2(sp.x * 0.5 + 0.5, 0.5 - sp.y * 0.5); int ix, iy;\n"   /* on whatever faces the sun (the road, */
     "      if (all(su > 0.002) && all(su < 0.998) && sp.z > 0) { float s2 = 0; [unroll] for (iy = -1; iy <= 1; iy++) [unroll] for (ix = -1; ix <= 1; ix++) s2 += Sm.SampleCmpLevelZero(SC, su + float2(ix, iy) * shp.y, sp.z + shp.z);\n"   /* the footpath, */
@@ -221,8 +224,8 @@ static const char r3_hlsl[] =
     "    nc = pow(saturate(nc), 4); c.rgb = lerp(c.rgb * 1.15, nc * 1.8 + 0.10, saturate(trk.w * 1.2 + 0.2)); }\n"   /* faintly by day, blazing at night */
     "  if ((road || walk || gut) && sun.w > 0) { float3 V = normalize(eye.xyz - i.w), R = reflect(-V, rn); float d2 = saturate(dot(R, sun.xyz)), gk = walk || gut ? (tile ? 0.6 : 1.0) : (opt.x > 0 ? 1.25 : 0.85) * (1 + 0.6 * pol);\n"   /* the road / footpath / gutter in the sun: a sheen off the (bumped) surface, */
     "    c.rgb *= 1 + (walk ? 0.55 : 0.30) * (dot(rn, sun.xyz) - sun.y) * sun.w;\n"   /* the bumps lit and shaded by the sun (the footpath's more), */
-    "    c.rgb += ((pow(d2, 2) * 0.10 + pow(d2, 8) * 0.22 + pow(d2, 60) * 0.35 + pow(d2, 400) * 0.6) * float3(1, 0.97, 0.9) + pow(1 - saturate(V.y * 4), 3) * 0.07 * fogc.rgb) * sun.w * gk;\n"   /* towards the sun, glossy far off (the course's own road a little less) */
-    "    c.rgb += (pow(d2, 140) * 1.4 + pow(d2, 24) * 0.25) * gloss * sun.w * float3(1, 0.97, 0.92); }\n"   /* glossy (the tiles, the wet gutter, the grates' iron): a sharp glint */
+    "    c.rgb += min(((pow(d2, 2) * 0.10 + pow(d2, 8) * 0.22 + pow(d2, 60) * 0.35 + pow(d2, 400) * 0.6) * float3(1, 0.97, 0.9) + pow(1 - saturate(V.y * 4), 3) * 0.07 * fogc.rgb) * sun.w * gk, 0.28);\n"   /* towards the sun, glossy far off (the course's own road a little less); capped (user, 2026-11-15: "cap the shine ... still excessive at some points of the day") */
+    "    c.rgb += min((pow(d2, 140) * 1.4 + pow(d2, 24) * 0.25) * gloss * sun.w * float3(1, 0.97, 0.92), 0.45); }\n"   /* glossy (the tiles, the wet gutter, the grates' iron): a sharp glint, capped */
     "  if ((walk || gut) && lit.w == 0) { float3 V = normalize(eye.xyz - i.w); float fr = pow(1 - saturate(dot(V, rn)), tile ? 3 : 4); c.rgb += fr * (tile ? 0.45 : 0.22) * fogc.rgb * (0.5 + 0.5 * sun.w); }\n"   /* the footpath: the sky in it at a glancing angle, whichever way (daytime; the tiles more) */
     "  float f = Fog(i.d, i.w), fa = 1 - saturate((i.d - fad.x) * fad.y); c.rgb = lerp(c.rgb, fogc.rgb, f) * fogp.w;\n"   /* fogp.w = brightness (fades) */
     "  return float4(c.rgb * fa, fa); }\n"   /* towards the draw distance the world fades into the sky behind it (premultiplied: GpuCompose) - nothing pops in */
@@ -280,6 +283,36 @@ static ID3D11ShaderResourceView *R3_MakeTexture(R3 *r, const unsigned *rgba, int
         ID3D11Texture2D_Release(t);
     }
     for (i = 1; i < n; i++) free(lv[i]);
+    return v;
+}
+
+/* the sea's bump map (user, 2026-11-15: "bump map the water instead of whatever that weird effect is"): a 256 x 256 tile of wind waves - sines whose
+   wave vectors are whole numbers of cycles across the tile (so it repeats seamlessly), spread +-70 degrees round the wind, amplitude falling with the
+   wave number - stored as its slopes (r = d/dx, g = d/dz: 0.5 + slope / 2) and its height (b); a full mip chain (R3_MakeTexture), so it never shimmers
+   far off.  The shader (water, vertex alpha 253) lays it three times at different scales, drifting different ways */
+static ID3D11ShaderResourceView *R3_WaterNormals(R3 *r)
+{
+    enum { WN = 256, NW = 40 }; static float kx[NW], ky[NW], am[NW], ph[NW]; unsigned *px = (unsigned *)malloc(sizeof(unsigned) * WN * WN), s = 12345u; int i, x, y;
+    ID3D11ShaderResourceView *v; float hmin = 1e9f, hmax = -1e9f, *hh = (float *)malloc(sizeof(float) * WN * WN), *gx = (float *)malloc(sizeof(float) * WN * WN), *gz = (float *)malloc(sizeof(float) * WN * WN), gmax = 0;
+#define R3_WRND() ((s = s * 1664525u + 1013904223u) >> 8) / 16777216.0f
+    if (!px || !hh || !gx || !gz) { free(px); free(hh); free(gx); free(gz); return NULL; }
+    for (i = 0; i < NW; i++) {   /* wave numbers 2..20 (cycles per tile), directions round the wind (+x), amplitude ~ k^-1.6 */
+        float k = 2 + 18 * R3_WRND() * R3_WRND(), a = (R3_WRND() - 0.5f) * 2.4f;
+        kx[i] = floorf(k * cosf(a) + 0.5f); ky[i] = floorf(k * sinf(a) + 0.5f);
+        if (kx[i] == 0 && ky[i] == 0) kx[i] = 2;
+        am[i] = powf(sqrtf(kx[i] * kx[i] + ky[i] * ky[i]), -1.6f); ph[i] = R3_WRND() * 6.2832f; }
+#undef R3_WRND
+    for (y = 0; y < WN; y++) for (x = 0; x < WN; x++) {
+        float h = 0, dx = 0, dz = 0;
+        for (i = 0; i < NW; i++) { float w = 6.2832f * (kx[i] * x + ky[i] * y) / WN + ph[i], c = cosf(w), sh = sinf(w);
+            h += am[i] * sh; dx += am[i] * c * kx[i]; dz += am[i] * c * ky[i]; }
+        hh[y * WN + x] = h; gx[y * WN + x] = dx; gz[y * WN + x] = dz;
+        if (h < hmin) hmin = h; if (h > hmax) hmax = h; if (fabsf(dx) > gmax) gmax = fabsf(dx); if (fabsf(dz) > gmax) gmax = fabsf(dz); }
+    for (i = 0; i < WN * WN; i++) {
+        int R = (int)(127.5f + 127.5f * gx[i] / gmax), G = (int)(127.5f + 127.5f * gz[i] / gmax), B = (int)(255 * (hh[i] - hmin) / (hmax - hmin + 1e-6f));
+        px[i] = 0xff000000u | (unsigned)B << 16 | (unsigned)G << 8 | (unsigned)R; }
+    v = R3_MakeTexture(r, px, WN, WN);
+    free(px); free(hh); free(gx); free(gz);
     return v;
 }
 
@@ -367,6 +400,7 @@ static int R3_Init(R3 *r, ID3D11Device *dev)
     sm.BorderColor[0] = 0; sm.ComparisonFunc = D3D11_COMPARISON_GREATER_EQUAL; sm.MaxLOD = D3D11_FLOAT32_MAX;   /* lit where nothing nearer the sun (reversed depth: greater = nearer) */
     ID3D11Device_CreateSamplerState(dev, &sm, &r->smpCmp);
     r->white = R3_MakeTexture(r, whitePx, 2, 2);
+    r->waterN = R3_WaterNormals(r);
     return r->vs && r->ps && r->psGlow && r->psLens && r->il && r->cb && r->bsAdd && r->white;
 }
 
@@ -605,6 +639,7 @@ static int R3_Render(R3 *r, const R3Frame *f)
     ID3D11DeviceContext_PSSetConstantBuffers(r->ctx, 0, 1, &r->cb);
     ID3D11DeviceContext_PSSetSamplers(r->ctx, 0, 1, &r->smp);
     { ID3D11ShaderResourceView *k = f->tracks ? f->tracks : r->white; ID3D11DeviceContext_PSSetShaderResources(r->ctx, 1, 1, &k); }
+    { ID3D11ShaderResourceView *k = r->waterN ? r->waterN : r->white; ID3D11DeviceContext_PSSetShaderResources(r->ctx, 4, 1, &k); }   /* (the sea's bump map) */
     ID3D11DeviceContext_PSSetShaderResources(r->ctx, 2, 1, &none);
     if (f->nDyn > 0 && f->nDynBatches > 0) {
         if (f->nDyn > r->capDyn) { if (r->vbDyn) ID3D11Buffer_Release(r->vbDyn); r->capDyn = f->nDyn * 2; r->vbDyn = R3_Buffer(r, NULL, r->capDyn, 1); }

@@ -461,7 +461,7 @@ static void WxPanel(int w, int h)
     if (!g_w3On || !g_wxPause || !g_ren) return;
     if (!WxTod()) { int m = (int)(WxT() * 1440) % 1440; _snprintf(v0, sizeof v0, "Cycle %02d:%02d", m / 60, m % 60); } else strcpy(v0, tods[WxTod()]); v0[sizeof v0 - 1] = 0;
     {   const char *vals[WX_NROW]; vals[0] = v0; vals[1] = wxs[WxWeatherRaw()]; vals[2] = fogs[WxFog()]; vals[3] = WpRowName();
-        _snprintf(key, sizeof key, "%d|%d|%d|%s|%s|%s|%s|%s", g_wxSel, g_wxBtn, g_wxHot, vals[0], vals[1], vals[2], vals[3], vals[4]); key[sizeof key - 1] = 0;
+        _snprintf(key, sizeof key, "%d|%d|%d|%s|%s|%s|%s", g_wxSel, g_wxBtn, g_wxHot, vals[0], vals[1], vals[2], vals[3]); key[sizeof key - 1] = 0;
         if (!g_ppTex || strcmp(key, g_ppKey)) { WxPanelMake(vals); strcpy(g_ppKey, key); } }
     if (!g_ppTex) return;
     d.w = WX_PW / 2; d.h = WX_PH / 2; d.x = (w - d.w) / 2; d.y = g_gpuClip[3] - d.h - 24; if (d.y < g_gpuClip[1]) d.y = (float)g_gpuClip[1];
@@ -530,7 +530,7 @@ static void WxBolt(int P, int R, int y0, int y1)
     (void)y1;
     SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_ADD); SDL_RenderGeometry(g_ren, NULL, v, n, ix, n / 4 * 6); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); }
 
-/* ---- the race start: "3, 2, 1, Go!" (Windows speech, SAPI, on a thread of its own; not in silent / headless runs) and the countdown undimmed ---- */
+/* ---- the race start: "3, 2, 1" (Windows speech, SAPI, on a thread of its own; not in silent / headless runs) and the countdown undimmed ---- */
 #include <sapi.h>
 static const GUID WX_CLSID_SpVoice = { 0x96749377, 0x3391, 0x11D2, { 0x9E, 0xE3, 0x00, 0xC0, 0x4F, 0x79, 0x73, 0x96 } };
 static const GUID WX_IID_ISpVoice = { 0x6C44DF74, 0x72B9, 0x4992, { 0xA1, 0xEC, 0xEF, 0x99, 0x6E, 0x04, 0x22, 0xD4 } };
@@ -597,6 +597,5 @@ __declspec(dllexport) void __stdcall RR_RaceCountdown(int left, const void *pal)
     g_cdPal = left > 0 ? (const PALETTEENTRY *)pal : NULL;
     if (left > 0 && last <= 0) WxSay(L"<pitch middle='3'>Three</pitch>");
     else if (last > 120 && left <= 120) WxSay(L"<pitch middle='4'>Two</pitch>");
-    else if (last > 60 && left <= 60) WxSay(L"<pitch middle='5'>One</pitch>");
-    else if (last > 0 && left <= 0) WxSay(L"<volume level='100'><pitch middle='8'><rate absspeed='2'>Go!</rate></pitch></volume>");
+    else if (last > 60 && left <= 60) WxSay(L"<pitch middle='5'>One</pitch>");   /* (no spoken "Go!" - user, 2026-11-15: "get rid of the speech Go") */
     last = left; }

@@ -25,7 +25,7 @@ static R3Batch g_w3b[4096]; static int g_w3nb; static C3Batch g_w3cb[4096];
    static mesh's pieces g_w3lo .. g_w3hi - 1 */
 static C3Course g_w3l; static R3Batch g_w3lb[4096]; static int g_w3lnb, g_w3lo = -1, g_w3hi = -1;
 static R3Batch g_w3sb[8192]; static int g_w3snb;   /* the static batches without that stretch */
-static char g_w3meshTag[120];   /* the debug line top left (W3MeshTag) */
+static char g_w3meshTag[24];   /* on the segment tracker line (W3MeshTag) */
 static int g_w3compiled;   /* this race: 1 = the compiled mesh (cut each frame: W3StaticCut), 0 = built on the fly (the static mesh + the live stretch, W3Live) */
 /* g_w3fork (declared in gpuscene.inc): 1 = forks off, every split is the left road A only (True 3D), 0 = both roads (test switch RR_NOFORK=0) */
 static int g_w3off, g_w3offB, g_w3camB;   /* g_w3camB: the camera follows B (W3Track; the game keeps its half flag on B long after B has rejoined A); the game's road position + g_w3off pieces = the file's piece on road A (g_w3offB: on road B) (W3Track) */
@@ -322,10 +322,12 @@ static int W3IsCaster(const char *nm)
 {   static const char *pre[] = { "TREE", "BUSH", "BSH", "LAMPPST", "LMPPST", "PRKGLMP", "STRTLTE", "TELE" }; int i;
     for (i = 0; i < (int)(sizeof pre / sizeof pre[0]); i++) if (!strncmp(nm, pre[i], strlen(pre[i]))) return 1;
     return 0; }
-static void W3StripShadow(unsigned *px, int w, int h)   /* the painted shadow: dark, not coloured, in the bottom fifth -> transparent */
+/* the painted shadow: dark navy (the original's 8,24,40 / 14,24,30; the HD pictures' the same), in the bottom fifth -> transparent.  Only the bluish
+   texels: the dark foliage and trunks there are neutral black (user, 2026-11-15: "this bush is floating" - taking every dark texel cut its foot off) */
+static void W3StripShadow(unsigned *px, int w, int h)
 {   int x, y;
     for (y = h * 4 / 5; y < h; y++) for (x = 0; x < w; x++) { unsigned c = px[y * w + x]; int r = c & 255, g = (c >> 8) & 255, b = (c >> 16) & 255;
-        if ((c >> 24) >= 128 && r + g + b < 120 && b + 12 >= r && b + 12 >= g) px[y * w + x] = c & 0x00ffffffu; } }
+        if ((c >> 24) >= 128 && r + g + b < 330 && b >= g + 6 && b >= r + 10) px[y * w + x] = c & 0x00ffffffu; } }
 /* the renderer texture of course texture t (made on first use; -1 = flat colour) */
 static int W3GpuTex(int t)
 {   RxTex *x;
@@ -967,7 +969,7 @@ static void W3MeshSave(const char *path, unsigned long long key)
     ok = fclose(o) == 0 && ok;
     if (!ok || !MoveFileExA(tmp, fn, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); LOG("world3d: could not save %s", fn); return; }
     LOG("world3d: compiled %s (%d vertices, %d batches, %d buildings)", fn, g_w3c.nv, g_w3nb, g_w3c.nbldg); }
-static const char *W3MeshTag(void)   /* the debug line top left in a True 3D race (gpuscene.inc GpuDrawExtras); test switch RR_MESHTAG=0: none */
+static const char *W3MeshTag(void)   /* the end of the segment tracker line in a True 3D race (rrddraw.c ShowRoadPos); test switch RR_MESHTAG=0: none */
 {   const char *e = getenv("RR_MESHTAG"); return (g_w3On && g_w3meshTag[0] && !(e && *e == '0')) ? g_w3meshTag : NULL; }
 /* ---- the F10 grass panel (True 3D races): F10 opens / closes it, Page Up / Page Down pick a row, [ / ] change it (held: repeats), Backspace puts the
    row back; the race goes on underneath (those keys are not the game's).  Closing it logs the values (RR_LOG) to bake in ---- */
@@ -1079,9 +1081,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
             g_w3c.skirts = 1; C3_Build(&g_w3c, W3_L, &g_w3a); g_w3c.skirts = 0;
             g_w3nb = C3_Batches(&g_w3c, g_w3cb, 4096); W3MeshSave(path, key); g_w3compiled = 1; } }
     if (!g_w3compiled) { C3_Build(&g_w3c, W3_L, &g_w3a); g_w3nb = C3_Batches(&g_w3c, g_w3cb, 4096); }
-    {   char mn[MAX_PATH]; const char *b; W3MeshName(path, mn, sizeof mn); b = strrchr(mn, 0x5C); b = b ? b + 1 : mn;
-        if (g_w3compiled) _snprintf(g_w3meshTag, sizeof g_w3meshTag - 1, "MESH: compiled %s", b); else _snprintf(g_w3meshTag, sizeof g_w3meshTag - 1, "MESH: none (%s) - built on the fly", b);
-        g_w3meshTag[sizeof g_w3meshTag - 1] = 0; }   /* (on the fly: the live stretch round the camera, W3Live) */
+    strcpy(g_w3meshTag, g_w3compiled ? "FIXED MESH" : "DYNAMIC MESH");   /* (user, 2026-11-15: on the segment tracker line, "dynamic mesh" vs "fixed mesh"; dynamic = built on the fly: the live stretch round the camera, W3Live) */
     W3GpuBatches(g_w3cb, g_w3nb, g_w3b);   /* (same order as g_w3cb: W3Live cuts them; the renderer draws the opaque ones first) */
     R3_SetStatic(&g_w3r, (const R3Vert *)g_w3c.v, g_w3c.nv);
     memset(&g_w3l, 0, sizeof g_w3l);   /* the live copy: the file's pieces, g_w3c's frames */
@@ -1788,8 +1788,39 @@ static void W3Casters(void)
     if (g_w3c.nbldg) qsort(g_w3c.bldg, g_w3c.nbldg, sizeof(C3Bldg), W3BldgCmp);   /* (the buildings' shadows: W3BldgShadows) */
     LOG("world3d: %d shadow casters (trees, lamps, poles), %d buildings", g_w3ncst, g_w3c.nbldg); }
 static int W3CstTexCmp(const void *a, const void *b) { return g_w3cst[*(const int *)a].tex - g_w3cst[*(const int *)b].tex; }
+/* the height of the 3D ground at world (x, z), from piece k0 on (the casters' shadows lie on it - user, 2026-11-15: "they should project a shadow onto
+   the surface ... i can see floating shadows": a flat card at the foot's height hung in the air past a kerb, sank into a rising verge): the piece the
+   point is along, its lateral off that piece's centre line, the cross-section height there (C3_GroundAt's rows: the live copy inside the live stretch),
+   between the piece's two ends.  Each piece's row is made once a frame (stamp).  0 = not known there (a split road, past the cross-section's ends) */
+static int W3GroundY(float x, float z, int k0, unsigned stamp, float *y)
+{   static C3Row row[64]; static int rk[64], init; static const C3Course *rc[64]; static unsigned rs[64];
+    const C3Frame *fr = g_w3c.frame; int k = k0, it, e; double f = 0, th, cx, cz, u, h[2];
+    if (!fr || g_w3c.n < 3) return 0;
+    if (!init) { for (e = 0; e < 64; e++) rk[e] = -1; init = 1; }
+    for (it = 0; it < 8; it++) {   /* (the piece the point is along) */
+        if (k < 0) k = 0; if (k > g_w3c.n - 2) k = g_w3c.n - 2;
+        th = fr[k].heading; f = ((x - fr[k].x) * sin(th) + (z - fr[k].z) * cos(th)) / g_w3c.L;
+        if (f < 0 && k > 0) k--; else if (f >= 1 && k < g_w3c.n - 2) k++; else break; }
+    if (f < 0) f = 0; if (f > 1) f = 1;
+    th = fr[k].heading + (fr[k + 1].heading - fr[k].heading) * f; cx = fr[k].x + (fr[k + 1].x - fr[k].x) * f; cz = fr[k].z + (fr[k + 1].z - fr[k].z) * f;
+    u = (x - cx) * cos(th) - (z - cz) * sin(th);
+    for (e = 0; e < 2; e++) {
+        int kk = k + e, s = kk & 63, i; double best = -1e30; C3Course *cc = (g_w3l.piece && kk >= g_w3lo && kk < g_w3hi) ? &g_w3l : &g_w3c; const C3Row *r = &row[s];
+        if (cc->piece[kk].layout == 2) return 0;   /* (a split road: two carriageways - the shadow stays flat) */
+        if (rk[s] != kk || rc[s] != cc || rs[s] != stamp) { C3_Section(&cc->piece[kk].halfA, 0, &row[s]); rk[s] = kk; rc[s] = cc; rs[s] = stamp; }
+        for (i = 0; i < C3_NP - 1; i++) {   /* (C3_RowHeight, but "not here" past the ends) */
+            double a = r->u[i], b = r->u[i + 1], lo = a < b ? a : b, hi = a < b ? b : a, yy;
+            if (u < lo || u > hi) continue;
+            yy = hi > lo ? r->h[i] + (r->h[i + 1] - r->h[i]) * (u - a) / (b - a) : (r->h[i] > r->h[i + 1] ? r->h[i] : r->h[i + 1]);
+            if (yy > best) best = yy; }
+        if (best < -1e29) return 0;
+        h[e] = best; }
+    *y = (float)(fr[k].y + (fr[k + 1].y - fr[k].y) * f + h[0] + (h[1] - h[0]) * f);
+    return 1; }
+#define W3_SHL 10   /* a caster's shadow: at most W3_SHL x W3_SHW cells, draped over the ground (W3GroundY) */
+#define W3_SHW 3
 static int W3CasterShadows(const R3Frame *f, R3Vert *v, int start, int cap, double p, R3Batch *cb, int *nb, int nbcap)   /* vertices v[start .. cap); returns how many */
-{   static int sel[512]; float bear, len, op = WxSunShadow(&bear, &len), fw[3], sd[3], ax[3]; int kc = (int)floor(p), lo = 0, hi = g_w3ncst, n = 0, i, k, nv = start, last = -1;
+{   static int sel[512]; static unsigned stamp; float bear, len, op = WxSunShadow(&bear, &len), fw[3], sd[3], ax[3]; int kc = (int)floor(p), lo = 0, hi = g_w3ncst, n = 0, i, k, nv = start, last = -1;
     if (!g_vid.oshadow) return 0;   /* (True 3D detail > Object shadows off) */
     if (op < 0.01f || g_w3NoShadow || !g_w3ncst) return 0;
     { float d3[3], fw3[3]; fw3[0] = -f->right[2]; fw3[1] = 0; fw3[2] = f->right[0]; if (WxSunDir(fw3, f->right, d3) <= 0) return 0; }   /* (only a real sun: no sun, no tree / lamp shadows) */
@@ -1799,21 +1830,27 @@ static int W3CasterShadows(const R3Frame *f, R3Vert *v, int start, int cap, doub
     while (lo < hi) { int m = (lo + hi) / 2; if (g_w3cst[m].piece < kc - 1) lo = m + 1; else hi = m; }
     for (i = lo; i < g_w3ncst && g_w3cst[i].piece <= kc + 24 && n < 512; i++) sel[n++] = i;   /* (the next ~24 pieces) */
     qsort(sel, n, sizeof(int), W3CstTexCmp);
-    for (i = 0; i < n && nv + 6 <= cap; i++) {
-        const W3Cst *C = &g_w3cst[sel[i]]; static const int o6[6] = { 0, 1, 2, 0, 2, 3 }; float c[4][3], uv[4][2], half = (C->oxb - C->oxa) * 0.5f, mid = (C->oxa + C->oxb) * 0.5f, H = C->oyb - C->oya, bx, bz, by;
-        int gt = W3GpuTex(C->tex);
+    stamp++;
+    for (i = 0; i < n && nv + 6 * W3_SHL * W3_SHW <= cap; i++) {
+        const W3Cst *C = &g_w3cst[sel[i]]; static const int o6[6] = { 0, 1, 2, 0, 2, 3 }; float half = (C->oxb - C->oxa) * 0.5f, mid = (C->oxa + C->oxb) * 0.5f, H = C->oyb - C->oya, bx, bz, by, c0[2], g[W3_SHW + 1][W3_SHL + 1][3];
+        int gt = W3GpuTex(C->tex), nl, nw, a, b; unsigned rgba;
         if (gt < 0 || H <= 0) continue;
         bx = C->x + f->right[0] * mid; bz = C->z + f->right[2] * mid; by = C->y + 6.0f;
         if (!W3InView(bx + sd[0] * H * len * 0.5f, by, bz + sd[2] * H * len * 0.5f, half + H * len * 0.5f + 20)) continue;   /* (the shadow out of view) */   /* (test switch RR_W3SHTEST=1: lifted, black) the foot on the ground (the pictures are sunk a little into it: oya < 0), just above it */
-        c[0][0] = bx - ax[0] * half; c[0][2] = bz - ax[2] * half; c[1][0] = bx + ax[0] * half; c[1][2] = bz + ax[2] * half;
-        c[2][0] = c[1][0] + sd[0] * H * len; c[2][2] = c[1][2] + sd[2] * H * len; c[3][0] = c[0][0] + sd[0] * H * len; c[3][2] = c[0][2] + sd[2] * H * len;
-        for (k = 0; k < 4; k++) c[k][1] = by;
-        uv[0][0] = C->uL; uv[0][1] = C->vB; uv[1][0] = C->uR; uv[1][1] = C->vB; uv[2][0] = C->uR; uv[2][1] = C->vT; uv[3][0] = C->uL; uv[3][1] = C->vT;
+        /* draped over the ground: a grid of cells along the shadow (one every ~60 units) and across it (~120), each corner 6 units above the 3D ground
+           under it - over a kerb, down onto the road, up a verge (where the ground is not known: the foot's height, as before) */
+        nl = (int)(H * len / 60); if (nl < 1) nl = 1; if (nl > W3_SHL) nl = W3_SHL;
+        nw = (int)(2 * half / 120); if (nw < 1) nw = 1; if (nw > W3_SHW) nw = W3_SHW;
+        c0[0] = bx - ax[0] * half; c0[1] = bz - ax[2] * half;
+        for (a = 0; a <= nw; a++) for (b = 0; b <= nl; b++) { float *q = g[a][b], s = 2 * half * a / nw, t = H * len * b / nl, gy;
+            q[0] = c0[0] + ax[0] * s + sd[0] * t; q[2] = c0[1] + ax[2] * s + sd[2] * t;
+            q[1] = W3GroundY(q[0], q[2], C->piece, stamp, &gy) ? gy + 6.0f : by; }
+        rgba = W3Rgba(getenv("RR_W3SHTEST") ? 1.0f : (op * 1.8f > 0.5f ? 0.5f : op * 1.8f), 0, 0, 251.5f / 255.0f);   /* (darker than the bikes' halved ones; RR_W3SHTEST=1: black) */
         if (gt != last) { if (*nb >= nbcap) break; cb[*nb].first = nv; cb[*nb].count = 0; cb[*nb].tex = gt; cb[*nb].alpha = 4; (*nb)++; last = gt; }
-        for (k = 0; k < 6; k++) { R3Vert *o = &v[nv++]; int q = o6[k];
-            o->x = c[q][0]; o->y = c[q][1]; o->z = c[q][2]; o->u = uv[q][0]; o->v = uv[q][1]; o->ox = 0; o->oy = 0; o->tex = 0;
-            o->rgba = W3Rgba(getenv("RR_W3SHTEST") ? 1.0f : (op * 1.8f > 0.5f ? 0.5f : op * 1.8f), 0, 0, 251.5f / 255.0f); }   /* (darker than the bikes' halved ones; RR_W3SHTEST=1: black) */
-        cb[*nb - 1].count += 6; }
+        for (a = 0; a < nw; a++) for (b = 0; b < nl; b++) for (k = 0; k < 6; k++) { R3Vert *o = &v[nv++]; int q = o6[k], ia = a + (q == 1 || q == 2), ib = b + (q >= 2);   /* (corners 0 foot-left, 1 foot-right, 2 tip-right, 3 tip-left) */
+            o->x = g[ia][ib][0]; o->y = g[ia][ib][1]; o->z = g[ia][ib][2];
+            o->u = C->uL + (C->uR - C->uL) * ia / nw; o->v = C->vB + (C->vT - C->vB) * ib / nl; o->ox = 0; o->oy = 0; o->tex = 0; o->rgba = rgba; }
+        cb[*nb - 1].count += 6 * nl * nw; }
     if (getenv("RR_W3LOGL")) { static int nl; if (++nl % atoi(getenv("RR_W3LOGL")) == 0) LOG("w3casters %d near, %d vertices, op %.2f len %.2f; first oya %.0f oyb %.0f y %.0f", n, nv - start, op, len, n ? g_w3cst[sel[0]].oya : 0, n ? g_w3cst[sel[0]].oyb : 0, n ? g_w3cst[sel[0]].y : 0); }
     return nv - start; }
 /* the buildings' shadows (course3d.h C3_Building records each one's footprint and height): the footprint swept away from the sun by height x the
@@ -2181,7 +2218,7 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     {   /* per-frame geometry of the world pass: traffic as 3D cars, then the light halos (their point lights into f) */
         static R3Vert *cv; static int ccap; static R3Batch cb[66 + 256]; int nc = 0, i, nb = 0, nv = 0, need, nh;
         if (W3CarsOn()) for (i = 0; i < g_w3ns; i++) if (g_w3s[i].kind == RRO_CAR) nc++;
-        need = nc * 2400 + 18 * 400 + 512 * 6 + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (cars, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
+        need = nc * 2400 + 18 * 400 + 512 * 6 * W3_SHL * W3_SHW + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (cars, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
         W3HydCheck(p);   /* (a rider on a fire hydrant breaks it) */
         if (ccap < need) { ccap = need; cv = (R3Vert *)realloc(cv, sizeof(R3Vert) * ccap); if (!cv) ccap = 0; }
         if (cv) {

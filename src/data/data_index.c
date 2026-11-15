@@ -677,7 +677,7 @@ const RrDataEntry rr_dataIndex[] = {
     { &g_screenADefault, sizeof g_screenADefault, "g_screenADefault", 0 },
     { &g_screenBDefault, sizeof g_screenBDefault, "g_screenBDefault", 0 },
     { &g_screenCDefault, sizeof g_screenCDefault, "g_screenCDefault", 0 },
-    { &s_RRS, sizeof s_RRS, "s_RRS", 0 },
+    { &s_saveExt, sizeof s_saveExt, "s_saveExt", 0 },
     { &s_pcts_colon_pcts, sizeof s_pcts_colon_pcts, "s_pcts_colon_pcts", 0 },
     { &s_Inset, sizeof s_Inset, "s_Inset", 0 },
     { &s_HiRes, sizeof s_HiRes, "s_HiRes", 0 },

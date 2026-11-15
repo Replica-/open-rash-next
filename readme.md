@@ -4,9 +4,23 @@
 
 Open Rash Next does not include the game's content (graphics, sounds, music, videos, courses). You need your own copy of *Road Rash* for Windows 95;
 
-## New: time of day, weather and lighting (True 3D)
+## True 3D
 
-True 3D races now have a sky that changes through the day, weather, and real lights. All of it is drawing and sound only: races play out exactly as before.
+Every race is drawn as a real 3D world by the graphics card (Direct3D 11), at your window's own resolution, with a long draw distance: the road
+ahead, the hills and the scenery stay visible far into the distance. Widescreen is automatic: in a window or on a screen wider than 4:3 the race
+shows a wider field of view instead of stretching the picture, and a **course map** can be shown beside it. With the widescreen art mod installed
+(see below), the races get **slightly upscaled** sprites and textures, an HD sky and **clouds drifting across it**.
+Gameplay never depends on the view: races play out exactly as in the original.
+
+![Pacific Highway by day: the sea, the cliffs and the course map](docs/screenshots/true3d_pacific_day.jpg)
+
+![The Sierra Nevada](docs/screenshots/true3d_sierra.jpg)
+
+![Napa Valley](docs/screenshots/true3d_napa.jpg)
+
+## Time of day, weather and lighting
+
+The sky changes through the day, there is weather, and there are real lights. All of it is drawing and sound only.
 Press **Esc** in a race to change it on the spot:
 
 | Setting | Choices |
@@ -14,103 +28,106 @@ Press **Esc** in a race to change it on the spot:
 | Time of day | Cycle (a full day every few race minutes) / Dawn / Day / Sunset / Night |
 | Weather | Clear / Rain / Heavy rain / Torrential rain / Snow / Heavy snow |
 | Fog | Auto / Off / Haze / Light / Medium / Heavy / Pea soup / Ground mist |
-| Improved Street Textures | Off / On (fresh asphalt that shines in the sun, paving slabs, granite kerbs) |
 | Weapon | Original / Hammer / your own pictures in `mod/weapons` (gives you the club and draws the chosen weapon in its place when you swing) |
-| Building Shadows | Off / On (the buildings cast shadows in the sun; off by default) |
 
-Use the arrow keys or the mouse; **Close** rides on and **Exit Race** leaves the race. The world keeps moving behind the panel (rain falls, clouds drift, the sea rolls), so a change shows straight away; only the race and the clock of the day cycle stand still. The settings are saved in `video.ini`.
-
-![City at night: lit windows and shop signs, street lamps, a headlight beam and the brake light](docs/screenshots/true3d_night.jpg)
+Use the arrow keys or the mouse; **Close** rides on and **Exit Race** leaves the race. The world keeps moving behind the panel (rain falls, clouds drift, the sea rolls), so a change shows straight away; only the race and the clock of the day cycle stand still.
 
 - **Sky:** colours that follow the hour, a sun that crosses the sky, stars and a moon at night, more cloud in bad weather, lightning bolts with thunder.
 - **Lights after dark:** street and parking lamps light the road, buildings light some of their windows and their shop signs, police lights flash red and blue.
-- **Bikes and cars:** each bike has a headlight beam that turns with it (two on superbikes) and a rectangular tail light that flares when braking, in the right place at any resolution and with custom rider colours. Cars light the road in front of them after dark.
+- **Bikes and cars:** each bike has a headlight beam that turns with it (two on superbikes) and a tail light that flares when you brake, in the right place at any resolution and with custom rider colours. Cars light the road in front of them after dark.
 
-![Night in the City: an oncoming car lights the road, the bike ahead brakes](docs/screenshots/true3d_night_cars.jpg)
+![City at night: lit windows and shop signs, street lamps and headlights](docs/screenshots/true3d_night.jpg)
 
-- **Shadows:** riders cast their own shadow along the road, away from the sun, in place of the game's black blob. It is long at dawn and dusk, short at noon, and gone under cloud and at night (a soft patch under the bike remains). Trees, lamp posts and street lights cast sun shadows too (the shadows painted into their pictures are removed). Building walls are lit by the same sun.
-- **Improved street textures (Esc > Improved Street Textures):** fresh asphalt with sealed cracks and the original lane paint, with a sheen toward the sun on clear days; concrete paving slabs on the sidewalks with a granite kerb top, and granite kerbstones on the curb.
+![Night in the City: a taxi's tail lights, the bikes' lights](docs/screenshots/true3d_night_cars.jpg)
 
-![Day in the City: the new road surface and a tree's shadow on the pavement](docs/screenshots/true3d_new_road.jpg)
+- **Shadows:** riders cast their own shadow along the road, away from the sun, in place of the game's black blob. Trees, lamp posts and street lights cast sun shadows that lie on the ground they fall on - over the kerb and across the road. They are long at dawn and dusk, short at noon, and gone under cloud and at night.
+- **Streets:** fresh asphalt with sealed cracks and the original lane paint, with a sheen toward the sun on clear days; concrete paving slabs and granite kerbs; gutters that dip down to the kerb, with drains; street trees in pits with fallen leaves.
 
-![Dawn: a long shadow from the low sun](docs/screenshots/true3d_dawn_shadows.jpg)
+![Day in the City](docs/screenshots/true3d_city_day.jpg)
+
+![Dawn in the City](docs/screenshots/true3d_dawn.jpg)
 
 - **Rain:** steady streaks, puddles that faintly mirror the buildings, tiny splashes where drops hit the ground, and spray and a splash sound when a tyre goes through a puddle. No rain falls in tunnels. **Torrential rain** triples the downpour of heavy rain, brings a pea-soup fog and darkens everything by a fifth.
 
-![Rain: puddles reflecting the buildings](docs/screenshots/true3d_rain.jpg)
+![Rain: puddles on the road](docs/screenshots/true3d_rain.jpg)
 
-![Heavy rain at night](docs/screenshots/true3d_heavyrain_night.jpg)
+![A storm at night](docs/screenshots/true3d_storm_night.jpg)
 
 - **Snow:** falling flakes, snow on the road with tyre-wide tracks behind every wheel, bumpy banks of snow along the curbs, and snow on the roofs.
 
-![Snow: snow on the road, banks along the curbs, tyre tracks](docs/screenshots/true3d_snow.jpg)
+![Snow: tyre tracks and banks along the curbs](docs/screenshots/true3d_snow.jpg)
 
-- **Pacific Highway:** a real sea with rolling waves, sun glints and white caps, and rocky cliffs with ledges and cracks.
-
-![Pacific Highway by day: the sea and the cliffs](docs/screenshots/true3d_pacific_day.jpg)
+- **Pacific Highway:** a sea with moving, bump-mapped waves and soft sun glints, and rocky cliffs with ledges and cracks.
 
 ![Pacific Highway at sunset](docs/screenshots/true3d_pacific_sunset.jpg)
 
 - **Buildings:** new generated facades on every City and Peninsula building, in brick, stucco, concrete, stone, glass and painted wood, with shops, cafés, lobbies and garages at street level.
+
+![The Peninsula at sunset](docs/screenshots/true3d_peninsula_sunset.jpg)
+
 - **Hits:** blood sprays back from a rider who is hit, and a hit close in front of you splatters the screen for a moment.
+- **Sound:** rain, wind in the snow, thunder and puddle splashes are synthesised (no extra files needed), and a voice counts "Three, two, one" at the start.
 
-![Blood on the screen after a hit close in front](docs/screenshots/true3d_blood.jpg)
-
-- **Sound:** rain, wind in the snow, thunder and puddle splashes are synthesised (no extra files needed), and a voice counts "Three, two, one, Go!" at the start.
-
-![Widescreen race in the Sierra Nevada, upscaled art](docs/screenshots/race_sierra_widescreen.jpg)
-
-## Features
-
-### Hardware renderer (GPU)
-The race world is drawn by the graphics card (Direct3D 11) at your window's own resolution, with smooth, perspective-correct textures.
-Widescreen is automatic: in a window or on a screen wider than 4:3 the race shows a wider field of view instead of stretching the picture, and a
-**course map** can be shown beside it. With the widescreen art mod installed (see below), the races always get **slightly upscaled** sprites and
-textures and **clouds drifting across the sky**.
-
-![Widescreen race in the City, upscaled art](docs/screenshots/race_city_widescreen.jpg)
-
-### True 3D (WIP)
-An optional real 3D world with a much longer draw distance: the road ahead, the hills and the scenery stay visible far into the distance
-(split roads are not shown in this mode). The default, *Pseudo 3D*, redraws the game's own view at high resolution with every road fork intact.
-Gameplay never depends on the view: races play out identically in every mode.
-
-![True 3D on the Pacific Highway, widescreen with upscaled sprites and the course map](docs/screenshots/true3d_highway.jpg)
+## Menus
 
 ### Widescreen menus
 With the widescreen art mod installed, the menu and story pictures fill a 16:9 window: each picture gets painted side panels that continue its scene,
 instead of black bars (automatic - there is no option for it). The artwork is an optional mod, distributed separately: copy its `widescreen` folder into a `mod` folder next to `OpenRash.exe`
 (`mod\widescreen\`). It also holds the slightly upscaled sprites, textures and skies. Without it, the menus keep black bars and the original art is used.
 
-![Widescreen Game Mode screen](docs/screenshots/widescreen_gamemode.jpg)
+![Game Mode](docs/screenshots/menu_gamemode.jpg)
 
-![Widescreen track page](docs/screenshots/widescreen_trackpage.jpg)
+![Character select](docs/screenshots/menu_character.jpg)
+
+![Der Panzer Klub](docs/screenshots/menu_klub.jpg)
+
+![The race list](docs/screenshots/menu_races.jpg)
+
+### The Street
+Big Game's hub has Der Panzer Klub, Olley's Skoot-A-Rama, **Hurt Hardware** and the **Restroom** (Done brings you back to The Street).
+
+![The Street](docs/screenshots/menu_street.jpg)
+
+### Hurt Hardware
+A shop for your Big Game rider: weapons and their upgrades (damage, reach, backhand), gear (boots, an armoured vest), supplies (medikits,
+nitro packs, adrenaline shots, police scanners), insurance and charms. Schmooze can also offer you a bounty on another rider.
+
+![Hurt Hardware](docs/screenshots/menu_shop.jpg)
+
+### Restroom
+Load Game, Save Game, New Game, Player Name, Video Options, Game Options, Sound Mix and Configure Input.
+
+![Restroom](docs/screenshots/menu_restroom.jpg)
 
 ### Video Options
-The Restroom's old "Graphics Options" became **Video Options**: window or fullscreen, window size, fullscreen resolution, smoothing, V-Sync,
-videos, Pseudo / True 3D, FPS counter and segment tracker - all saved between sessions.
-F11 or Alt+Enter switches between window and fullscreen at any time.
+Window or fullscreen, window size, fullscreen resolution, smoothing, V-Sync, videos, the True 3D detail (with presets for a PC and a Steam Deck),
+FPS counter and segment tracker - all saved between sessions. F11 or Alt+Enter switches between window and fullscreen at any time.
 
-![Video Options](docs/screenshots/video_options.png)
+![Video Options](docs/screenshots/menu_video_options.jpg)
 
 ### Game Options
-Restroom > **Game Options** has the number of opponents, the course map and Change clothes, and shows whether the widescreen art mod is installed (everything in it is
-always on when it is).
+The number of opponents, the course map and Change clothes, and whether the widescreen art mod is installed (everything in it is always on when it is).
 
-![Game Options](docs/screenshots/game_options.png)
+![Game Options](docs/screenshots/menu_game_options.jpg)
 
 ### Rider colours
-Restroom > Game Options > Change clothes: recolour your rider's helmet, jacket, stripes, trousers and bike, with a live preview from four sides.
+Game Options > Change clothes: recolour your rider's helmet, jacket, stripes, trousers and bike, with a live preview from four sides.
 
-![Rider colours](docs/screenshots/rider_colours.png)
+![Rider colours](docs/screenshots/menu_rider_colours.jpg)
 
-### Music
-Restroom > Sound Mix > Music can play the game's licensed **songs** in random order, in menus and races, with a short "Now Playing" title.
-The **Jukebox** plays any song on request, and the music videos play again (both need the song / video files of your own copy of the game).
+### Saving and loading
+An in-game save / load screen instead of the Windows file box: every save is a tile with the rider, money, level, races, bike and date,
+and the game saves automatically after every race. A save (`saves\*.RRN`) keeps everything about your rider: progress, money, bike, the rivals'
+standings, every purchase, your rider's colours and your game settings (opponents, time of day, weather, fog, weapon picture). The machine's own
+settings (window, video, controls, sound) are not in it. Saves from older versions (`.RRS`) can't be loaded.
 
-![Now Playing](docs/screenshots/now_playing.png)
+![Save Game](docs/screenshots/menu_save.jpg)
+
+![Load Game](docs/screenshots/menu_load.jpg)
 
 ### And also
+- Music: Restroom > Sound Mix > Music can play the game's licensed **songs** in random order, in menus and races, with a short "Now Playing" title.
+  The **Jukebox** plays any song on request, and the music videos play again (both need the song / video files of your own copy of the game).
 - Sharp text: the menus' and option screens' text is drawn again at your window's own resolution, in the game's fonts, instead of being scaled up
   with the 640 x 480 picture.
 - Big Game is the only game mode: Restroom > New Game starts one at the character select (Thrash Mode is gone). The Restroom's Player Level
@@ -120,15 +137,8 @@ The **Jukebox** plays any song on request, and the music videos play again (both
 - Custom Race (Game Mode page): draw your own road - a straight line you bend with control points (drag from the road to add, drag, right-click to
   remove), give each segment a ramp (uphill / downhill) and a type (smooth, rolling hills, jumps, chicanes), see its elevation profile, zoom in
   (mouse wheel) - and race it on a level 1 track's scenery.
-- Settings live in `RoadRash.cfg` next to the exe
-  (an existing Road Rash registry entry is imported once).
-- An in-game save / load screen instead of the Windows file box: every save is a tile with the rider, money, level, races, bike and date,
-  and the game saves automatically after every race.
+- Settings live in `RoadRash.cfg` and `video.ini` next to the exe (an existing Road Rash registry entry is imported once).
 - Game controllers work out of the box.
-
-![Save Game screen](docs/screenshots/save_game.png)
-
-![Load Game screen](docs/screenshots/load_game.png)
 
 ## What you need
 - Windows 11.
@@ -153,7 +163,7 @@ More options:
 ```powershell
 scripts\build_inc.ps1                 # quicker rebuild: only the changed source files (-Files a.c,b.c when a header changed)
 scripts\build_quick.ps1 -NoShim       # the game only, not the DLLs
-scripts\run_new.ps1 -World3D on       # force True 3D (on) or Pseudo 3D (off) for this run; -Track 1..5 goes straight into a race
+scriptsun_new.ps1 -Track 1         # straight into a race (1..5)
 ```
 
 To play from another folder, put `OpenRash.exe`, `ddraw.dll`, `dsound.dll` and `SDL3.dll` together and start the exe with your

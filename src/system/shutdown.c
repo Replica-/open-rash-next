@@ -148,6 +148,7 @@ int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdSho
     ((const char **)g_configBlock)[0x18b] = "Window mode, resolution, scaling, filtering and V-sync.";   /* its help text (0x18b) */
     { void rr_ArsenalInit(void); rr_ArsenalInit(); }   /* the player's weapons, shared with the shim (race\arsenal.c) */
     if (g_playerFilePath) LoadPlayerFile();
+    { void rr_TestSaveAs(void); rr_TestSaveAs(); }   /* (test switch RR_TEST_SAVEAS: savegame.c) */
     if (!(char)HelperStart()) return 0;
     if (!(char)rr_WindowsCreate(inst, created, cmdShow)) return 0;
     StartupInit();

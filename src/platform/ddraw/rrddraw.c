@@ -234,6 +234,7 @@ static void ShowRoadPos(void)
     if(want<0){ char *e=getenv("RR_SHOW_POS"); want=(e && *e) ? (*e=='1') : 2; }   /* 2 = no switch: Video Options > Segment tracker decides (it can change at any time) */
     if(!(want==2 ? (g_vid.segpos || SpeedOn()) : (want || SpeedOn())) || !g_posRoad || !g_posLat || !g_posTrack || !g_lastSceneTick || (int)(GetTickCount()-g_lastSceneTick)>500) return;   /* races only: a 3D scene was drawn just now */
     r=*g_posRoad; _snprintf(t,sizeof t,"%s  T%d SEG %d.%02d X %d",g_w3On?"TRUE 3D":"GPU PSEUDO 3D",*g_posTrack,r>>8,(r&255)*100/256,*g_posLat); t[sizeof t-1]=0;
+    { const char *mt=g_w3On?W3MeshTag():NULL; if(mt){ size_t l=strlen(t); _snprintf(t+l,sizeof t-l,"  %s",mt); t[sizeof t-1]=0; } }   /* (FIXED / DYNAMIC MESH: a compiled race or built on the fly, world3d.inc) */
     if(SpeedOn()){ int sp=RR_GameSpeed(); size_t l=strlen(t); _snprintf(t+l,sizeof t-l,"  SPEED x%d.%d (Up/Down, Q quit)",sp/100,sp%100/10); t[sizeof t-1]=0; }
     bg.x=4; bg.y=4; bg.w=(float)strlen(t)*8+8; bg.h=14;
     SDL_GetRenderDrawBlendMode(g_ren,&bm); SDL_SetRenderDrawBlendMode(g_ren,SDL_BLENDMODE_BLEND);
@@ -303,6 +304,7 @@ static void Present(Surf *s)
     /* no SDL_PollEvent here: SDL's pump steals the game's WM_KEYDOWN messages (it polls them with PeekMessage) */
 }
 static void InstallTrace(void);
+static void PcAfterVidLoad(void);   /* playercfg.inc: a save loaded before video.ini was read */
 static void InitVideo(void)
 {
     char *e; g_headless = (e=getenv("RR_HEADLESS")) && *e=='1'; g_quiet = (e && *e=='2'); if(g_quiet) g_headless=1; if((e=getenv("RR_DUMP_GPU"))){ strncpy(g_dumpGpu,e,MAX_PATH-1); CreateDirectoryA(g_dumpGpu,NULL); }
@@ -317,9 +319,9 @@ static void InitVideo(void)
         SendMessageA(g_hwnd,WM_ACTIVATEAPP,TRUE,(LPARAM)GetCurrentThreadId()); SendMessageA(g_hwnd,WM_ACTIVATE,WA_ACTIVE,0); SendMessageA(g_hwnd,WM_SETFOCUS,0,0); }   /* fake app activation: the game skips its credits when it is not the active app */
     if (g_quiet && g_hwnd) { g_headless=0;   /* quiet GPU mode: keep the off-screen no-activate window, but go on to create the SDL renderer */
         if ((e=getenv("RR_QUIET_SIZE"))) { int qw=0, qh=0; if (sscanf(e,"%dx%d",&qw,&qh)==2 && qw>=320 && qh>=240 && qw<=7680 && qh<=4320) SetWindowPos(g_hwnd,HWND_BOTTOM,0,0,qw,qh,SWP_NOACTIVATE); } }   /* test switch: the renderer's output size (e.g. 1920x1080 to check the GPU renderer at a high resolution) */
-    else if (g_headless || !g_hwnd) return;
+    else if (g_headless || !g_hwnd) { PcAfterVidLoad(); return; }
     VidGfxPreset(VidOnDeck());   /* the True 3D detail defaults (High, or Steam Deck on a Deck) - quiet / test runs too, which read no video.ini */
-    { char *wm=getenv("RR_WINDOW"); g_vidLegacy=(wm && *wm); if(g_quiet || g_vidLegacy) g_vidPersist=0; else { VidLoad(); VidApply(); } if((e=getenv("RR_MENUSCALE")) && *e) g_vid.scale=VidClamp(atoi(e),VS_ASPECT,VS_WIDE); if((e=getenv("RR_FILTER")) && *e) g_vid.filter=*e==49; }   /* RR_MENUSCALE / RR_FILTER: tests; video.ini + Restroom > Video Options (winscale.inc); RR_WINDOW keeps the plain fixed window below */
+    { char *wm=getenv("RR_WINDOW"); g_vidLegacy=(wm && *wm); if(g_quiet || g_vidLegacy) g_vidPersist=0; else { VidLoad(); VidApply(); } PcAfterVidLoad(); if((e=getenv("RR_MENUSCALE")) && *e) g_vid.scale=VidClamp(atoi(e),VS_ASPECT,VS_WIDE); if((e=getenv("RR_FILTER")) && *e) g_vid.filter=*e==49; }   /* RR_MENUSCALE / RR_FILTER: tests; video.ini + Restroom > Video Options (winscale.inc); RR_WINDOW keeps the plain fixed window below */
     if (!g_quiet && g_vidLegacy) {   /* make the game window a normal 640x480 client-area window */
         char *wm=getenv("RR_WINDOW"); int popup=(wm && !_stricmp(wm,"popup")); RECT r; DWORD st=popup ? (WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS) : (WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_THICKFRAME|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS);   /* default: a normal movable window (GetWindowRect is translated, see inject.inc); RR_WINDOW=popup: borderless at (0,0) */
         r.left=0; r.top=0; r.right=g_w; r.bottom=g_h;
@@ -541,6 +543,7 @@ HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *out, IUnknown *outer)
 #include "../regstore_impl.h"   /* the game's settings file (the "Controls" blob is stored there, not in the registry) */
 #include "inputcfg.inc"
 #include "ridercol.inc"     /* Restroom > Game Options > Change clothes */
+#include "playercfg.inc"    /* the player's settings in the save file (src\system\savegame.c) */
 #include "videocfg.inc"
 #include "modscfg.inc"      /* Restroom > Game Options: the widescreen mod and its options */
 #include "shop.inc"         /* The Street > Hurt Hardware: the weapon shop (src\race\arsenal.c) */

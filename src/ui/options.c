@@ -27,7 +27,7 @@ RR_DATA(char,          g_hiResBikersFound);
 RR_DATA(char,          tbl_optVideoMode);
 RR_DATA(int,           g_screenADefault);
 RR_DATA(int,           g_screenBDefault);
-RR_DATA(char,          s_RRS);
+RR_DATA(char,          s_saveExt);
 RR_DATA(char,          s_pcts_colon_pcts);
 RR_DATA(char,          s_HiBob);
 RR_DATA(int,           g_musicGroup);
@@ -129,7 +129,7 @@ void __fastcall rr_FileDialogSetup(unsigned int flags)
         I32(o, 0x40) = 0;                          /* lCustData         */
         I32(o, 0x48) = 0;                          /* lpTemplateName    */
         I32(o, 0x20) = 0x103;                      /* nMaxFile          */
-        I32(o, 0x3c) = (int)&s_RRS;                   /* lpstrDefExt       */
+        I32(o, 0x3c) = (int)&s_saveExt;                  /* lpstrDefExt       */
         I32(o, 0x44) = RRCODE_FileDialogHook;                   /* lpfnHook (original hook procedure) */
     }
     I32(o, 0x34) = (int)(flags | 0x8082c);         /* Flags             */
@@ -199,9 +199,11 @@ int __fastcall rr_SelectCharacterOpen(int *item)
 RR_REPLACE_FAST(MenuDoneAction, rr_MenuDoneAction, 4);
 int __fastcall rr_MenuDoneAction(int item)
 {
-    int next = (int)MenuNextScreen(item);
+    extern int g_restroomFromStreet;   /* (the Restroom opened from The Street: back there - ui\menutrim.c) */
+    int next = (int)MenuNextScreen(item), street = g_restroomFromStreet;
+    g_restroomFromStreet = 0;
     MenuGlobalSet(0xe, 0xf);
-    return next == 0xf ? 0x19 : next;
+    return next == 0xf ? (street ? 0xf : 0x19) : next;
 }
 
 /* closes the option page: calls the page's own cleanup (function pointer g_optionCleanup) with the item's value */

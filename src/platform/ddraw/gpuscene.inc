@@ -283,7 +283,6 @@ static void GpuItemHud(int w,int h)
     SDL_SetRenderScale(g_ren,s,s);
     for(i=0;i<n;i++){ SDL_SetRenderDrawColor(g_ren,col[i].r,col[i].g,col[i].b,255); SDL_RenderDebugText(g_ren,6/s+5,6/s+4+i*11,ln[i]); }
     SDL_SetRenderScale(g_ren,1,1); SDL_SetRenderDrawColor(g_ren,255,255,255,255); }
-static const char *W3MeshTag(void);   /* (world3d.inc: the debug line - compiled race or built on the fly) */
 static void W3GrPanel(int w, int h);   /* (world3d.inc: the F10 grass panel) */
 static void GpuDrawExtras(int w,int h)
 {   SDL_SetRenderDrawBlendMode(g_ren,SDL_BLENDMODE_BLEND);
@@ -326,10 +325,6 @@ static void GpuDrawExtras(int w,int h)
         _snprintf(t,sizeof t,"FPS %d",fps); t[sizeof t-1]=0;
         bg.x=w-(float)strlen(t)*8-12; bg.y=4; bg.w=(float)strlen(t)*8+8; bg.h=14; SDL_SetRenderDrawColor(g_ren,0,0,0,140); SDL_RenderFillRect(g_ren,&bg);
         SDL_SetRenderDrawColor(g_ren,255,255,90,255); SDL_RenderDebugText(g_ren,bg.x+4,bg.y+3,t); }
-    {   const char *mt=W3MeshTag();   /* debug line (user, 2026-11-15: "say if its using a mesh file or not"): the compiled race or built on the fly */
-        if(mt){ SDL_FRect bg; bg.w=(float)strlen(mt)*8+8; bg.x=w-bg.w-4; bg.y=22;   /* (top right under the FPS counter: the segment tracker has the top left) */
-            bg.h=14; SDL_SetRenderDrawColor(g_ren,0,0,0,140); SDL_RenderFillRect(g_ren,&bg);
-            SDL_SetRenderDrawColor(g_ren,120,255,140,255); SDL_RenderDebugText(g_ren,bg.x+4,bg.y+3,mt); } }
     W3GrPanel(w,h);   /* the F10 grass panel (world3d.inc) */
     SDL_SetRenderDrawBlendMode(g_ren,SDL_BLENDMODE_NONE); }
 /* the race is over / the frame chain went away */

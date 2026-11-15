@@ -613,7 +613,7 @@ struct L_tbl_optVideoMode tbl_optVideoMode = { { 0,0,0,0,0,0,0,0,0,0,0,0,60,1,0,
 int g_screenADefault = 13;
 int g_screenBDefault = 9;
 int g_screenCDefault = 8;
-char s_RRS[4] = "RRS";
+char s_saveExt[4] = "RRN";   /* the save files' extension (was "RRS": savegame.c) */
 char s_pcts_colon_pcts[12] = {
     37,115,32,58,32,-109,37,115,-108
 };

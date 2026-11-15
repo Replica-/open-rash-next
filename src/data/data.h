@@ -457,7 +457,7 @@ extern struct L_tbl_optVideoMode tbl_optVideoMode;
 extern int g_screenADefault;
 extern int g_screenBDefault;
 extern int g_screenCDefault;
-extern char s_RRS[4];
+extern char s_saveExt[4];
 extern char s_pcts_colon_pcts[12];
 extern char s_Inset[8];
 extern char s_HiRes[8];

@@ -1,47 +1,49 @@
-/* Player file (*.RRS) save and load - hand-converted from SavePlayerFile (save) and LoadPlayerFile (load).
+/* Player file (*.RRN) save and load - SavePlayerFile (save) and LoadPlayerFile (load), first hand-converted from the original's .RRS file.
  *
- * File layout (160 bytes, little endian):
- *   0x00  uint32  checksum   Checksum() over the following 0x9c bytes
- *   0x04  uint32  magic      0xCAFEDEAD
- *   0x08  uint32  player[8]  copy of the live player block g_playerRecord (name, flags ...; byte [1] of it selects the record set)
- *   0x28  uint32  rec[10][3] ten 12-byte records, taken from the table at g_recordsTable (record set * 12 bytes, 0x204 bytes between records)
+ * The .RRN file (user, 2026-11-15: "save all the settings to the save file please like purchases, progress ... rename the extension for the save
+ * files to RRN and do not allow the old saves to be loadable"): everything that is the player's in one block, little endian -
+ *   0x00  uint32  magic      "RRN1"
+ *   0x04  uint32  version    RRN_VERSION
+ *   0x08  uint32  size       sizeof (RrnFile)
+ *   0x0c  uint32  checksum   Checksum() over the bytes after it
+ *   0x10  uint32  player[8]  the live player block g_playerRecord: character, level, races won, bike, cash, name ... (byte [1] selects the record set)
+ *   0x30  uint32  rec[10][3] the player's ten 12-byte records from the table at g_recordsTable (record set * 12 bytes, 0x204 bytes between records)
+ *   0xa8  RrArsenalSave      the purchases: weapons and their upgrades, gear, supplies, charms, insurance, the bounty (race\arsenal.c)
+ *         RrPlayerCfg        the player's settings: rider colours, Game Options, time of day / weather / fog, the weapon picture (the shim's: RR_PlayerCfg)
+ * The save screen's tiles read the first 0x30 bytes (platform\ddraw\savedlg.inc).  An old .RRS file (magic 0xCAFEDEAD) is not loaded.
  * The file name is in g_playerFilePath (set by the menus when a player is chosen/created).
- * After the 0xA0 bytes: the player's weapons and bounty (race\arsenal.c) - RrsExtra, its own magic and checksum; a file without it (an older save) loads
- * as a rider with bare knuckles.  The save screen's tiles read the first 0xA0 bytes only.
  */
 #include "../rr.h"
 #include "../data/records.h"
 #include <stdint.h>
+#include <stddef.h>
 #include <string.h>
 #include "../platform/arsenal_api.h"
+#include "../platform/playercfg_api.h"
 
-#define RRS_MAGIC     0xCAFEDEADu
-#define RRS_BYTES     0xA0
-#define RRS_SUMMED    0x9C
+#define RRN_MAGIC     0x314E5252u   /* "RRN1" */
+#define RRN_VERSION   1
 #define REC_COUNT     10
 #define REC_STRIDE    0x204      /* bytes between consecutive records of the 10 */
 #define REC_SIZE      12
 
-typedef struct RrsFile {
-    uint32_t checksum;
+typedef struct RrnFile {
     uint32_t magic;
+    uint32_t version;
+    uint32_t size;
+    uint32_t checksum;
     uint32_t player[8];
     uint32_t rec[REC_COUNT][3];
-} RrsFile;                       /* == 0xA0 bytes */
-
-#define RRS_EXTRA_MAGIC 0x32535241u   /* "ARS2" (the whole RrArsenalSave) */
-#define RRS_EXTRA_V1    0x31535241u   /* "ARS1": a 24-byte RrArsenalSave (the fields before backLv), same layout otherwise */
-#define RRS_EXTRA_V1_SAVE 24
-typedef struct RrsExtra {
-    uint32_t magic;
     RrArsenalSave arsenal;
-    uint32_t checksum;           /* Checksum() over magic + arsenal */
-} RrsExtra;
+    RrPlayerCfg cfg;
+} RrnFile;
+#define RRN_SUMMED(f) ((unsigned char *)(f) + 16)
+#define RRN_NSUMMED   ((unsigned)(sizeof (RrnFile) - 16))
+
 extern RrArsenal g_arsenal;      /* race\arsenal.c */
 void rr_ArsenalReset(void);
 void rr_ArsenalSet(const RrArsenalSave *s);
 
-RR_DATA(RrsFile, g_saveFile);  /* the global file image the original code used */
 RR_DATA(char,    g_playerFilePath);  /* path of the current player file */
 RR_DATA(char,    g_unsavedChanges);  /* "unsaved changes" flag */
 RR_DATA(int,     g_configBlock);  /* pointer to the string/config block */
@@ -60,17 +62,37 @@ int  __fastcall DirectionMirror(char v);                                        
 void __fastcall MenuEnableBuild(int mode);                                             /* refresh after load */
 #pragma comment(linker, "/alternatename:@MenuEnableBuild@4=MenuEnableBuild")
 
-static void extra_make(RrsExtra *x)
-{
-    memset(x, 0, sizeof *x);
-    x->magic = RRS_EXTRA_MAGIC;
-    x->arsenal = g_arsenal.s;
-    x->checksum = Checksum((unsigned char *)x, (unsigned)(sizeof *x - 4));
-}
-
 static uint32_t *record_ptr(int set, int i)
 {
     return (uint32_t *)(&(*(uint8_t *)&rec_sndPlayerEngine.g_recordsTable) + set * REC_SIZE + i * REC_STRIDE);
+}
+
+/* the shim's player settings (platform\ddraw\playercfg.inc): set = 0 read them into c, 1 put c in; 0 = no shim */
+static int player_cfg(RrPlayerCfg *c, int set)
+{
+    HMODULE sh = GetModuleHandleA("rrddraw.dll");
+    int (__stdcall *f)(RrPlayerCfg *, int) = sh ? (int (__stdcall *)(RrPlayerCfg *, int))GetProcAddress(sh, "RR_PlayerCfg") : 0;
+    return f ? f(c, set) : 0;
+}
+
+/* the player's whole state into f */
+static void rrn_make(RrnFile *f)
+{
+    int i, k;
+    memset(f, 0, sizeof *f);
+    for (i = 0; i < 8; i++)
+        f->player[i] = (&(*(uint32_t *)&rec_playerRecord.g_playerRecord))[i];
+    for (i = 0; i < REC_COUNT; i++) {
+        const uint32_t *src = record_ptr(rec_fadeFactors.g_selectedRecordSet, i);
+        for (k = 0; k < 3; k++)
+            f->rec[i][k] = src[k];
+    }
+    f->arsenal = g_arsenal.s;
+    if (!player_cfg(&f->cfg, 0)) memset(&f->cfg, 0, sizeof f->cfg);   /* (cfg.size 0: no settings, a load keeps the current ones) */
+    f->magic = RRN_MAGIC;
+    f->version = RRN_VERSION;
+    f->size = sizeof *f;
+    f->checksum = Checksum(RRN_SUMMED(f), RRN_NSUMMED);
 }
 
 RR_REPLACE_STD(SavePlayerFile, rr_SavePlayerFile, 0);
@@ -78,33 +100,17 @@ void __stdcall rr_SavePlayerFile(void)
 {
     HANDLE h;
     DWORD written;
-    int i, k;
+    RrnFile f;
 
-    h = CreateFileA(&g_playerFilePath, GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    h = CreateFileA(&g_playerFilePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return;
-
-    memset(&g_saveFile, 0, RRS_BYTES);
-    for (i = 0; i < 8; i++)
-        g_saveFile.player[i] = (&(*(uint32_t *)&rec_playerRecord.g_playerRecord))[i];
-    for (i = 0; i < REC_COUNT; i++) {
-        const uint32_t *src = record_ptr(rec_fadeFactors.g_selectedRecordSet, i);
-        for (k = 0; k < 3; k++)
-            g_saveFile.rec[i][k] = src[k];
-    }
-    g_saveFile.magic = RRS_MAGIC;
-    g_saveFile.checksum = Checksum((unsigned char *)&g_saveFile.magic, RRS_SUMMED);
-
-    if (!WriteFile(h, &g_saveFile, RRS_BYTES, &written, NULL)) {
+    rrn_make(&f);
+    if (!WriteFile(h, &f, sizeof f, &written, NULL) || written != sizeof f) {
         CrtStrerror((int)GetLastError());
         MessageBoxShow(NULL, *(char **)(g_configBlock + 0x5bc));
-    } else {
-        RrsExtra x;
-        extra_make(&x);
-        WriteFile(h, &x, sizeof x, &written, NULL);
-        SetEndOfFile(h);   /* (OPEN_ALWAYS: nothing of a longer old file left behind) */
+    } else
         g_unsavedChanges = 0;
-    }
     CloseHandle(h);
 }
 
@@ -112,57 +118,63 @@ RR_REPLACE_STD(LoadPlayerFile, rr_LoadPlayerFile, 0);
 void __stdcall rr_LoadPlayerFile(void)
 {
     HANDLE h;
-    DWORD got;
+    DWORD got = 0;
     int i, k;
+    RrnFile f;
 
     h = CreateFileA(&g_playerFilePath, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (h == INVALID_HANDLE_VALUE)
         return;
 
-    if (!ReadFile(h, &g_saveFile, RRS_BYTES, &got, NULL)) {
+    memset(&f, 0, sizeof f);
+    if (!ReadFile(h, &f, sizeof f, &got, NULL)) {
         CrtStrerror((int)GetLastError());
         MessageBoxShow(NULL, *(char **)(g_configBlock + 0x5c0));
-    } else if (g_saveFile.magic != RRS_MAGIC) {
+    } else if (got != sizeof f || f.magic != RRN_MAGIC || f.version != RRN_VERSION || f.size != sizeof f) {   /* (an old .RRS file too) */
         MessageBoxShow(NULL, *(char **)(g_configBlock + 0x5c4));
-    } else if (Checksum((unsigned char *)&g_saveFile.magic, RRS_SUMMED) != g_saveFile.checksum) {
+    } else if (Checksum(RRN_SUMMED(&f), RRN_NSUMMED) != f.checksum) {
         MessageBoxShow(NULL, *(char **)(g_configBlock + 0x5c8));
     } else {
         SkillTablesRegenerate();
         for (i = 0; i < 8; i++)
-            (&(*(uint32_t *)&rec_playerRecord.g_playerRecord))[i] = g_saveFile.player[i];
+            (&(*(uint32_t *)&rec_playerRecord.g_playerRecord))[i] = f.player[i];
         rec_fadeFactors.g_selectedRecordSet = (char)DirectionMirror(rec_playerRecord.g_playerCharacter);
         for (i = 0; i < REC_COUNT; i++) {
             uint32_t *dst = record_ptr(rec_fadeFactors.g_selectedRecordSet, i);
             for (k = 0; k < 3; k++)
-                dst[k] = g_saveFile.rec[i][k];
+                dst[k] = f.rec[i][k];
         }
-        {   RrsExtra x;
-            memset(&x, 0, sizeof x);
-            if (ReadFile(h, &x, sizeof x, &got, NULL) && got == sizeof x && x.magic == RRS_EXTRA_MAGIC && Checksum((unsigned char *)&x, (unsigned)(sizeof x - 4)) == x.checksum)
-                rr_ArsenalSet(&x.arsenal);
-            else if (got == 4 + RRS_EXTRA_V1_SAVE + 4 && x.magic == RRS_EXTRA_V1 && Checksum((unsigned char *)&x, 4 + RRS_EXTRA_V1_SAVE) == *(uint32_t *)((char *)&x + 4 + RRS_EXTRA_V1_SAVE)) {
-                RrArsenalSave s;   /* (version 1: the newer fields start at zero) */
-                memset(&s, 0, sizeof s); memcpy(&s, &x.arsenal, RRS_EXTRA_V1_SAVE);
-                rr_ArsenalSet(&s);
-            }
-            else rr_ArsenalReset();
-        }
+        rr_ArsenalSet(&f.arsenal);
+        if (f.cfg.size == sizeof f.cfg) player_cfg(&f.cfg, 1);
         MenuEnableBuild(2);
         g_unsavedChanges = 0;
     }
     CloseHandle(h);
 }
 
+/* test switch RR_TEST_SAVEAS=<file>: at start-up, after the player file named on the command line was loaded, the player is saved to <file> at once
+ * (a save / load round trip: the two files must be the same) */
+void rr_TestSaveAs(void)
+{
+    char path[MAX_PATH], keep[MAX_PATH];
+    DWORD n = GetEnvironmentVariableA("RR_TEST_SAVEAS", path, sizeof path);
+    if (n == 0 || n >= sizeof path) return;
+    lstrcpynA(keep, &g_playerFilePath, sizeof keep);
+    lstrcpyA(&g_playerFilePath, path);
+    rr_SavePlayerFile();
+    lstrcpyA(&g_playerFilePath, keep);
+}
+
 /* Auto save (the first two slots of the save screen, platform\ddraw\savedlg.inc): after every Big Game race the player file is also written to
- * saves\Autosave1.RRS or saves\Autosave2.RRS, whichever is missing or older.  Built like rr_SavePlayerFile, but in a local image: the game's own
- * state (the file image, the "unsaved changes" flag, the current file name) is left as it was.  Not in the automated tests (they never write files). */
+ * saves\Autosave1.RRN or saves\Autosave2.RRN, whichever is missing or older.  The game's own state (the "unsaved changes" flag, the current file
+ * name) is left as it was.  Not in the automated tests (they never write files). */
 RR_DATA(int, g_gameMode);      /* 2 = Big Game (rr_CharacterStartMoney) */
 void rr_AutoSave(void)
 {
-    static const char *const name[2] = { "saves\\Autosave1.RRS", "saves\\Autosave2.RRS" };
+    static const char *const name[2] = { "saves\\Autosave1.RRN", "saves\\Autosave2.RRN" };
     WIN32_FILE_ATTRIBUTE_DATA fa[2];
-    int have[2], i, k, pick;
-    RrsFile f;
+    int have[2], i, pick;
+    RrnFile f;
     HANDLE h;
     DWORD written;
     char e[4];
@@ -171,17 +183,9 @@ void rr_AutoSave(void)
     CreateDirectoryA("saves", NULL);
     for (i = 0; i < 2; i++) have[i] = GetFileAttributesExA(name[i], GetFileExInfoStandard, &fa[i]) != 0;
     pick = !have[0] ? 0 : !have[1] ? 1 : (CompareFileTime(&fa[0].ftLastWriteTime, &fa[1].ftLastWriteTime) <= 0 ? 0 : 1);
-    memset(&f, 0, sizeof f);
-    for (i = 0; i < 8; i++) f.player[i] = (&(*(uint32_t *)&rec_playerRecord.g_playerRecord))[i];
-    for (i = 0; i < REC_COUNT; i++) {
-        const uint32_t *src = record_ptr(rec_fadeFactors.g_selectedRecordSet, i);
-        for (k = 0; k < 3; k++) f.rec[i][k] = src[k];
-    }
-    f.magic = RRS_MAGIC;
-    f.checksum = Checksum((unsigned char *)&f.magic, RRS_SUMMED);
+    rrn_make(&f);
     h = CreateFileA(name[pick], GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (h == INVALID_HANDLE_VALUE) return;
-    WriteFile(h, &f, RRS_BYTES, &written, NULL);
-    { RrsExtra x; extra_make(&x); WriteFile(h, &x, sizeof x, &written, NULL); }
+    WriteFile(h, &f, sizeof f, &written, NULL);
     CloseHandle(h);
 }
