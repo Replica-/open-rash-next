@@ -50,6 +50,8 @@ static char *ExtractorEnv(const char *path, int track, int level, const char *cf
     return out;
 }
 
+void rr_LoadStep(int permille, const char *what);   /* system\race_session.c: the race start's loading screen */
+
 /* path of the course file; made by the extractor when it is not there yet.  0 = none */
 static int CourseFile(char *path, int track, int level)
 {
@@ -57,12 +59,15 @@ static int CourseFile(char *path, int track, int level)
     CreateDirectoryA("world3d", NULL);
     wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r.rrx" : "world3d\\t%d_l%d.rrx", track, level + 1);   /* (_1r: one road, no forks - True 3D) */
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return 1;
+    rr_LoadStep(250, "Making the course file (the first time on this course)");
     wsprintfA(tmp, "%s.%lu.tmp", path, GetCurrentProcessId());
     wsprintfA(cfg, "world3d\\extract.%lu.cfg", GetCurrentProcessId());
     if (!GetModuleFileNameA(NULL, exe, sizeof exe) || !(env = ExtractorEnv(tmp, track, level, cfg))) return 0;
     memset(&si, 0, sizeof si); si.cb = sizeof si; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
     if (CreateProcessA(exe, NULL, NULL, NULL, FALSE, CREATE_NO_WINDOW, env, NULL, &si, &pi)) {
-        if (WaitForSingleObject(pi.hProcess, 60000) != WAIT_OBJECT_0) TerminateProcess(pi.hProcess, 1);
+        int t;   /* (at most a minute; the loading screen's bar creeps on towards 45 % meanwhile) */
+        for (t = 0; t < 600 && WaitForSingleObject(pi.hProcess, 100) != WAIT_OBJECT_0; t++) rr_LoadStep(250 + 200 * t / (t + 120), NULL);
+        if (t == 600) TerminateProcess(pi.hProcess, 1);
         GetExitCodeProcess(pi.hProcess, &code);
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     } else code = 0x10000 | GetLastError();

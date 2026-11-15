@@ -310,7 +310,13 @@ static unsigned C3_Colour(int mat, int kind, int k)
 static void C3_Push(C3Course *c, const float *p, unsigned rgba)
 {
     C3Vert *v;
-    if (c->nv == c->cap) { c->cap = c->cap ? c->cap * 2 : 65536; c->v = (C3Vert *)realloc(c->v, sizeof(C3Vert) * c->cap); c->vpiece = (int *)realloc(c->vpiece, sizeof(int) * c->cap); }
+    if (c->nv == c->cap) {   /* (grown only when both blocks could be: in the 32-bit address space a big doubling - 80 MB and more for a whole course -
+                                can fail after a few races; the old code wrote on through the NULL it got back and crashed: user, 2026-11-15) */
+        int nc = c->cap ? c->cap * 2 : 65536; C3Vert *nv2 = (C3Vert *)realloc(c->v, sizeof(C3Vert) * nc); int *np;
+        if (nv2) c->v = nv2;
+        np = nv2 ? (int *)realloc(c->vpiece, sizeof(int) * nc) : NULL;
+        if (!np) { static int told; if (!told++) LOG("world3d: out of memory at %d vertices - the rest of this mesh is left out", c->nv); return; }   /* (the vertex dropped; the mesh so far stays) */
+        c->vpiece = np; c->cap = nc; }
     c->vpiece[c->nv] = c->cur;
     v = &c->v[c->nv++];
     v->x = p[0]; v->y = p[1]; v->z = p[2]; v->u = 0; v->v = 0; v->rgba = rgba; v->tex = -1; v->ox = 0; v->oy = 0;
@@ -1323,6 +1329,7 @@ static void C3_Tunnel(C3Course *c, int k, int h, const RoadSection *s0, double o
     }
 }
 
+static void (*C3_progress)(int done, int all);   /* while the whole course is built (C3_Build): every 32 pieces, how far (the loading screen; NULL = none) */
 static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
 {
     int k;
@@ -1330,6 +1337,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
     if (k1 > c->n - 1) k1 = c->n - 1;
     for (k = k0; k < k1; k++) {
         const RoadPiece *p0 = &c->piece[k], *p1 = &c->piece[k + 1];
+        if (C3_progress && !((k - k0) & 31)) C3_progress(k - k0, k1 - k0);
         C3Row r0, r1; int h;
         c->cur = k;
         for (h = 0; h < (p0->layout == 2 ? 2 : 1); h++) {   /* split road: half B in its own frames (C3_FramesB; at the join they are A's) */

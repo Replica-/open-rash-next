@@ -147,7 +147,7 @@ static float WxWrapPi(float b) { b = (float)fmod(b + 3.14159265f, 6.2831853f); i
 static float WxSunBear(float tt, int P)   /* the sun's bearing from the view's forward (radians, + = right) */
 {   if (g_w3On && g_wxHdOn) return WxWrapPi(WX_SUNAZ + (tt - 0.5f) * 2.4f - (float)g_wxHd);
     return WxWrapPi((g_hsLeft + (0.22f + 0.56f * tt) * P + g_hsX - (float)g_w3cam.centreX) / P * 6.2831853f); }   /* (where the panorama has it) */
-#define WX_SHMAXLEN 2.5f   /* the shadows' longest, per unit of height (low sun: was 5 - too far stretched at sunset, user 2026-11-15) */
+#define WX_SHMAXLEN 2.0f   /* the shadows' longest, per unit of height (low sun: was 5, then 2.5 - still too far stretched at sunset / dawn, user 2026-11-15: "cap it by another 20%") */
 static float WxSunShadowRaw(float *bear, float *len);
 static float WxSunShadow(float *bear, float *len)
 {   float op = WxSunShadowRaw(bear, len); if (*len > WX_SHMAXLEN) *len = WX_SHMAXLEN; return op; }

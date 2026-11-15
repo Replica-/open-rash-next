@@ -140,6 +140,7 @@ static void PumpSdl(void)
 {   SDL_Event ev; while(SDL_PollEvent(&ev)){ if(ev.type==SDL_EVENT_WINDOW_CLOSE_REQUESTED && g_origProc){ CallWindowProcA(g_origProc,g_hwnd,WM_CLOSE,0,0); CreateThread(NULL,0,ExitLater,NULL,0,NULL); } } }
 static int ReadPixelsArgb(DWORD *px,int w,int h);   /* SDL3 read-back (defined below) */
 #include "detmenu.inc"
+static void LsStep(int permille, const char *what);   /* loadscreen.inc: the race start's loading screen */
 #include "winscale.inc"
 #include <math.h>
 #include "gpuscene.inc"
@@ -536,6 +537,7 @@ HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *out, IUnknown *outer)
 #include "timetrace.inc"
 #include "soundmix.inc"
 #include "musicbox.inc"     /* Sound Mix > Music = Random songs: AUDIO\MUSIC\*.RRA + the now-playing ticker */
+#include "loadscreen.inc"   /* the race start's loading screen: a progress bar while the race is set up */
 #include "splash.inc"       /* the opening splash: NEXT under the logo, the version */
 #include "videoplay.inc"    /* the game's videos (VIDEO_UP\*.mp4) through Media Foundation */
 #include "jukebox.inc"

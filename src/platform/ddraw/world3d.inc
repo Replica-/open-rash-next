@@ -1035,10 +1035,12 @@ static void W3StaticCut(void)
         if (e > b) { g_w3sb[g_w3snb] = g_w3b[i]; g_w3sb[g_w3snb].first = b; g_w3sb[g_w3snb].count = e - b; g_w3snb++; } } }
 
 /* race start: the course file + the game's own road (pieces 0 .. 127 must agree with the file) */
+static void W3BuildProgress(int done, int all) { LsStep(500 + (int)(400.0 * done / (all > 0 ? all : 1)), NULL); }   /* (the loading screen: the course's mesh 50-90 %) */
 __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWorld3DLive *live)
 {   unsigned hdr[16]; FILE *f; int i, bad = 0;
     g_w3On = 0; g_w3HaveCam = 0; g_w3off = g_w3offB = g_w3camB = 0;
     if (!path || !live) return 0;
+    LsStep(450, "Reading the course");   /* (the loading screen, loadscreen.inc) */
     W3Free();
     if (!(f = fopen(path, "rb"))) { LOG("world3d: no %s", path); return 0; }
     if (fread(hdr, 4, 16, f) != 16) { fclose(f); return 0; } fclose(f);
@@ -1076,11 +1078,12 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     g_w3compiled = 0;
     if (g_w3fork) {   /* forks off: the compiled race when there is one (or it is being compiled: RR_W3COMPILE=1), else built on the fly as ever */
         unsigned long long key = W3MeshKey(path);
+        LsStep(500, "Loading the course's 3D mesh");
         if (W3MeshLoad(path, key)) { g_w3c.L = W3_L; C3_Frames(&g_w3c); C3_FramesB(&g_w3c); g_w3c.fr = g_w3c.frame; C3_OneRoadWidth(&g_w3c); g_w3compiled = 1; }   /* (what C3_Build does besides the mesh) */
         else if (getenv("RR_W3COMPILE")) {
-            g_w3c.skirts = 1; C3_Build(&g_w3c, W3_L, &g_w3a); g_w3c.skirts = 0;
+            g_w3c.skirts = 1; C3_progress = W3BuildProgress; C3_Build(&g_w3c, W3_L, &g_w3a); C3_progress = NULL; g_w3c.skirts = 0;
             g_w3nb = C3_Batches(&g_w3c, g_w3cb, 4096); W3MeshSave(path, key); g_w3compiled = 1; } }
-    if (!g_w3compiled) { C3_Build(&g_w3c, W3_L, &g_w3a); g_w3nb = C3_Batches(&g_w3c, g_w3cb, 4096); }
+    if (!g_w3compiled) { LsStep(500, "Building the 3D course"); C3_progress = W3BuildProgress; C3_Build(&g_w3c, W3_L, &g_w3a); C3_progress = NULL; g_w3nb = C3_Batches(&g_w3c, g_w3cb, 4096); }
     strcpy(g_w3meshTag, g_w3compiled ? "FIXED MESH" : "DYNAMIC MESH");   /* (user, 2026-11-15: on the segment tracker line, "dynamic mesh" vs "fixed mesh"; dynamic = built on the fly: the live stretch round the camera, W3Live) */
     W3GpuBatches(g_w3cb, g_w3nb, g_w3b);   /* (same order as g_w3cb: W3Live cuts them; the renderer draws the opaque ones first) */
     R3_SetStatic(&g_w3r, (const R3Vert *)g_w3c.v, g_w3c.nv);
@@ -1101,7 +1104,9 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
             g_w3l.fr = g_w3l.frame; g_w3l.soft = 1; }
         else { W3FreeSoft(); g_w3l.frame = g_w3c.frame; g_w3l.frameB = g_w3c.frameB; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB; } }
     g_w3lo = g_w3hi = -1; g_w3lnb = 0; g_w3snb = 0; R3_SetLive(&g_w3r, NULL, 0);
+    LsStep(900, "Lights, grass and shadows");
     W3Names(); W3Lamps(); W3Casters(); W3GrassInit(); W3Hydrants();
+    LsStep(970, NULL);
     LOG("world3d: %s: %d pieces, %d vertices, %d batches, %d textures", path, g_w3c.n, g_w3c.nv, g_w3nb, g_w3a.ntex);
     g_w3On = 1;
     return 1; }

@@ -1,5 +1,7 @@
 # Link the C objects in analysis\build\ng + the resources (src\resources, via make_res.ps1) + the Windows SDK import libs.
 # Output: analysis\build\OpenRash.exe (+ .map, .pdb).
+# /LARGEADDRESSAWARE: 4 GB of address space on 64-bit Windows / Proton instead of 2 GB - the True 3D course meshes (up to ~250 MB on a level 5 course)
+# fragmented the 2 GB after a few races and a mesh allocation failed (user, 2026-11-15)
 . "$PSScriptRoot\common.ps1"
 Enter-RrVcVars
 $vc = (Resolve-Path "$VsBuildTools\VC\Tools\MSVC\*\bin\Hostx64\x86").Path
@@ -14,6 +16,6 @@ $res = "$Build\resources.res"
 & "$PSScriptRoot\make_res.ps1" -Out $res | Out-Null
 $objs = Get-ChildItem "$Build\ng" -Filter *.obj -ErrorAction SilentlyContinue | ForEach-Object FullName
 Remove-Item "$Build\OpenRash.pdb" -ErrorAction SilentlyContinue
-$args2 = @("/nologo","/MACHINE:X86","/SUBSYSTEM:WINDOWS","/ENTRY:rr_entry","/BASE:0x400000","/FIXED","/NODEFAULTLIB","/MAP:$Build\OpenRash.map","/DEBUG","/PDB:$Build\OpenRash.pdb","/PDBALTPATH:OpenRash.pdb","/OPT:REF","/OPT:ICF","/OUT:$Build\OpenRash.exe") + $objs + $libs + @($res)
+$args2 = @("/nologo","/MACHINE:X86","/SUBSYSTEM:WINDOWS","/ENTRY:rr_entry","/BASE:0x400000","/FIXED","/LARGEADDRESSAWARE","/NODEFAULTLIB","/MAP:$Build\OpenRash.map","/DEBUG","/PDB:$Build\OpenRash.pdb","/PDBALTPATH:OpenRash.pdb","/OPT:REF","/OPT:ICF","/OUT:$Build\OpenRash.exe") + $objs + $libs + @($res)
 ($args2 | ForEach-Object { '"' + $_ + '"' }) | Set-Content "$Build\link.rsp" -Encoding ascii
 & "$vc\link.exe" "@$Build\link.rsp" 2>&1 | Where-Object { $_ -match 'error|LNK[12]' }

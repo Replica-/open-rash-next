@@ -66,6 +66,10 @@ static float ClSkyBlue(DWORD p)
     if(s1<0) s1=0; if(s1>1) s1=1; if(s2<0) s2=0; if(s2>1) s2=1; if(s3<0) s3=0; if(s3>1) s3=1; return s1*s2*s3; }
 static int ClPaleSky(DWORD p)   /* the very light blue just above the horizon (haze; a fitted sky gradient), too pale for ClSkyBlue; not snow */
 {   int R=(p>>16)&255, G=(p>>8)&255, B=p&255; return B>=235 && B-R>=35 && B-G>=15; }
+static int ClHaze(DWORD p)   /* near-white, still blue: the haze at the horizon (ClMakeFore: only as a smooth continuation of the sky above it) */
+{   int R=(p>>16)&255, G=(p>>8)&255, B=p&255; return B>=238 && B-R>=18 && B-G>=12; }
+static int ClNear(DWORD a,DWORD b,int d)   /* every channel within d */
+{   int i; for(i=0;i<24;i+=8){ int k=(int)((a>>i)&255)-(int)((b>>i)&255); if(k>d || k<-d) return 0; } return 1; }
 static int ClCloudy(DWORD p)
 {   int R=(p>>16)&255, G=(p>>8)&255, B=p&255, lo=R<G?R:G, hi=R>G?R:G; if(B<lo) lo=B; if(B>hi) hi=B; return lo>=165 && hi-lo<=60 && B>=R-8; }
 static void ClMakeFore(SDL_Surface *sf,float deep,SDL_Texture **out,SDL_Texture **outGrey,SDL_Texture **outWhite)   /* (outGrey / outWhite: NULL = not wanted) */
@@ -73,12 +77,17 @@ static void ClMakeFore(SDL_Surface *sf,float deep,SDL_Texture **out,SDL_Texture 
     if(*out){ SDL_DestroyTexture(*out); *out=NULL; } if(!c) return;
     ymax=(int)(c->h*deep); col=(int*)malloc(sizeof(int)*c->w); if(!col){ SDL_DestroySurface(c); return; }
     for(x=0;x<c->w;x++){
-        int hz=-1; for(last=-1,y=0;y<ymax;y++){ DWORD p=*(DWORD*)((BYTE*)c->pixels+(size_t)y*c->pitch+x*4); int R=(p>>16)&255;
+        int hz=-1; DWORD prev=0; for(last=-1,y=0;y<ymax;y++){ DWORD p=*(DWORD*)((BYTE*)c->pixels+(size_t)y*c->pitch+x*4); int R=(p>>16)&255, sky;
             /* a sea horizon (PCH: the painted sea is sky blue too): low down, below pale haze (hz: its red), a much darker, bluer colour within a few
                pixels - the sky ends there, the sea stays */
             if(y>c->h*0.3f && hz>=0 && hz-R>45 && (int)(p&255)-R>40) break;
-            if(ClPaleSky(p) && R>=200) hz=R;
-            if(ClSkyBlue(p)>=0.5f || ClPaleSky(p)) last=y; else if(!ClCloudy(p)) break; }
+            sky=ClSkyBlue(p)>=0.5f || ClPaleSky(p);
+            /* the near-white haze just above the hills (PCH: 216,226,250 .. 224,231,251 - too pale for ClPaleSky) is sky too while it carries on
+               smoothly from the sky above it (at most 6 a channel a row: a pale blue City tower's top is a jump).  It stayed in the picture: pale bars
+               over the True 3D sunset (user, 2026-11-15: "you can see the squares on where the skyline graphic meets with the dynamic sky") */
+            if(!sky && ClHaze(p) && last==y-1 && y>0 && ClNear(p,prev,6)) sky=1;
+            if((ClPaleSky(p) || sky) && R>=200) hz=R;
+            if(sky){ last=y; prev=p; } else if(!ClCloudy(p)) break; }
         col[x]=last; }
     for(x=0;x<c->w;x++){   /* a lone column far off its neighbours (one odd pixel high in the sky, pale pixels down a hill) made a 1-pixel slit or bar: within 4 rows of the median of 9 */
         for(i=0;i<9;i++) m[i]=col[(x+i-4+c->w)%c->w];

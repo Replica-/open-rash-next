@@ -125,16 +125,27 @@ void __stdcall rr_RaceTablesFree(void)
     ChannelMemFree();
 }
 
+/* the race start's loading screen (the shim's loadscreen.inc, RR_LoadProgress): how far the set-up is, 0..1000, and what it is doing (NULL = the same);
+   the track (1..5) and level (1..5) for its title */
+void rr_LoadStep(int permille, const char *what)
+{
+    static void (__stdcall *f)(int, const char *, int, int); static int looked;
+    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (void (__stdcall *)(int, const char *, int, int))GetProcAddress(sh, "RR_LoadProgress") : 0; looked = 1; }
+    if (f) f(permille, what, (*(int *)&rec_demoPage.g_raceTrack), (*(unsigned char *)&rec_playerRecord.g_playerLevel) + 1);
+}
+
 /* start of a race: resets the shared state, loads the track resources (RaceResourcesLoad), builds the UI fonts (sizes depend on g_hiResRace = high-res UI) */
 RR_REPLACE(RaceSetup, rr_RaceSetup);
 void __cdecl rr_RaceSetup(void)
 {
     int *obj, h;
+    rr_LoadStep(0, "Track resources");
     PictureStateReset();
     PoolMark1();
     g_raceResLoaded = 1;
     (&g_cheatSpeed)[0] = 0; (&g_cheatSpeed)[1] = 0; (&g_cheatSpeed)[2] = 0; (&g_cheatSpeed)[3] = 0;
     TrackResourcesLoad();
+    rr_LoadStep(80, "Race sprites and sounds");
     {   /* widescreen races (automatic when the window is wider than 4:3): the shim widens the frame (returns its width, 0 = normal 640); the projection centre / culling limit g_projWidth is the frame width in half-pixels (hi-res frames only) */
         int (__stdcall *rb)(void) = g_hiResRace ? (int (__stdcall *)(void))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_RaceBegin") : 0;
         int ws = rb ? rb() : 0;
@@ -143,6 +154,7 @@ void __cdecl rr_RaceSetup(void)
     }
     obj = (int *)rr_RaceResourcesLoad();
     if (obj && obj[4] && *(int *)(obj[4] + 0xc)) AssetSystemStart(*(int *)(obj[4] + 0xc));
+    rr_LoadStep(200, "The road");   /* (RaceReset builds it; then the course and the True 3D world: render\world3d_feed.c, the shim) */
     ScreenOffsetSet(rec_Controls.g_projWidth, rec_Controls.g_screenMidY);
     g_nearestObj = 0; (*(unsigned *)&rec_featureAccum1.g_raceTime) = 0;
     RoadViewReset();
@@ -158,6 +170,7 @@ void __cdecl rr_RaceSetup(void)
         h = 0xc;
     }
     g_fontSymbols = CreateFontA(h, 0, 0, 0, 400, 0, 0, 0, 2, 4, 0, 0, 4, &(*(char *)&s_fontNames.s_Wingdings));
+    rr_LoadStep(1000, "Get ready to race!");
 }
 
 static void dd_clear_and_flip(void)
