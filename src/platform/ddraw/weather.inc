@@ -147,7 +147,11 @@ static float WxWrapPi(float b) { b = (float)fmod(b + 3.14159265f, 6.2831853f); i
 static float WxSunBear(float tt, int P)   /* the sun's bearing from the view's forward (radians, + = right) */
 {   if (g_w3On && g_wxHdOn) return WxWrapPi(WX_SUNAZ + (tt - 0.5f) * 2.4f - (float)g_wxHd);
     return WxWrapPi((g_hsLeft + (0.22f + 0.56f * tt) * P + g_hsX - (float)g_w3cam.centreX) / P * 6.2831853f); }   /* (where the panorama has it) */
+#define WX_SHMAXLEN 2.5f   /* the shadows' longest, per unit of height (low sun: was 5 - too far stretched at sunset, user 2026-11-15) */
+static float WxSunShadowRaw(float *bear, float *len);
 static float WxSunShadow(float *bear, float *len)
+{   float op = WxSunShadowRaw(bear, len); if (*len > WX_SHMAXLEN) *len = WX_SHMAXLEN; return op; }
+static float WxSunShadowRaw(float *bear, float *len)   /* (the sun's real elevation as a shadow length, up to 5: WxSunDir lights the walls with it) */
 {   const WxState *w = &g_wx; int P = g_hsPeriod; float up = WxS(-0.04f, 0.10f, w->e);
     *bear = 3.14159265f; *len = 0.35f;
     if (!g_w3On) return 0;
@@ -164,7 +168,7 @@ static float WxSunDir(const float *fwd, const float *right, float *dir)
 {   const WxState *w = &g_wx; float bear, len, el, up = WxS(-0.04f, 0.10f, w->e), ch;
     dir[0] = 0; dir[1] = 1; dir[2] = 0;
     if (!g_w3On || WxWeather() != 0 || up <= 0 || g_hsPeriod <= 0) return 0;
-    WxSunShadow(&bear, &len); el = (float)atan(1.0 / (len > 0.01f ? len : 0.01f)); ch = cosf(el);
+    WxSunShadowRaw(&bear, &len); el = (float)atan(1.0 / (len > 0.01f ? len : 0.01f)); ch = cosf(el);
     dir[0] = (fwd[0] * cosf(bear) + right[0] * sinf(bear)) * ch; dir[2] = (fwd[2] * cosf(bear) + right[2] * sinf(bear)) * ch; dir[1] = sinf(el);
     return up * (1 - 0.7f * w->fogMax); }
 static double WxSeconds(void) { return g_wxTime; }
@@ -289,7 +293,7 @@ static int WxNightLayer(SDL_Texture *t, int beacon)
 static float WxSunUp(float *el)   /* how strongly the sun shines (0: none - weather, night) and its elevation (radians) */
 {   const WxState *w = &g_wx; float bear, len, up = WxS(-0.04f, 0.10f, w->e);
     *el = 0; if (!g_w3On || WxWeather() != 0 || up <= 0 || g_hsPeriod <= 0) return 0;
-    WxSunShadow(&bear, &len); *el = (float)atan(1.0 / (len > 0.01f ? len : 0.01f));
+    WxSunShadowRaw(&bear, &len); *el = (float)atan(1.0 / (len > 0.01f ? len : 0.01f));
     return up * (1 - w->fogMax); }
 /* is the sun behind a building?  The ray from the eye towards it against the buildings' boxes (course3d.h C3_Building footprints, height) */
 static int WxSunBlocked(const float *eye, const float *dir)

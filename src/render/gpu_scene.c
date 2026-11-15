@@ -94,6 +94,12 @@ static void CourseProgress(void)
 /* the frame driver locked the frame buffer for this frame: the sky panorama is in it, no world polygon yet */
 void rr_World3DFrame(void);   /* world3d_feed.c */
 int rr_World3DObjInfo(float *yaw, float *lat, unsigned *id);   /* world3d_feed.c: what the object of the last W3_OBJ lookup is (RRO_*) */
+int rr_World3DObjShadow(void);   /* world3d_feed.c: ... and whether that record is a bike's shadow */
+static unsigned ObjFlags(const RrGpuQuad *g)
+{
+    if (g->objDepth < 0) return 0;
+    return (rr_World3DObjShadow() ? RRQ_SHADOW : 0) | (g->objKind == RRO_PLAYER && ((*(int *)&rec_featureAccum1.g_inputBits) & 2) ? RRQ_BRAKE : 0);
+}
 void rr_GpuSceneBegin(void)
 {
     int clip[4];
@@ -123,6 +129,7 @@ void rr_GpuFlat(const int *v, const double *hv, unsigned char colour, int world,
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
     g.riderSprite = -1;
+    g.objFlags = ObjFlags(&g);
     Clip(&g);
     g_gpuQuad(&g);
 }
@@ -145,6 +152,7 @@ void rr_GpuTextured(const int *node, const int *v, const double *hv, const int *
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);   /* (W3_OBJ just looked this record up) */
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
     g.riderSprite = -1;
+    g.objFlags = ObjFlags(&g);
     if (obj[3] & 0x2000) {             /* rider tile: just composed into the object's 256-wide level-0 bitmap by TileCopy256, the next rider reuses it */
         g.bits[0] = *(const unsigned char **)((const char *)obj + 0x38);
         { extern const unsigned char *rr_tileSprDst; extern int rr_tileSpr;   /* (road_view.c: the HiBob sprite of that copy) */

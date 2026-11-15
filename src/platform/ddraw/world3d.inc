@@ -1164,24 +1164,18 @@ static void W3SceneBegin(void) { g_w3ns = 0; }
    in (RrGpuQuad.depth; the segment's near edge, so a sprite never sinks into the road under it), in the game's order, depth-tested against the world:
    whatever stands in front of them in 3D (a building on a curve) hides them ---- */
 typedef struct W3Spr { float x[4], y[4], u[4], v[4]; SDL_Texture *t; unsigned rgba; float depth, objDepth; double dObj;
-                       int kind; float yaw, lat; unsigned id; const GpuTex *tx; char name[8]; unsigned paint; } W3Spr;   /* kind .. paint: RrGpuQuad.objKind .. and the
+                       int kind; float yaw, lat; unsigned id; const GpuTex *tx; char name[8]; unsigned paint, oflags; } W3Spr;   /* kind .. paint: RrGpuQuad.objKind .. and the
                                                                                                                        sprite's body colour (traffic models, W3Cars) */
 static W3Spr *g_w3s; static int g_w3scap;
 static int g_w3NoShadow;   /* test switch RR_W3NOSHADOW=1: the game's own rider shadows (W3Sprites) */
-static int W3IsGameShadow(const W3Spr *s)   /* a polygon of the game's own shadow under a rider: a wide, low picture (50 x 26) almost all one dark colour */
-{   static struct { DWORD hash; int is; } cache[128]; static int nc; const GpuTex *tx = s->tx; int i, x, y, n = 0, dark = 0;
-    if (!tx || tx->w * 10 < tx->h * 13) return 0;   /* (a shadow picture is wide) */
-    if (s->kind == RRO_RIDER || s->kind == RRO_PLAYER || s->kind == RRO_COP) {   /* by its place: a low picture at the very bottom of the rider, whatever its colours */
-        float oy0 = 1e9f, oy1 = -1e9f, py0 = 1e9f, py1 = -1e9f; int k;
-        for (i = 0; i < g_w3ns; i++) if (g_w3s[i].id == s->id && g_w3s[i].kind == s->kind) for (k = 0; k < 4; k++) { if (g_w3s[i].y[k] < oy0) oy0 = g_w3s[i].y[k]; if (g_w3s[i].y[k] > oy1) oy1 = g_w3s[i].y[k]; }
-        for (k = 0; k < 4; k++) { if (s->y[k] < py0) py0 = s->y[k]; if (s->y[k] > py1) py1 = s->y[k]; }
-        if (oy1 > oy0 && py1 - py0 <= (oy1 - oy0) * 0.32f && py1 >= oy1 - (oy1 - oy0) * 0.06f) return 1; }
-    if (!tx->bits || tx->w < tx->h * 3 / 2 || !g_primary || !g_primary->pal) return 0;
-    for (i = 0; i < nc; i++) if (cache[i].hash == tx->hash) return cache[i].is;
-    for (y = 0; y < tx->h; y++) for (x = 0; x < tx->w; x++) { int p = tx->bits[y * (tx->pitch ? tx->pitch : tx->w) + x]; const PALETTEENTRY *c = &g_primary->pal->e[p];
-        if (!p) continue; n++; if (c->peRed + c->peGreen + c->peBlue < 150) dark++; }   /* (the key colour may be the shadow's own black: counted) */
-    i = nc < 128 ? nc++ : (int)(tx->hash & 127); cache[i].hash = tx->hash; cache[i].is = n > 20 && dark * 4 >= n * 3;   /* (75 %: some have the tail lights' red glow on the road painted in) */
-    return cache[i].is; }
+static int W3IsGameShadow(const W3Spr *s)   /* a polygon of the game's own shadow under a bike: queued by its shadow pass (RrGpuQuad.objFlags RRQ_SHADOW, rider_sprites.c) -
+                                              all of them left out, the 3D world casts the riders' shadows itself (user, 2026-11-15: no more guessing them by shape) */
+{   return (s->oflags & RRQ_SHADOW) != 0; }
+/* the player's brake light: on only while the brake is held (RrGpuQuad.objFlags RRQ_BRAKE) - not from the bike slowing down, which a bump or a punch
+   from another rider does too (user, 2026-11-15) */
+static float W3PlayerBrake(unsigned id)
+{   int j; for (j = 0; j < g_w3ns; j++) if (g_w3s[j].id == id && (g_w3s[j].oflags & RRQ_BRAKE)) return 1.0f;
+    return 0.0f; }
 /* test switch RR_W3LENSDUMP=<dir>: every distinct picture of the player's rider once, as lens_<n>_<hash>_<w>x<h>_<what>.bmp - the picture in the colours it is
    drawn in, with the brake light lens where the sprites pass puts it (pick: the red spot used, -1 = both, -2 = none in this picture; lens size as a share of
    the picture's width, as of the bike's), red spots not used outlined yellow.  what: lamp / nolamp / shadow */
@@ -1220,7 +1214,7 @@ static int W3Sprite(const RrGpuQuad *q, const GpuTex *tx)
     s = &g_w3s[g_w3ns++];
     for (k = 0; k < 4; k++) { s->x[k] = q->x[k]; s->y[k] = q->y[k]; s->u[k] = tx ? q->u[k] / tx->w : 0; s->v[k] = tx ? q->v[k] / tx->h : 0; }
     s->t = tx ? tx->lv[0] : NULL; s->depth = q->depth; s->objDepth = q->objDepth; s->rgba = 0xffffffffu;
-    s->kind = q->objDepth >= 0 ? q->objKind : RRO_NONE; s->yaw = q->objYaw; s->lat = q->objLat; s->id = q->objId; s->tx = tx; memcpy(s->name, q->name, sizeof s->name);
+    s->kind = q->objDepth >= 0 ? q->objKind : RRO_NONE; s->yaw = q->objYaw; s->lat = q->objLat; s->id = q->objId; s->tx = tx; memcpy(s->name, q->name, sizeof s->name); s->oflags = q->objFlags;
     s->paint = (s->kind == RRO_CAR && tx) ? W3CarPaint(tx) : 0;   /* now, while the bitmap is the one this polygon shows */
     if (s->kind == RRO_PLAYER) WpSeePlayer(tx);   /* (weapons.inc: test log) */
     if (!tx) { PALETTEENTRY c; memset(&c, 0, sizeof c); if (g_primary && g_primary->pal) c = g_primary->pal->e[q->colour & 255];
@@ -1511,11 +1505,11 @@ static void W3Sprites(ID3D11Texture2D *target, int w, int h, int tw, int th, con
                 for (k = 0; k < 4; k++) { if (px[k] < x0) x0 = px[k]; if (px[k] > x1) x1 = px[k]; if (py[k] < y0) y0 = py[k]; if (py[k] > y1) y1 = py[k]; } }
             if (x1 <= x0 || y1 <= y0) continue;
             bw = x1 - x0; bh = y1 - y0; d = s->dObj - 120; if (d < 30) d = 30;
-            if (s->kind == RRO_COP) { float a = dark > 0.6f ? dark : 0.6f;
+            if (s->kind == RRO_COP) { float a = (dark > 0.6f ? dark : 0.6f) * 0.8f;   /* (20 % softer: user, 2026-11-15) */
                 nv = (int)(W3ClipHalo(v + nv, x0 + bw * 0.3f, y0 + bh * 0.12f, bw * (flash ? 0.75f : 0.4f), w, h, d, W3Rgba(1.0f, 0.12f, 0.08f, a * (flash ? 1.0f : 0.3f)), wf) - v);
                 nv = (int)(W3ClipHalo(v + nv, x1 - bw * 0.3f, y0 + bh * 0.12f, bw * (flash ? 0.4f : 0.75f), w, h, d, W3Rgba(0.15f, 0.35f, 1.0f, a * (flash ? 0.3f : 1.0f)), wf) - v); }
             else if (s->kind == RRO_RIDER || s->kind == RRO_PLAYER) {   /* a bike seen from behind: its tail light under the seat, bright and bigger while braking */
-                float br = W3Brake(s->id, vp + s->objDepth - 1.0, now), a = dark * 0.8f + br * (1 - dark * 0.8f), lx = (x0 + x1) * 0.5f, ly = y0 + bh * 0.62f, mx[2], my[2]; int nl = 0, e2, lj = -1, pick;
+                float br = s->kind == RRO_PLAYER ? W3PlayerBrake(s->id) : W3Brake(s->id, vp + s->objDepth - 1.0, now), a = dark * 0.8f + br * (1 - dark * 0.8f), lx = (x0 + x1) * 0.5f, ly = y0 + bh * 0.62f, mx[2], my[2]; int nl = 0, e2, lj = -1, pick;
                 for (j = i; j < g_w3ns; j++) { const W3Spr *t = &g_w3s[j]; const W3Red *rd;   /* on the sprite's own red square(s): one lamp, or two side by side */
                     if (t->id == s->id && t->tx && !W3IsGameShadow(t) && (rd = W3RedSpots(t->tx)) && rd->n) {
                         for (e2 = 0; e2 < rd->n && e2 < 2; e2++) if (W3TexToScreen(t->u, t->v, P + 8 * j, P + 8 * j + 4, rd->u[e2], rd->v[e2], &mx[nl], &my[nl])) nl++;
@@ -1660,7 +1654,7 @@ static int W3Lights(R3Frame *f, R3Vert *v, int cap, double p, const float *eye, 
         if (!W3OrigAt(s->objDepth, &cx, &ry, &sc)) continue;
         for (k = 0; k < 4; k++) mx += s->x[k]; mx /= 4;
         C3_PointF(&g_w3c, W3Fr(), p + (s->objDepth - W3_EYE), (mx - cx) / sc, 260, pt);
-        {   float a = (dark > 0.4f ? dark : 0.4f) * 1.8f; W3AddLight(f, pt, 1800, flash ? a : 0.08f * a, 0.05f * a, flash ? 0.05f * a : a * 1.2f); }
+        {   float a = (dark > 0.4f ? dark : 0.4f) * 1.8f * 0.8f; W3AddLight(f, pt, 1800, flash ? a : 0.08f * a, 0.05f * a, flash ? 0.05f * a : a * 1.2f); }   /* (police lights 20 % softer: user, 2026-11-15) */
         break; }
     if (getenv("RR_W3LOGL")) { static int nl; if (++nl % atoi(getenv("RR_W3LOGL")) == 0) { int kn[5] = { 0, 0, 0, 0, 0 }, j; for (j = 0; j < g_w3ns; j++) if (g_w3s[j].kind >= 0 && g_w3s[j].kind < 5) kn[g_w3s[j].kind]++;
         for (j = 0; j < g_w3ns; j++) if ((g_w3s[j].kind == RRO_PLAYER || g_w3s[j].kind == RRO_RIDER) && g_w3s[j].tx) { const W3Red *r = W3RedSpots(g_w3s[j].tx); if (r && r->n) LOG("w3red %.8s %dx%d kind %d: %d lamps %.2f,%.2f %.2f,%.2f", g_w3s[j].name, g_w3s[j].tx->w, g_w3s[j].tx->h, g_w3s[j].kind, r->n, r->u[0], r->v[0], r->u[1], r->v[1]); }

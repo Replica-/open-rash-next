@@ -158,6 +158,7 @@ static void MarkTo(unsigned end)
 static short g_wdepth[1024]; static unsigned g_dmark; static int g_dcur = -1;   /* depth of every record (below) */
 static int g_wobj[1024], g_ocur = -1;   /* the road position (24.8) of the object whose draw hook queued every record, -1 none (rr_World3DObject) */
 static const int *g_wrec[1024], *g_orec;   /* ... and its record (what it is: rr_World3DObjInfo) */
+static unsigned char g_wsh[1024]; static int g_scur;   /* queued by a bike's shadow pass (rr_World3DShadowPass): the True 3D world casts its own shadows instead */
 static void StampTo(unsigned end); static void DepthReset(void);
 void rr_World3DFrameStart(void) { memset(g_wbit, 0, sizeof g_wbit); g_ropen = 0; DepthReset(); g_dmark = g_drawPoolNext; g_dcur = -1; g_ocur = -1; }   /* road-view frame start (rr_RoadViewDraw) */
 void rr_World3DBegin(void) { if (rr_world3d) { g_rmark = g_drawPoolNext; g_ropen = 1; } }
@@ -175,11 +176,11 @@ int rr_World3DInPass(const void *rec)
 static void StampTo(unsigned end)
 {
     unsigned a;
-    for (a = g_dmark; a < end; a += 0xa8) { unsigned i = (a - g_drawPoolFirst) / 0xa8; if (i < sizeof g_wdepth / sizeof g_wdepth[0]) { g_wdepth[i] = (short)g_dcur; g_wobj[i] = g_ocur; g_wrec[i] = g_orec; } }
+    for (a = g_dmark; a < end; a += 0xa8) { unsigned i = (a - g_drawPoolFirst) / 0xa8; if (i < sizeof g_wdepth / sizeof g_wdepth[0]) { g_wdepth[i] = (short)g_dcur; g_wobj[i] = g_ocur; g_wrec[i] = g_orec; g_wsh[i] = (unsigned char)g_scur; } }
     if (end > g_dmark) g_dmark = end;
 }
 void rr_World3DSetDepth(int depth) { if (rr_world3d) { StampTo(g_drawPoolNext); g_dcur = depth < 0x7fff ? depth : 0x7fff; } }   /* 1/256 segments */
-static void DepthReset(void) { int i; for (i = 0; i < (int)(sizeof g_wdepth / sizeof g_wdepth[0]); i++) { g_wdepth[i] = -1; g_wobj[i] = -1; g_wrec[i] = NULL; } }
+static void DepthReset(void) { int i; for (i = 0; i < (int)(sizeof g_wdepth / sizeof g_wdepth[0]); i++) { g_wdepth[i] = -1; g_wobj[i] = -1; g_wrec[i] = NULL; g_wsh[i] = 0; } }
 float rr_World3DDepth(const void *rec)
 {
     unsigned i = ((unsigned)rec - g_drawPoolFirst) / 0xa8;
@@ -190,14 +191,16 @@ float rr_World3DDepth(const void *rec)
 /* ---- objects (riders, traffic, pedestrians): their draw hooks (rr_VisibleObjectsHooks) queue several polygons each (bike, rider, shadow) that the game
    placed with its own projection.  The records get the object's road position, so the shim can map all of them at the object's exact depth from the
    original projection into the true-3D one (the same map for every polygon of the object: they stay together) ---- */
-void rr_World3DObject(const int *obj) { if (rr_world3d) { StampTo(g_drawPoolNext); g_ocur = obj ? obj[0x44 / 4] : -1; g_orec = obj; } }   /* NULL: the hook returned */
-static const int *g_lastRec;   /* the object of the record rr_World3DObjDepth looked at last (rr_World3DObjInfo) */
+void rr_World3DObject(const int *obj) { if (rr_world3d) { StampTo(g_drawPoolNext); g_ocur = obj ? obj[0x44 / 4] : -1; g_orec = obj; g_scur = 0; } }   /* NULL: the hook returned */
+void rr_World3DShadowPass(int on) { if (rr_world3d) { StampTo(g_drawPoolNext); g_scur = on; } }   /* rider_sprites.c rr_PlayerSpriteDraw: around the bike's shadow */
+static const int *g_lastRec; static int g_lastSh;   /* the object of the record rr_World3DObjDepth looked at last (rr_World3DObjInfo), and whether it was its shadow */
+int rr_World3DObjShadow(void) { return g_lastSh; }
 float rr_World3DObjDepth(const void *rec)
 {
     unsigned i = ((unsigned)rec - g_drawPoolFirst) / 0xa8;
-    g_lastRec = NULL;
+    g_lastRec = NULL; g_lastSh = 0;
     if ((unsigned)rec < g_drawPoolFirst || i >= sizeof g_wobj / sizeof g_wobj[0] || g_wobj[i] < 0) return -1.0f;
-    g_lastRec = g_wrec[i];
+    g_lastRec = g_wrec[i]; g_lastSh = g_wsh[i];
     return (float)((g_wobj[i] - (int)rec_stepSaved.g_camRoadPos) / 256.0 + 1.0);   /* the view builder puts road position viewPos + 256 (k - 1) at depth k */
 }
 

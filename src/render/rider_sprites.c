@@ -177,6 +177,7 @@ RR_REPLACE_FAST(SpriteTablesAttachRank, rr_SpriteTablesAttachRank, 4);
 void __fastcall rr_SpriteTablesAttachRank(int obj) { SpriteTablesAttach(obj, RiderRankOrSweep(obj)); }
 
 /* ---- rider sprite draw (player-controlled variant: lean-tilted second pass + the shadow/helmet overlay) ---- */
+void rr_World3DShadowPass(int on);   /* render\world3d_feed.c */
 RR_REPLACE_FAST(PlayerSpriteDraw, rr_PlayerSpriteDraw, 8);
 void __fastcall rr_PlayerSpriteDraw(int p, int q)
 {
@@ -188,7 +189,9 @@ void __fastcall rr_PlayerSpriteDraw(int p, int q)
     I32(p, 0xbc) = 0;
     RankSpritePick(p);
     h = I32(p, 0x50);
+    rr_World3DShadowPass(1);   /* (this pass is the bike's shadow on the ground: True 3D leaves it out) */
     SpriteQueue(q, (int)slot, 0x200, (h + ((h >> 31) & 0xff)) >> 8, I32(p, 0x4c), I32(p, 0x44), 0);
+    rr_World3DShadowPass(0);
     I32(p, 0x90) = saved;
     StripCellPick(p, q);
     if (*slot == 0) return;
