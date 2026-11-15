@@ -75,14 +75,6 @@ With the widescreen art mod installed, the menu and story pictures fill a 16:9 w
 instead of black bars (automatic - there is no option for it). The artwork is an optional mod, distributed separately: copy its `widescreen` folder into a `mod` folder next to `OpenRash.exe`
 (`mod\widescreen\`). It also holds the slightly upscaled sprites, textures and skies. Without it, the menus keep black bars and the original art is used.
 
-![Game Mode](docs/screenshots/menu_gamemode.jpg)
-
-![Character select](docs/screenshots/menu_character.jpg)
-
-![Der Panzer Klub](docs/screenshots/menu_klub.jpg)
-
-![The race list](docs/screenshots/menu_races.jpg)
-
 ### The Street
 Big Game's hub has Der Panzer Klub, Olley's Skoot-A-Rama, **Hurt Hardware** and the **Restroom** (Done brings you back to The Street).
 
