@@ -7,7 +7,7 @@ $out = "$Build\ng"
 Get-Process OpenRash -ErrorAction SilentlyContinue | Stop-Process -Force
 Enter-RrVcVars
 New-Item -ItemType Directory -Force $out | Out-Null
-$all = Get-ChildItem $Src -Recurse -Filter *.c | Where-Object { $_.FullName -notlike "*\src\platform\*" }
+$all = Get-ChildItem $Src -Recurse -Filter *.c | Where-Object { $_.FullName -notlike "*\src\platform\*" -and $_.FullName -notlike "*\src\editor\*" }
 $n = 0
 foreach ($f in $all) {
     $obj = "$out\$($f.BaseName).obj"

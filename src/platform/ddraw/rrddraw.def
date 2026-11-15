@@ -62,3 +62,5 @@ RR_CustomRaceDone=_RR_CustomRaceDone@0
 RR_Opponents=_RR_Opponents@0
 RR_PlayerCfg=_RR_PlayerCfg@8
 RR_LoadProgress=_RR_LoadProgress@16
+RR_Traffic=_RR_Traffic@0
+RR_Police=_RR_Police@0

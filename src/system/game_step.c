@@ -72,6 +72,29 @@ static void cop_test_tick(void)
     }
 }
 
+/* Game Options > Police (the shim's RR_Police; user, 2026-11-15: "do default and then override with them spawning in every so often"): 0 = the
+   original (a police rider when you stop at the wrong moment, or from the roadside); else every so many seconds of race time without a police
+   rider on the road one comes up behind the player at the player's speed (as the original's trigger, 0x2700 back).  Only one at a time, as ever
+   (rr_ChaserSpawn); test switch RR_NOCOPS=1 still keeps them all away */
+static void police_tick(void)
+{
+    static int (__stdcall *f)(void); static int looked, armed, gap;
+    int secs, seg;
+    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (int (__stdcall *)(void))GetProcAddress(sh, "RR_Police") : 0; looked = 1; }
+    secs = f ? f() : 0;
+    if (secs <= 0 || !g_playerRider) return;
+    if (g_playerRider != armed) { armed = g_playerRider; gap = 0; }   /* (a new race) */
+    if (g_copRider != 0) { gap = 0; return; }
+    if (++gap < secs * 30) return;   /* (30 game ticks a second) */
+    gap = 0;
+    seg = (int)RoadChainStep(*(int *)(g_playerRider + 0x2c), -0x2700);
+    ChaserSpawn(seg, -0x2700);
+    if (g_copRider != 0) *(int *)(g_copRider + 0xec) = *(int *)(g_playerRider + 0xec);
+    {   char e[4]; if (GetEnvironmentVariableA("RR_LOGPOLICE", e, sizeof e) > 0) {   /* test switch RR_LOGPOLICE=1: each police rider sent in, in the shim log */
+            static void (__stdcall *dl)(const char *); char m[64]; if (!dl) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); dl = sh ? (void (__stdcall *)(const char *))GetProcAddress(sh, "RR_DbgLog") : 0; }
+            wsprintfA(m, "police: a rider sent in at race tick %u (%s)", (*(unsigned *)&rec_featureAccum1.g_raceTime), g_copRider ? "on the road" : "none made"); if (dl) dl(m); } }
+}
+
 /* per-frame game step: GameTicks(frames) runs `frames` game logic ticks (input, AI, physics ... in the callees), counting them in g_raceTime / g_ticksRun */
 RR_REPLACE_FAST(GameTicks, rr_GameTicks, 4);
 void __fastcall rr_GameTicks(int frames)
@@ -80,6 +103,7 @@ void __fastcall rr_GameTicks(int frames)
         (*(unsigned *)&rec_featureAccum1.g_raceTime)++; g_ticksRun++;
         WorldStep();
         cop_test_tick();
+        police_tick();
         if (((*(unsigned *)&rec_featureAccum1.g_raceTime) & 0x7ff) == 1) {                          /* every 2048 ticks: reseed from the clock */
             unsigned t = ((unsigned (__cdecl *)(void))RRCODE_CrtSelfTag)();
             SumEvery4K(((unsigned (__stdcall *)(void))RRCODE_SelfAddress)(), t);
@@ -216,7 +240,8 @@ void __fastcall rr_BytesFill(unsigned count, unsigned char value, unsigned *dest
 RR_REPLACE_STD(FeaturesInit, rr_FeaturesInit, 0);
 void __stdcall rr_FeaturesInit(void)
 {
-    g_featurePool = (int *)ListPoolAlloc(0x210, 0x10, 0);
+    int rr_TrafficPct(void);   /* road\road_features.c: Game Options > Traffic */
+    g_featurePool = (int *)ListPoolAlloc(0x210, 0x10 * rr_TrafficPct() / 100, 0);   /* (the traffic's pool: 16 objects in the original; more traffic, more room) */
     SpriteArchiveLoad();
     AiSkillScalars(-0x19);
     AiSkillScalars(6);

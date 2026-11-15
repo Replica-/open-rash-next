@@ -90,3 +90,29 @@ static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits,
     if (HdDirPick(&g_hdDirs[t], nm, hs, path) || HdDirPick(&g_hdDirs[6 + t], nm, hs, path)) e->px = HdLoad(path, w, h);
     if (!e->px && getenv("RR_HDLOG")) LOG("hd texture: no picture for %s %dx%d hash %08x (track %d)", nm, w, h, (unsigned)hs, t);   /* RR_HDLOG=1: which textures stay original */
     return e->px; }
+
+/* more traffic cars (user, 2026-11-15: "make more 6-7 variety of cars with fooocus"; analysis\cars_hd\variants\variants.py): a car family's views
+   repainted - another colour, another model of the same shape - as <dir>\hd\cars\<CARFILE>\v<k>\<NAME>.png, k = 1, 2 ...  Each car on the road
+   is shown as its family's original or one of these (gpuscene.inc GpuCarVariant) */
+#define HD_NVAR 8
+static void HdNameOf(const char *name8, char *nm) { int i; for (i = 0; i < 8 && name8[i] && name8[i] != ' '; i++) nm[i] = (char)toupper((unsigned char)name8[i]); nm[i] = 0; }
+static const char *HdCarDir(int t)   /* the track's car folder ("" = none) */
+{   static const char *const car[6] = { "", "CITY", "HIWAY", "MEDLY", "NAPA", "CANYN" }; char sub[32];
+    if (t < 1 || t > 5) return "";
+    if (!g_hdDirs[6 + t].loaded) { _snprintf(sub, sizeof sub - 1, "cars\\%s", car[t]); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[6 + t], sub); }
+    return g_hdDirs[6 + t].path; }
+static int HdCarVariants(const char *name8)   /* how many variants the texture of this name has on this track (0 = none) */
+{   static struct { int track; char name[9]; int n; } c[128]; static int nc; char nm[9], p[MAX_PATH]; int t = HdTrack(), i, k;
+    HdNameOf(name8, nm); if (!t || !nm[0] || !HdCarDir(t)[0]) return 0;
+    for (i = 0; i < nc; i++) if (c[i].track == t && !strcmp(c[i].name, nm)) return c[i].n;
+    for (k = 1; k <= HD_NVAR; k++) { _snprintf(p, sizeof p - 1, "%s\\v%d\\%s.png", g_hdDirs[6 + t].path, k, nm); p[sizeof p - 1] = 0; if (GetFileAttributesA(p) == INVALID_FILE_ATTRIBUTES) break; }
+    if (nc < 128) { c[nc].track = t; strcpy(c[nc].name, nm); c[nc].n = k - 1; nc++; }
+    return k - 1; }
+static const DWORD *HdCarVariantPx(const char *name8, int w, int h, int var)   /* variant var's 4x picture (cached), NULL = none */
+{   static struct { int track, var, w, h; char name[9]; DWORD *px; } c[256]; static int nc; char nm[9], p[MAX_PATH]; int t = HdTrack(), i;
+    HdNameOf(name8, nm); if (!t || !nm[0] || var < 1 || !HdCarDir(t)[0]) return NULL;
+    for (i = 0; i < nc; i++) if (c[i].track == t && c[i].var == var && c[i].w == w && c[i].h == h && !strcmp(c[i].name, nm)) return c[i].px;
+    if (nc >= 256) return NULL;
+    _snprintf(p, sizeof p - 1, "%s\\v%d\\%s.png", g_hdDirs[6 + t].path, var, nm); p[sizeof p - 1] = 0;
+    c[nc].track = t; c[nc].var = var; c[nc].w = w; c[nc].h = h; strcpy(c[nc].name, nm); c[nc].px = HdLoad(p, w, h);
+    return c[nc++].px; }

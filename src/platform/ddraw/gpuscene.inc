@@ -53,6 +53,7 @@ static void GpuAddTri(int a,int b,int c){ GpuBatch *bt=&g_gb[g_gnb-1]; int base=
 typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with */
 static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
 static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
+static int HdCarVariants(const char *name8); static const DWORD *HdCarVariantPx(const char *name8, int w, int h, int var);   /* hdtex.inc: more traffic cars */
 static int g_hdTrackHint;   /* hdtex.inc HdTrack: the track to look in instead of the game's (world3d.inc W3Tex, around its look-ups; 0 = the game's) */
 static GpuTex g_gt2[GPU_TEXSLOTS]; static int g_gtN;
 static DWORD GpuPalSum(Pal *p){ DWORD s=0; int i; if(!p) return 0; for(i=0;i<256;i++) s=s*31+((DWORD)p->e[i].peRed<<16|(DWORD)p->e[i].peGreen<<8|p->e[i].peBlue); return s; }
@@ -94,9 +95,74 @@ static DWORD *GpuHalve(const DWORD *s,int w,int h,int *ow,int *oh)
         if(a){ r/=a; g/=a; b/=a; } else { r=cr/n; g=cg/n; b=cb/n; }
         d[y*nw+x]=((DWORD)(a/n)<<24)|((DWORD)r<<16)|((DWORD)g<<8)|(DWORD)b; }
     *ow=nw; *oh=nh; return d; }
+/* which of its family's pictures a traffic car shows (cv: 0 = the original, 1..nv = the variants, hdtex.inc HdCarVariants) and in which paint
+   (cc: 0 = its own, 1..GC_NCOL = g_gcCol) - chosen at random when the car first shows (its record, RrGpuQuad.objId; a record seen again after a
+   gap is a new car), kept while it stays in sight.  Two cars in five keep their own paint */
+#define GC_NCOL 14
+static void GpuCarPick(unsigned id, int nv, int *cv, int *cc)
+{   static struct { unsigned id, last, r; } t[96]; static unsigned seq = 0x9e3779b9u; int i, old = 0; unsigned r;
+    for (i = 0; i < 96; i++) if (t[i].id == id && t[i].last + 90 >= (unsigned)g_gpuFrame) break;
+    if (i < 96) { t[i].last = g_gpuFrame; r = t[i].r; }
+    else { for (i = 1; i < 96; i++) if (t[i].last < t[old].last) old = i;
+        seq = seq * 1664525u + 1013904223u ^ id * 2654435761u ^ (unsigned)g_gpuFrame; seq = seq * 1664525u + 1013904223u;
+        t[old].id = id; t[old].last = g_gpuFrame; t[old].r = r = seq; }
+    *cv = (int)((r >> 4) % (unsigned)(nv + 1));
+    *cc = ((r >> 12) % 100u) < 40u ? 0 : 1 + (int)((r >> 20) % GC_NCOL);
+    {   static int force = -1; if (force < 0) { const char *e = getenv("RR_CARPAINT"); force = e && *e ? atoi(e) : 0; }   /* test switch RR_CARPAINT=<1..14>: every car in that paint, its family's original picture */
+        if (force > 0 && force <= GC_NCOL) { *cv = 0; *cc = force; } } }
+/* a car's paint in another colour - as the game's palette swap of its riders (user, 2026-11-15: "colour some of the variety cars dynamically by
+   using a palette swap ... more colours"): the paint = the main hue of the saturated pixels of the ORIGINAL texture (orig, w x h: not the glass,
+   chrome, tyres, lights); in dst (the same picture or its 4x HD one, dw x dh) the pixels there of about that hue - and the pale reflections on the
+   paint - take colour col, each keeping its brightness and saturation relative to the paint's mean (its shading).  0 = no coloured paint (a white,
+   silver or black car: left as it is) */
+static const BYTE g_gcCol[GC_NCOL][3] = { { 170, 22, 28 }, { 92, 16, 26 }, { 24, 38, 98 }, { 32, 74, 172 }, { 22, 84, 48 }, { 22, 112, 118 }, { 22, 22, 24 },
+    { 178, 181, 186 }, { 236, 236, 232 }, { 222, 180, 24 }, { 214, 104, 22 }, { 188, 162, 108 }, { 84, 38, 112 }, { 62, 64, 68 } };   /* (deep red, maroon, navy,
+    royal blue, racing green, teal, black, silver, white, yellow, orange, beige gold, purple, charcoal) */
+static void GcHsv(DWORD p, float *h, float *s, float *v)
+{   float r = ((p >> 16) & 255) / 255.0f, g = ((p >> 8) & 255) / 255.0f, b = (p & 255) / 255.0f, mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b), d = mx - mn;
+    *v = mx; *s = mx > 0 ? d / mx : 0;
+    if (d <= 0) *h = 0; else if (mx == r) *h = fmodf((g - b) / d / 6.0f + 1.0f, 1.0f); else if (mx == g) *h = ((b - r) / d + 2) / 6.0f; else *h = ((r - g) / d + 4) / 6.0f; }
+static DWORD GcRgb(DWORD a, float h, float s, float v)
+{   float r, g, b, f, pp, qq, tt; int i;
+    if (v > 1) v = 1; if (v < 0) v = 0; if (s > 1) s = 1; if (s < 0) s = 0;
+    h = h * 6; i = (int)floorf(h); f = h - i; pp = v * (1 - s); qq = v * (1 - s * f); tt = v * (1 - s * (1 - f));
+    switch (((i % 6) + 6) % 6) { case 0: r = v; g = tt; b = pp; break; case 1: r = qq; g = v; b = pp; break; case 2: r = pp; g = v; b = tt; break;
+        case 3: r = pp; g = qq; b = v; break; case 4: r = tt; g = pp; b = v; break; default: r = v; g = pp; b = qq; }
+    return (a & 0xFF000000u) | ((DWORD)(r * 255 + 0.5f) << 16) | ((DWORD)(g * 255 + 0.5f) << 8) | (DWORD)(b * 255 + 0.5f); }
+static float GcHd(float a, float b) { float d = fabsf(a - b); return d > 0.5f ? 1 - d : d; }
+static int GpuCarPaint(DWORD *dst, int dw, int dh, const DWORD *orig, int w, int h, int col)
+{   int hist[36], i, x, y, n0 = 0, best = 0, sc = w > 0 ? dw / w : 1, nb = 0; float h0, th, ts, tv, vm = 0, sm = 0, hh, ss, vv; BYTE *m; DWORD *src;
+    if (col < 1 || col > GC_NCOL || w <= 0 || h <= 0 || sc < 1) return 0;
+    memset(hist, 0, sizeof hist);
+    for (i = 0; i < w * h; i++) if ((orig[i] >> 24) >= 128) { n0++; GcHsv(orig[i], &hh, &ss, &vv); if (ss > 0.22f && vv > 0.18f) hist[(int)(hh * 36) % 36]++; }
+    for (i = 1; i < 36; i++) if (hist[i] > hist[best]) best = i;
+    if (!n0 || (hist[best] + hist[(best + 1) % 36] + hist[(best + 35) % 36]) * 100 < n0 * 12) return 0;   /* (no coloured paint) */
+    h0 = (best + 0.5f) / 36;
+    if (!(m = (BYTE *)calloc((size_t)w * h, 1))) return 0;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) { DWORD p = orig[y * w + x]; if ((p >> 24) < 128) continue; GcHsv(p, &hh, &ss, &vv);
+        if (ss > 0.12f && vv > 0.10f && GcHd(hh, h0) < 0.09f) m[y * w + x] = 2; }   /* (2 = paint) */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) if (m[y * w + x] == 2) {   /* a pixel of slack round it (the HD picture is not pixel-exact) */
+        if (x > 0 && !m[y * w + x - 1]) m[y * w + x - 1] = 1; if (x < w - 1 && !m[y * w + x + 1]) m[y * w + x + 1] = 1;
+        if (y > 0 && !m[(y - 1) * w + x]) m[(y - 1) * w + x] = 1; if (y < h - 1 && !m[(y + 1) * w + x]) m[(y + 1) * w + x] = 1; }
+    if (!(src = (DWORD *)malloc((size_t)dw * dh * 4))) { free(m); return 0; }
+    memcpy(src, dst, (size_t)dw * dh * 4);   /* (dst may be orig itself) */
+    {   int nm = 0;
+        for (y = 0; y < dh; y++) for (x = 0; x < dw; x++) { DWORD p = src[y * dw + x]; int mk = m[(y / sc) * w + x / sc]; if (!mk || (p >> 24) < 128) continue;
+            nm++; GcHsv(p, &hh, &ss, &vv); if (ss > 0.15f && GcHd(hh, h0) < 0.12f) { vm += vv; sm += ss; nb++; } }
+        if (nb < 8 || nb * 100 < nm * 35) { free(src); free(m); return 0; } }   /* (little of the paint's colour where the original's paint is: a white / black variant of a
+                                                                                coloured car - its white body was taken for the paint's pale reflections, tinted in patches) */
+    vm /= nb; sm /= nb;
+    { DWORD c = 0xFF000000u | ((DWORD)g_gcCol[col - 1][0] << 16) | ((DWORD)g_gcCol[col - 1][1] << 8) | g_gcCol[col - 1][2]; GcHsv(c, &th, &ts, &tv); }
+    for (y = 0; y < dh; y++) for (x = 0; x < dw; x++) { DWORD p = src[y * dw + x]; int mk = m[(y / sc) * w + x / sc]; float vr; if (!mk || (p >> 24) < 128) continue;
+        GcHsv(p, &hh, &ss, &vv); vr = vv / (vm > 0.02f ? vm : 0.02f);
+        if (ss > 0.15f && GcHd(hh, h0) < 0.12f) dst[y * dw + x] = GcRgb(p, th, ts < 0.1f ? ts : ts * ss / (sm > 0.02f ? sm : 0.02f), vr * tv);   /* the paint */
+        else if (mk == 2 && vv > 0.6f && ss < 0.3f) dst[y * dw + x] = GcRgb(p, th, ts * 0.3f, vv * 0.7f + (vr * tv > 1 ? 1 : vr * tv) * 0.3f); }   /* a pale reflection on it */
+    free(src); free(m); return 1; }
 static GpuTex *GpuTexFor(const RrGpuQuad *q)
 {   int pitch=q->pitch?q->pitch:q->w, key=((q->flags&RRG_KEY)!=0)|((q->flags&RRG_TRUECOL)?2:0), w=q->w, h=q->h, l;   /* (key bit 2: true-colour rider tile, a texture of its own) */ DWORD hs=GpuHashMemo(q->bits[0],w,h,pitch,(q->flags&RRG_SNAP)!=0);
     int wpn=(q->objKind==RRO_PLAYER && WpClubSprite(q->riderSprite))?WpPicture():0; if(wpn>0) hs^=0x9e3779b9u*(unsigned)wpn;   /* the player swinging the club: drawn as the chosen weapon (weapons.inc) - a texture of its own per choice */
+    int cv=0, cc=0; if(q->objKind==RRO_CAR && q->name[0] && !(q->flags&RRG_SNAP) && HdTexOn() && _strnicmp(q->name,"TAXI",4) && _strnicmp(q->name,"POLICE",6)) GpuCarPick(q->objId,HdCarVariants(q->name),&cv,&cc);
+    if(cv) hs^=0x7f4a7c15u*(unsigned)cv; if(cc) hs^=0x5bd1e995u*(unsigned)cc;   /* (a traffic car in one of its family's other pictures / another paint: a texture of its own; taxis and police cars keep their livery) */
     unsigned k=((((unsigned)(size_t)q->bits[0]>>4)*2654435761u) ^ hs ^ (unsigned)(w*7+h*13+key))%GPU_TEXSLOTS, i; GpuTex *e, *freeSlot=NULL; DWORD *px;
     for(i=0;i<64;i++){ e=&g_gt2[(k+i)%GPU_TEXSLOTS];
         if(!e->bits){ if(!freeSlot) freeSlot=e; break; }
@@ -113,17 +179,22 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
           if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
     { static int wl=-1; if(wl<0) wl=getenv("RR_WPLOG")!=NULL; if(wl && q->riderSprite>=0) LOG("rider texture: HiBob sprite %d %dx%d key %d", q->riderSprite, w, h, key); }   /* (test switch RR_WPLOG=1, weapons.inc) */
     e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen;
-    if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch); DWORD *hx;   /* "slightly upscaled": the 4x picture (never the rider tiles) */
+    if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch), *hv=(hp && cv)?HdCarVariantPx(q->name,w,h,cv):NULL; DWORD *hx;   /* (hv: the variant's picture, coloured by the original picture's scale below) */   /* "slightly upscaled": the 4x picture (never the rider tiles) */
         if(getenv("RR_HDLOG")) LOG("hdtex scene %u: new '%.8s' %dx%d hash %08lx bits %p world %d -> %s", g_gpuFrame, q->name, w, h, (unsigned long)hs, q->bits[0], q->world, hp?"4x":"original");   /* test switch RR_HDLOG=1 */
+        DWORD *rp=NULL;
         if(hp && (hx=(DWORD*)malloc((size_t)16*w*h*4))!=NULL){
             /* per channel: the picture's mean colour scaled to the texture's through the CURRENT palette (fades, palette variants) */
             double so[3]={0,0,0}, sh[3]={0,0,0}, f[3]; int i, n=w*h, c, no=0, nh=0;
             for(i=0;i<n;i++) if(px[i]&0xFF000000u){ so[0]+=(px[i]>>16)&255; so[1]+=(px[i]>>8)&255; so[2]+=px[i]&255; no++; }
             for(i=0;i<16*n;i++) if((hp[i]>>24)>=128){ sh[0]+=(hp[i]>>16)&255; sh[1]+=(hp[i]>>8)&255; sh[2]+=hp[i]&255; nh++; }
             for(c=0;c<3;c++){ f[c]=(no && nh && sh[c]>0)?(so[c]/no)/(sh[c]/nh):1.0; if(f[c]>2.0) f[c]=2.0; if(f[c]>0.97 && f[c]<1.03) f[c]=1.0; }
+            if(hv) hp=hv;
+            if(cc && (rp=(DWORD*)malloc((size_t)16*w*h*4))!=NULL){ memcpy(rp,hp,(size_t)16*w*h*4); if(GpuCarPaint(rp,4*w,4*h,px,w,h,cc)) hp=rp; }   /* (another paint, then the scale) */
             for(i=0;i<16*n;i++){ DWORD p=hp[i]; int r=(int)(((p>>16)&255)*f[0]+0.5), g=(int)(((p>>8)&255)*f[1]+0.5), b=(int)((p&255)*f[2]+0.5);
                 hx[i]=(p&0xFF000000u)|((DWORD)(r>255?255:r)<<16)|((DWORD)(g>255?255:g)<<8)|(DWORD)(b>255?255:b); }
-            free(px); px=hx; w*=4; h*=4; e->hd=2; } }
+            free(px); px=hx; w*=4; h*=4; e->hd=2; }
+        free(rp); }
+    if(cc && !e->hd) GpuCarPaint(px,w,h,px,w,h,cc);   /* (no HD picture: the original texture repainted) */
     for(l=0;l<RRG_MAXMIP+4;l++){ DWORD *nx; int nw, nh; e->lv[l]=GpuUpload(px,w,h); e->nl=l+1; if(!e->lv[l] || (w==1 && h==1)) break; nx=GpuHalve(px,w,h,&nw,&nh); free(px); px=nx; w=nw; h=nh; if(!px) break; }
     free(px); return e; }
 
@@ -359,6 +430,7 @@ static int GpuCompose(Surf *s)
     SDL_UpdateTexture(g_tex,NULL,bg,w*4); SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect);
     PF_ADD(PF_BASE, pfB); { PF_T0(pfH); HsDraw(w,h); PF_ADD(PF_SKY, pfH); }   /* HD sky over the panorama (hdsky.inc) */
     { PF_T0(pfW); W3Draw(w,h,&g_fullRect); PF_ADD(PF_W3DRAW, pfW); }   /* the true-3D world (world3d.inc), between the background and the game's remaining polygons */
+    if(g_vwHold){ ViewerOverlay(); return 1; }   /* the Course Editor's viewer (viewer.inc): the world only - no riders, overlay, HUD, countdown - with the choice framed */
     PF_T0(pfP); W3Blood(w,h);   /* blood from hit riders (world3d.inc) */
     for(i=0;i<g_gnb;i++){ GpuBatch *b=&g_gb[i]; cr.x=b->clip[0]; cr.y=b->clip[1]; cr.w=b->clip[2]-b->clip[0]; cr.h=b->clip[3]-b->clip[1]+1;
         if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); WxBatchMod(b->t,1); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); WxBatchMod(b->t,0); }

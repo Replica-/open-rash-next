@@ -674,6 +674,7 @@ void __fastcall rr_RoadSectionFill(int *p, int src, char flag)
     MarkersLayout(src + 0x84, (int)p);
     iVar5 = 0;
     ScriptRowEmit(src + 0x1b8, (int)p);
+    { void rr_CourseEditApply(int *p); rr_CourseEditApply(p); }   /* an edited course (Course Editor): its values over the generated ones (road\course_edit.c) */
     iVar6 = p[0x38];
     iVar8 = p[0x39];
     if (*(char *)(p + 0x18) != '\0') {
@@ -1390,6 +1391,7 @@ void __fastcall rr_RoadRingBuild(int *course, int start)
     int pos, n, t;
 
     { void rr_CustomCoursePatch(int *course); rr_CustomCoursePatch(course); }   /* a custom race: the editor's road into the course (ui\custom_race.c) */
+    { void rr_CourseEditLoad(int track, int level); rr_CourseEditLoad((*(int *)&rec_demoPage.g_raceTrack), (*(unsigned char *)&rec_playerRecord.g_playerLevel) + 1); }   /* an edited course of this track / level (road\course_edit.c) */
     g_courseLength = 0;
     g_roadScene = course;
     RingSelect(); ring = rr_ring;

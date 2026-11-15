@@ -75,6 +75,7 @@ static void LsDraw(void)
 /* a stage of the race set-up: how far (permille) and what (NULL = the same as before); drawn at most every 30 ms, and at once for a new stage */
 static void LsStep(int permille, const char *what)
 {   DWORD now = GetTickCount(); int newWhat = what && strcmp(what, g_lsWhat);
+    if (ViewerOn()) { g_vw->progress = permille < 0 ? 0 : permille > 1000 ? 1000 : permille; if (what) lstrcpynA(g_vw->stage, what, sizeof g_vw->stage); }   /* (the Course Editor's game renderer: its progress bar - viewer.inc) */
     if (!LsWanted()) return;
     if (permille < 0) permille = 0; if (permille > 1000) permille = 1000;
     if (newWhat) lstrcpynA(g_lsWhat, what, sizeof g_lsWhat);

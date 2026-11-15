@@ -3,6 +3,8 @@
  * (2026-11-11, user): everything in it is on whenever the folder is there (menuwide.inc VidHdArt); the line under the title says whether it is installed.
  *
  *   Opponents           1..50 computer riders (14 = the original field, the default; Left / Right, Shift: 5 at a time) - src\race\rider_slots.c, RR_Opponents
+ *   Traffic             Default (the original) / More / Heavy / Rush hour: cars spawn 1.5 / 2 / 3 times as often - srcoadoad_features.c, RR_Traffic
+ *   Police              Default (the original) / Sometimes / Often / Relentless: a police rider every 90 / 45 / 20 s while none is about - src\system\game_step.c, RR_Police
  *   Course map          On (default) / Off - races: a map of the course right of the race view (gpuscene.inc; was in Video Options)
  *   Change clothes      opens the rider colour editor (ridercol.inc RR_RiderColours) - was a Restroom item
  *
@@ -10,19 +12,21 @@
  * RR_TEST_MODSCFG=<row> + RR_DUMP_DIR: that row selected, the screen saved as <RR_DUMP_DIR>\modscfg.bmp and closed (a picture for layout checks); with RR_DUMP_GPU
  * also the window as shown (gpu903.bmp: the readme picture).  RR_TEST_MODSCFG_OPEN=1 opens the screen by itself, like RR_TEST_VIDEOCFG=1 (McTestHook).
  */
-#define MC_ROWS 5
-#define MC_NVAL 3                                           /* rows with a value; then Reset to defaults, Done */
+#define MC_ROWS 7
+#define MC_NVAL 5                                           /* rows with a value; then Reset to defaults, Done */
 #define MC_Y0 104
 #define MC_DY 26
 #define MC_VX 236
-enum { MC_OPP, MC_MAP, MC_CLOTHES, MC_RESET, MC_DONE };
-static const char *const g_mcLabel[MC_ROWS] = { "Opponents","Course map","Change clothes","Reset to defaults","Done" };
+enum { MC_OPP, MC_TRAFFIC, MC_POLICE, MC_MAP, MC_CLOTHES, MC_RESET, MC_DONE };
+static const char *const g_mcLabel[MC_ROWS] = { "Opponents","Traffic","Police","Course map","Change clothes","Reset to defaults","Done" };
 static int McRowY(int i){ return MC_Y0+i*MC_DY+(i>=MC_RESET?12:0); }
 static int McIndent(int i){ (void)i; return 36; }
 
 static void McValue(int row,char *b,size_t n)
 {   switch(row){
     case MC_OPP: _snprintf(b,n,g_vid.opp==14?"%d  (the original field)":"%d",g_vid.opp); break;
+    case MC_TRAFFIC: _snprintf(b,n,g_vid.traffic?"%s  (cars %s as often)":"%s  (the original)",g_trafficName[VidClamp(g_vid.traffic,0,3)],g_vid.traffic==1?"1.5 times":g_vid.traffic==2?"twice":"3 times"); break;
+    case MC_POLICE: _snprintf(b,n,g_vid.police?"%s  (one every %d s)":"%s  (the original)",g_policeName[VidClamp(g_vid.police,0,3)],g_policeSecs[VidClamp(g_vid.police,0,3)]); break;
     case MC_MAP: _snprintf(b,n,"%s",g_vid.map?"On  (right of the race view)":"Off"); break;
     case MC_CLOTHES: _snprintf(b,n,"Press Enter  (your rider's colours)"); break;
     default: b[0]=0; }
@@ -32,19 +36,25 @@ static int McRowEnabled(int row){ (void)row; return 1; }
 static void McAdjust(VcState *s,int row,int dir)
 {   if(row==MC_OPP){ int st=(GetKeyState(VK_SHIFT)&0x8000)?5:1; g_vid.opp+=dir*st; if(g_vid.opp<1) g_vid.opp=50; if(g_vid.opp>50) g_vid.opp=1;   /* (wraps round) */
         VcMsg(s,g_vid.opp>14?"More riders than the original: extra ones get new names and random colours (from the next race)":"Applies from the next race"); VidSave(); return; }
+    if(row==MC_POLICE){ g_vid.police=(g_vid.police+dir+4)%4; VcMsg(s,"Applies from the next race"); VidSave(); return; }   /* (wraps round) */
+    if(row==MC_TRAFFIC){ g_vid.traffic=(g_vid.traffic+dir+4)%4; VcMsg(s,"Applies from the next race"); VidSave(); return; }   /* (wraps round) */
     if(row!=MC_MAP) return;   /* (Change clothes: Enter opens it, McActivate) */
     g_vid.map=!g_vid.map; VcMsg(s,"Applies from the next race");
     VidSave(); }
-static void McReset(VcState *s){ g_vid.opp=14; g_vid.map=1; VidSave(); VcMsg(s,"Defaults restored"); }
+static void McReset(VcState *s){ g_vid.opp=14; g_vid.traffic=0; g_vid.police=0; g_vid.map=1; VidSave(); VcMsg(s,"Defaults restored"); }
 
 static const char *const g_mcHelp[MC_ROWS][2] = {
     [MC_OPP]={ "How many computer riders race against you: 1 to 50 (Left / Right, Shift: 5 at a time).  14 is the original field;",
       "extra riders ride the original characters' bikes with names of their own and random colours.  The results list the first 15." },
+    [MC_TRAFFIC]={ "How busy the roads are: Default is the original; More, Heavy and Rush hour make the cars - both ways -",
+      "turn up 1.5, 2 and 3 times as often.  Applies from the next race." },
+    [MC_POLICE]={ "Default is the original's police.  Sometimes, Often and Relentless send a police rider up behind you every",
+      "90, 45 or 20 seconds while there is none about (one at a time).  Applies from the next race." },
     [MC_MAP]={ "A map of the whole course on the right of the race view: your place, the other riders,",
       "split roads, the finish line and how far it is.  Applies from the next race." },
     [MC_CLOTHES]={ "Your rider's colours: helmet, jacket, stripes, trousers and bike, each from the game's colour schemes or any colour",
       "(from the next race).  Enter opens the editor." },
-    [MC_RESET]={ "Puts the options back to their defaults: 14 opponents, the course map on.", "" },
+    [MC_RESET]={ "Puts the options back to their defaults: 14 opponents, Default traffic and police, the course map on.", "" },
     [MC_DONE]={ "Saves everything and returns to the Restroom.", "" } };
 static void McDraw(Surf *tmp,const Surf *base,const VcState *s,DWORD now)
 {   HDC dc; HFONT title,row,fSm,fMid,old; int i; char t[128];

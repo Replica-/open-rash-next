@@ -23,6 +23,18 @@ RR_DATA(int,   g_levelSpeed);
 
 int __cdecl rand(void);
 
+/* Game Options > Traffic (the shim's RR_Traffic): how often traffic spawns, percent of the original - 100 (Default), 150, 200, 300.  Each spawn
+   countdown below is reloaded with the level's interval divided by it, so Default is the original exactly; the cars' pool grows with it
+   (system\game_step.c rr_FeaturesInit: 16 objects in the original - full, a spawn just failed) */
+int rr_TrafficPct(void)
+{
+    static int (__stdcall *f)(void); static int looked; int p;
+    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (int (__stdcall *)(void))GetProcAddress(sh, "RR_Traffic") : 0; looked = 1; }
+    p = f ? f() : 100;
+    return p < 100 ? 100 : p > 400 ? 400 : p;
+}
+#define TRAFFIC_IV(x, pct) ((pct) == 100 ? (x) : (int)((long long)(x) * 100 / (pct)))   /* an interval at this traffic (Default: untouched) */
+
 /* ---- road feature spawner ---- */
 /* count the three feature accumulators (g_featureAccum1 / 94 / 80) down by the distance step `step`; each one that crosses zero spawns an item (RoadObjectSpawn) in a random lane of the segment record found through the ring tbl_ringSlots at the current / next section */
 RR_REPLACE_FAST(RoadFeatureCountdown, rr_RoadFeatureCountdown, 4);
@@ -30,7 +42,7 @@ void __fastcall rr_RoadFeatureCountdown(int step)
 {
     char lanes;
     unsigned r;
-    int v, seg;
+    int v, seg, pct = rr_TrafficPct(), step2 = TRAFFIC_IV(rec_featureAccum1.g_featureStep2, pct);
 
     rec_featureAccum1.g_featureAccum1 = rec_featureAccum1.g_featureAccum1 - (((int)(g_levelPenalty + (g_levelPenalty >> 0x1f & 0xffU)) >> 8) + step);
     if (rec_featureAccum1.g_featureAccum1 < 0) {
@@ -41,7 +53,7 @@ void __fastcall rr_RoadFeatureCountdown(int step)
             r = Random();
             RoadObjectSpawn(2, -1 - (char)(r % (unsigned)(int)lanes), 0, 0, seg);
         }
-        rec_featureAccum1.g_featureAccum1 = rec_featureAccum1.g_featureAccum1 + g_levelSpeed;
+        rec_featureAccum1.g_featureAccum1 = rec_featureAccum1.g_featureAccum1 + TRAFFIC_IV(g_levelSpeed, pct);   /* (oncoming) */
     }
     rec_featureAccum1.g_featureAccum2 = rec_featureAccum1.g_featureAccum2 - step;
     rec_featureAccum1.g_featureAccum2 = rec_featureAccum1.g_featureAccum2 + ((int)((*(int *)&rec_featureAccum1.g_featureLevelBase) + ((*(int *)&rec_featureAccum1.g_featureLevelBase) >> 0x1f & 0xffU)) >> 8);
@@ -53,9 +65,9 @@ void __fastcall rr_RoadFeatureCountdown(int step)
             v = (int)Random();
             RoadObjectSpawn(0, (char)(v % (int)lanes), 0, 0, seg);
         }
-        rec_featureAccum1.g_featureAccum2 = rec_featureAccum1.g_featureAccum2 + rec_featureAccum1.g_featureStep2;
-    } else if (rec_featureAccum1.g_featureStep2 * 2 < rec_featureAccum1.g_featureAccum2) {
-        rec_featureAccum1.g_featureAccum2 = rec_featureAccum1.g_featureStep2 * 2;
+        rec_featureAccum1.g_featureAccum2 = rec_featureAccum1.g_featureAccum2 + step2;   /* (ahead, our way) */
+    } else if (step2 * 2 < rec_featureAccum1.g_featureAccum2) {
+        rec_featureAccum1.g_featureAccum2 = step2 * 2;
     }
     g_featureAccum3 = g_featureAccum3 - step;
     g_featureAccum3 = g_featureAccum3 + ((int)((*(int *)&rec_featureAccum1.g_featureLevelBase) + ((*(int *)&rec_featureAccum1.g_featureLevelBase) >> 0x1f & 0xffU)) >> 8);
@@ -67,10 +79,10 @@ void __fastcall rr_RoadFeatureCountdown(int step)
             v = (int)Random();
             RoadObjectSpawn(0, (char)(v % (int)lanes), 0, 0, seg);
         }
-        g_featureAccum3 = g_featureAccum3 - rec_featureAccum1.g_featureStep2;
+        g_featureAccum3 = g_featureAccum3 - step2;   /* (catching up from behind) */
         return;
     }
-    v = rec_featureAccum1.g_featureStep2 * -2;
+    v = step2 * -2;
     if (v - g_featureAccum3 != 0 && g_featureAccum3 <= v)
         g_featureAccum3 = v;
 }

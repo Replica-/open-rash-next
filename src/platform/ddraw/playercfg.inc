@@ -10,7 +10,7 @@ static void PcPut(const RrPlayerCfg *c)
     if (!g_rcLoaded) RcLoad();
     for (i = 0; i < RRP_PARTS; i++) { g_rcPart[i] = c->rcPart[i] >= RC_OWN && c->rcPart[i] <= RC_CUSTOM ? c->rcPart[i] : RC_OWN; g_rcRGB[i] = c->rcRGB[i] & 0xffffff; }
     g_rcRow = c->rcRow >= -1 && c->rcRow < 15 ? c->rcRow : -1;
-    g_vid.opp = c->opponents; g_vid.tod = c->timeOfDay; g_vid.weather = c->weather; g_vid.dayMin = c->dayMinutes; g_vid.fog = c->fog; g_vid.weapon = c->weapon;
+    g_vid.opp = c->opponents; g_vid.tod = c->timeOfDay; g_vid.weather = c->weather; g_vid.dayMin = c->dayMinutes; g_vid.fog = c->fog; g_vid.weapon = c->weapon; g_vid.traffic = c->traffic; g_vid.police = c->police;
     VidSanitize(); VidSave(); RcSave();
     LOG("player settings from the save: opponents %d, time of day %d, weather %d, fog %d, weapon %d, colours %d %d %d %d %d", g_vid.opp, g_vid.tod, g_vid.weather, g_vid.fog, g_vid.weapon, g_rcPart[0], g_rcPart[1], g_rcPart[2], g_rcPart[3], g_rcPart[4]); }
 __declspec(dllexport) int __stdcall RR_PlayerCfg(RrPlayerCfg *c, int set)
@@ -24,7 +24,7 @@ __declspec(dllexport) int __stdcall RR_PlayerCfg(RrPlayerCfg *c, int set)
     if (!g_rcLoaded) RcLoad();
     memset(c, 0, sizeof *c); c->size = sizeof *c;
     for (i = 0; i < RRP_PARTS; i++) { c->rcPart[i] = g_rcPart[i]; c->rcRGB[i] = g_rcRGB[i]; }
-    c->rcRow = g_rcRow; c->opponents = g_vid.opp; c->timeOfDay = g_vid.tod; c->weather = g_vid.weather; c->dayMinutes = g_vid.dayMin; c->fog = g_vid.fog; c->weapon = g_vid.weapon;
+    c->rcRow = g_rcRow; c->opponents = g_vid.opp; c->timeOfDay = g_vid.tod; c->weather = g_vid.weather; c->dayMinutes = g_vid.dayMin; c->fog = g_vid.fog; c->weapon = g_vid.weapon; c->traffic = g_vid.traffic; c->police = g_vid.police;
     return 1; }
 /* DirectDrawCreate, after video.ini was read (or not: quiet / test runs) */
 static void PcAfterVidLoad(void)

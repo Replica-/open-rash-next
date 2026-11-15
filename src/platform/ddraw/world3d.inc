@@ -358,6 +358,8 @@ static void W3GpuBatches(const C3Batch *cb, int n, R3Batch *out)
 static void W3GrassLive(void);   /* (below) */
 static void W3Live(void)
 {   static C3Batch lb[4096]; static int q; int lo = (g_w3cam.ringBack - g_w3Piece0) >> 8, hi, hiNeed, i, changed = 0, half;
+    int vwk = g_vwHold ? (int)ViewerPiece() : -1;   /* the Course Editor's viewer (viewer.inc): the stretch round the piece it looks at, the draw distance both ways - not the held race's ring */
+    if (vwk >= 0) lo = vwk - (int)(W3Far() / W3_L) - 2;
     /* the stretch starts on a multiple of q pieces and reaches q further: built again every q pieces, not every piece (user, 2026-11-15: the Steam Deck's
        frame rate - ~1.2 ms a frame on a Ryzen 5800X); its first few pieces are the ring's pieces of a moment ago.  Test switch RR_W3LIVEQ=1: every piece */
     if (!q) { q = getenv("RR_W3LIVEQ") ? atoi(getenv("RR_W3LIVEQ")) : 8; if (q < 1) q = 1; }
@@ -366,11 +368,11 @@ static void W3Live(void)
        distance - the ring's pieces with the game's own decoration, the rest as the course file has them - and the course file's static mesh is no
        longer drawn (it stays as data: grass, lamps, shadow casters are found in it).  Built again when the ring moves on q pieces or the view's end
        passes the stretch's (with q pieces to spare) */
-    {   int kc = (g_w3cam.viewPos - g_w3Piece0) >> 8; hiNeed = kc + (int)(W3Far() / W3_L) + 2; if (hi < hiNeed + q) hi = hiNeed + q; }
+    {   int kc = vwk >= 0 ? vwk : (g_w3cam.viewPos - g_w3Piece0) >> 8; hiNeed = kc + (int)(W3Far() / W3_L) + 2; if (hi < hiNeed + q) hi = hiNeed + q; }
     if (!g_w3l.piece || g_w3compiled) return;   /* (the compiled race: cut each frame instead - W3StaticCut) */
     {   /* a split road within the draw distance: the live stretch covers all of it - only the live mesh leaves out the carriageway the camera is not on
            (C3_HideHalf); the static mesh has both, and B's made-up path can pass over / beside A far from the fork */
-        int kEnd = ((g_w3cam.viewPos - g_w3Piece0) >> 8) + (int)(W3Far() / W3_L) + 2, k;
+        int kEnd = (vwk >= 0 ? vwk : (g_w3cam.viewPos - g_w3Piece0) >> 8) + (int)(W3Far() / W3_L) + 2, k;
         if (kEnd > lo + 400) kEnd = lo + 400;
         if (kEnd > g_w3c.n - 1) kEnd = g_w3c.n - 1;
         for (k = lo > 0 ? lo : 0; k <= kEnd; k++) if (g_w3c.piece[k].layout == 2) { if (kEnd > hi) hi = kEnd; break; } }
@@ -381,7 +383,7 @@ static void W3Live(void)
         RoadPiece *p = &g_w3l.piece[i]; const RoadPiece *f = &g_w3c.piece[i];
         g_w3ring[i] = 1;
         if (f->layout == 2) { p->splitX = f->splitX; p->splitSlope = f->splitSlope; if (g_w3camB) p->halfA = f->halfA; else p->halfB = f->halfB; } }
-    for (i = 0; i < RRW_LIVE; i++) {
+    for (i = g_vwHold ? RRW_LIVE : 0; i < RRW_LIVE; i++) {   /* (the Course Editor's viewer: the course as the editor has it - not the held race's ring) */
         int k = (g_w3cam.ringBack - g_w3Piece0) / 256 + i; const RoadPiece *lp = (const RoadPiece *)g_w3cam.ring[i]; RoadPiece *p;
         if (k < 0 || k >= g_w3c.n || !lp) continue;
         p = &g_w3l.piece[k];
@@ -1046,6 +1048,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     if (fread(hdr, 4, 16, f) != 16) { fclose(f); return 0; } fclose(f);
     if (!C3_LoadRrx(&g_w3c, path) || !RX_Load(&g_w3a, path)) { LOG("world3d: %s unreadable", path); W3Free(); return 0; }
     g_w3Piece0 = (int)hdr[5];
+    if (ViewerOn()) lstrcpynA(g_vw->course, path, sizeof g_vw->course);   /* (the editor's viewer: the course file it shows) */
     if (g_w3Piece0 != live->piece0) bad = 1;
     for (i = 0; !bad && i < live->n && i < g_w3c.n; i++) {
         const RoadSection *a = &g_w3c.piece[i].halfA;
@@ -1075,6 +1078,11 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
         W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex();
         g_w3hdTrack = b[0] == 0x74 && b[1] >= 0x31 && b[1] <= 0x35 ? b[1] - 0x30 : 0; }
+    if (g_w3hdTrack == 1) for (i = 0; i < g_w3c.n; i++) {   /* the City's footpaths 10 % lower (user, 2026-11-15: "slightly too high"): the course's own copy, so the
+                                                             mesh, the kerbs, the tree pits, the ground under the objects and the live stretch all agree */
+        int h2, s;
+        for (h2 = 0; h2 < 2; h2++) { RoadSection *sc = h2 ? &g_w3c.piece[i].halfB : &g_w3c.piece[i].halfA;
+            if (sc->kind == SEC_OPEN) for (s = 0; s < 2; s++) if (sc->shoulderH[s] > 0) sc->shoulderH[s] = (sc->shoulderH[s] * 9 + 5) / 10; } }
     g_w3compiled = 0;
     if (g_w3fork) {   /* forks off: the compiled race when there is one (or it is being compiled: RR_W3COMPILE=1), else built on the fly as ever */
         unsigned long long key = W3MeshKey(path);
@@ -2164,6 +2172,7 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     t = (ID3D11Texture2D *)SDL_GetPointerProperty(SDL_GetTextureProperties(g_w3tex), SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER, NULL);
     if (!t) return;
     vp = (g_w3cam.viewPos - g_w3Piece0) / 256.0;            /* piece position of the view's start */
+    if (g_vwHold) vp = ViewerPiece();   /* (the Course Editor's viewer: the live stretch round the piece it looks at, viewer.inc) */
     {   int kp = (int)floor(vp + W3_EYE - 1.0), j2, in = 0; for (j2 = 0; j2 < 2; j2++) { int kk = kp + j2; const RoadPiece *pc; const RoadSection *sc2;   /* (W3InTunnel) */
             if (kk < 0 || kk >= g_w3c.n) continue; pc = &g_w3c.piece[kk]; sc2 = (g_w3camB && pc->layout == 2) ? &pc->halfB : &pc->halfA; if (sc2->kind == SEC_WALL_SPLIT) in++; }
         g_w3InTunnel = in == 2; }
@@ -2180,9 +2189,12 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     {   double fpx = W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1);   /* focal length in frame pixels */
         g_w3fpxT = (float)(fpx * sx);   /* (in the 3D picture's pixels: W3Grass) */
         R3_Persp(proj, (float)(fpx * sx), (float)(fpx * sy), g_w3cam.centreX * sx, g_w3cam.horizonY * sy, tw, th, (float)W3_ZN, (float)W3Far()); }
+    if (g_vwHold) { ViewerCamera(eye, fwd, proj, tw, th); R3_LookTo(view, eye, fwd, up); g_w3fpxT = tw * 0.5f / 0.62f; }   /* the editor's orbit camera (viewer.inc) */
     memset(&f, 0, sizeof f);
     R3_Mul(f.vp, view, proj); W3ViewPlanes(f.vp);
     f.right[0] = fwd[2]; f.right[1] = 0; f.right[2] = -fwd[0];
+    if (g_vwHold) { float l = sqrtf(f.right[0] * f.right[0] + f.right[2] * f.right[2]); if (l > 0) { f.right[0] /= l; f.right[2] /= l; }   /* (the viewer's camera looks down: right kept unit length) */
+        memcpy(g_vwVp, f.vp, sizeof g_vwVp); g_vwRect = *r; g_vwHaveVp = 1; }
     f.eye[0] = eye[0]; f.eye[1] = eye[1]; f.eye[2] = eye[2]; f.bias = 400.0f;   /* billboards drawn over the ground just in front of them */
     if (getenv("RR_W3LOGY")) { static int ny; if ((++ny % atoi(getenv("RR_W3LOGY"))) == 0) {   /* test switch RR_W3LOGY=<k>: every k frames, the game's road centre x (its projection, lateral 0) against the 3D one at depths 3..24 -> yaw (rad); on half B the game's lateral 0 is A's centre (huge values) */
         static const double Ds[4] = { 3, 6, 12, 24 }; char t[300]; int j; double fpx = W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1) * sx; t[0] = 0;
@@ -2208,7 +2220,7 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     if (g_primary && g_primary->pal) { int i; double a = 0, b = 0;
         for (i = 0; i < 256; i++) { a += g_primary->pal->e[i].peRed + g_primary->pal->e[i].peGreen + g_primary->pal->e[i].peBlue; b += (g_w3a.pal[i] & 0xff) + ((g_w3a.pal[i] >> 8) & 0xff) + ((g_w3a.pal[i] >> 16) & 0xff); }
         if (b > 0) { f.bright = (float)(a / b); if (f.bright > 1.0f) f.bright = 1.0f; if (f.bright < 0.0f) f.bright = 0.0f; } }
-    if (g_cdPal) f.bright = 1.0f;   /* (the start countdown: undimmed) */
+    if (g_cdPal || g_vwHold) f.bright = 1.0f;   /* (the start countdown, the editor's viewer: undimmed) */
     f.target = t; f.w = tw; f.h = th; f.doClear = 1;   /* transparent: the background (sky) shows through */
     f.crisp = getenv("RR_W3SOFT") == NULL;   /* the ground's grain as the game's (unfiltered near texels); test switch RR_W3SOFT=1: filtered */
     { PF_T0(pfL); W3Live(); PF_ADD(PF_LIVE, pfL); }
@@ -2247,5 +2259,5 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     else g_tkInit = 0;
     { PF_T0(pfR); R3_Render(&g_w3r, &f); PF_ADD(PF_RENDER, pfR); }
     { static int ns = -1; if (ns < 0) ns = getenv("RR_W3NOSHADOW") != NULL; g_w3NoShadow = ns; }
-    { PF_T0(pfS); W3Sprites(t, w, h, tw, th, f.vp, vp, &f); PF_ADD(PF_SPRITES, pfS); } g_w3ns = 0;   /* the game's remaining polygons, depth-tested against the world */
+    if (!g_vwHold) { PF_T0(pfS); W3Sprites(t, w, h, tw, th, f.vp, vp, &f); PF_ADD(PF_SPRITES, pfS); } g_w3ns = 0;   /* the game's remaining polygons, depth-tested against the world */
     SDL_RenderTexture(g_ren, g_w3tex, NULL, r); }

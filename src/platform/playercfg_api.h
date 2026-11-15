@@ -15,7 +15,9 @@ typedef struct RrPlayerCfg {
     int opponents;                          /* Game Options > Opponents (1..50) */
     int timeOfDay, weather, dayMinutes, fog;   /* True 3D races, the Esc panel (weather.inc) */
     int weapon;                             /* the club's picture (weapons.inc) */
-    int reserved[8];
+    int traffic;                            /* Game Options > Traffic (0 Default .. 3 Rush hour) */
+    int police;                             /* Game Options > Police (0 Default .. 3 Relentless) */
+    int reserved[6];
 } RrPlayerCfg;
 
 #endif

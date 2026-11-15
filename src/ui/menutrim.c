@@ -44,7 +44,7 @@ static void RestroomLayout(void)
    (user, 2026-11-15: "on the street can you put the restroom there too": the Game Mode page's Restroom item - tbl_gameModeMenu record 3: its target
    screen, label, help; its Done comes back here, options.c rr_MenuDoneAction).  The screen's three 0x38-byte records (Der
    Panzer Klub, Olley's Skoot-A-Rama, Go Home - one row of 213 px wide items) are copied into g_street with the new ones as records 3 and 4, laid out
-   in three rows as the Klub's items: Klub | Olley's, Restroom | Hurt Hardware, Go Home.  Links: +0x1c left, +0x1d right, +0x1e up, +0x1f down,
+   in three rows on the Klub's columns: Klub | Restroom, Olley's | Hurt Hardware, Go Home.  Links: +0x1c left, +0x1d right, +0x1e up, +0x1f down,
    +0x20 next, +0x21 previous (Left / Right from the Klub still reach Olley's) */
 #define SCREEN_RECS(s) (*(unsigned char **)((char *)&g_menuScreens + (s) * 0x14 + 4))
 #define SCREEN_COUNT(s) (*(int *)((char *)&g_menuScreens + (s) * 0x14))
@@ -56,9 +56,11 @@ static void StreetLayout(void)
 {
     extern int g_shopTextId;
     int __fastcall rr_StreetShop(int *item);
-    static const short pos[5][2] = { { 0x50, 0x18e }, { 0x168, 0x18e }, { 0x50, 0x1c2 }, { 0x168, 0x1a8 }, { 0x50, 0x1a8 } };   /* (rows 26 px apart: the first below the rider's status line) */
-    static const unsigned char link[5][6] = {   /* left, right, up, down, next, previous - reading order Klub, Olley's, Restroom, Hurt Hardware, Go Home */
-        { 1, 1, 2, 4, 1, 2 }, { 0, 0, 3, 3, 4, 0 }, { 2, 2, 4, 0, 0, 3 }, { 4, 4, 1, 2, 2, 4 }, { 3, 3, 0, 2, 3, 1 } };
+    /* three rows of two (user, 2026-11-15: "make a new row please and organise them"), the Klub's columns (80 / 360, 200 wide), the Restroom top right as
+       in the Klub; rows 26 px apart from just under the rider's status line:  Klub | Restroom, Olley's | Hurt Hardware, Go Home */
+    static const short pos[5][3] = { { 80, 398, 200 }, { 80, 424, 200 }, { 80, 450, 200 }, { 360, 424, 200 }, { 360, 398, 200 } };   /* (x, y, width) */
+    static const unsigned char link[5][6] = {   /* left, right, up, down, next, previous - reading order Klub, Restroom, Olley's, Hurt Hardware, Go Home */
+        { 4, 4, 2, 1, 4, 2 }, { 3, 3, 0, 2, 3, 4 }, { 2, 2, 1, 0, 0, 3 }, { 1, 1, 4, 4, 2, 1 }, { 0, 0, 3, 3, 1, 0 } };
     const unsigned char *rest = &tbl_gameModeMenu + 3 * 0x38;
     int k;
     if (!g_shopTextId || SCREEN_COUNT(0xf) != 3) return;
@@ -75,7 +77,7 @@ static void StreetLayout(void)
     *(unsigned *)(g_street + 4 * 0x38 + 0x2c) = (unsigned)StreetRestroom;
     for (k = 0; k < 5; k++) {
         unsigned char *r = g_street + k * 0x38;
-        *(int *)(r + 0xc) = pos[k][0]; *(int *)(r + 0x10) = pos[k][1]; *(int *)(r + 0x14) = 0xc8; *(int *)(r + 0x18) = 0x1a;
+        *(int *)(r + 0xc) = pos[k][0]; *(int *)(r + 0x10) = pos[k][1]; *(int *)(r + 0x14) = pos[k][2]; *(int *)(r + 0x18) = 0x1a;
         memcpy(r + 0x1c, link[k], 6);
     }
     SCREEN_RECS(0xf) = g_street;

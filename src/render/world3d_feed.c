@@ -57,7 +57,9 @@ static int CourseFile(char *path, int track, int level)
 {
     char exe[MAX_PATH], tmp[MAX_PATH], cfg[MAX_PATH], *env; STARTUPINFOA si; PROCESS_INFORMATION pi; DWORD code = 1;
     CreateDirectoryA("world3d", NULL);
-    wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r.rrx" : "world3d\\t%d_l%d.rrx", track, level + 1);   /* (_1r: one road, no forks - True 3D) */
+    {   extern int rr_courseEdited; extern unsigned rr_courseEditKey;   /* an edited course (Course Editor, road\course_edit.c): a course file of its own, named by the edit */
+        if (rr_courseEdited) wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r_e%08x.rrx" : "world3d\\t%d_l%d_e%08x.rrx", track, level + 1, rr_courseEditKey);
+        else wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r.rrx" : "world3d\\t%d_l%d.rrx", track, level + 1); }   /* (_1r: one road, no forks - True 3D) */
     if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return 1;
     rr_LoadStep(250, "Making the course file (the first time on this course)");
     wsprintfA(tmp, "%s.%lu.tmp", path, GetCurrentProcessId());

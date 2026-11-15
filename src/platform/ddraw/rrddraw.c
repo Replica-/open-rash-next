@@ -143,6 +143,9 @@ static int ReadPixelsArgb(DWORD *px,int w,int h);   /* SDL3 read-back (defined b
 static void LsStep(int permille, const char *what);   /* loadscreen.inc: the race start's loading screen */
 #include "winscale.inc"
 #include <math.h>
+#include "../viewer_api.h"   /* viewer.inc (the Course Editor's game viewer): its state, used by gpuscene.inc / world3d.inc */
+static RrViewer *g_vw; static int g_vwHold; static float g_vwVp[16]; static SDL_FRect g_vwRect; static int g_vwHaveVp;
+static int ViewerOn(void); static double ViewerPiece(void); static void ViewerCamera(float *eye, float *fwd, float *proj, int tw, int th); static void ViewerOverlay(void); static int ViewerSpeed(void);
 #include "gpuscene.inc"
 #include "riderlamps.inc"   /* the riders' tail lamps, hardcoded per HiBob sprite (generated: analysis\tools\rider_lamps.ps1 -EmitC) */
 #include "world3d.inc"   /* true-3D world of GPU races (after gpuscene.inc: uses its state) */
@@ -151,6 +154,7 @@ static void LsStep(int permille, const char *what);   /* loadscreen.inc: the rac
 #include "hdhud.inc"      /* GPU races: HD dashboard picture */
 #include "weather.inc"    /* True 3D races: time of day, weather, the Esc pause panel */
 #include "weapons.inc"   /* the riders' weapon drawn as another object (True 3D) */
+#include "viewer.inc"    /* the Course Editor's game viewer: the course in the editor's panel with the game's own renderer (RR_VIEWER) */
 static void SdTestHook(void); static void MbTestHook(void); static void FrameHashLog(Surf *s); static void StepsHook(void);
 /* SDL3: read the current render target back as w x h ARGB8888 into px (pitch w*4); 0 = ok (SDL2's SDL_RenderReadPixels filled a buffer directly) */
 static int ReadPixelsArgb(DWORD *px,int w,int h)
@@ -212,7 +216,7 @@ static void SpeedInit(void)
 {   int i, want=300, best=0; char *e=getenv("RR_SPEED"); if(g_speedIdx>=0) return; if(e && *e) want=atoi(e);
     for(i=1;i<(int)(sizeof g_speedSteps/sizeof g_speedSteps[0]);i++) if(abs(g_speedSteps[i]-want)<abs(g_speedSteps[best]-want)) best=i;
     g_speedIdx=best; }
-__declspec(dllexport) int __stdcall RR_GameSpeed(void){ if(!SpeedOn()) return 100; SpeedInit(); SpeedKey(); return g_speedSteps[g_speedIdx]; }   /* (the keys are read here too: paused, nothing presents) */
+__declspec(dllexport) int __stdcall RR_GameSpeed(void){ if(ViewerOn()) return ViewerSpeed(); if(!SpeedOn()) return 100; SpeedInit(); SpeedKey(); return g_speedSteps[g_speedIdx]; }   /* (the keys are read here too: paused, nothing presents) */
 /* Q (demo): stop everything - every other running copy of the game (OpenRash.exe; the tests' stage copies RoadRash.exe, headless runs included) is
    terminated, then this one exits at once */
 static void QuitAll(void)
