@@ -60,6 +60,8 @@ static void ViewerEdits(void)
             if (g_w3hdTrack == 1 && s->kind == SEC_OPEN) { int sd; for (sd = 0; sd < 2; sd++) if (s->shoulderH[sd] > 0) s->shoulderH[sd] = (s->shoulderH[sd] * 9 + 5) / 10; } }   /* (the City's footpaths, as loaded) */
         if (p->layout != 2) p->halfB = p->halfA;
         if (g_w3l.piece) g_w3l.piece[k] = *p;
+        if (!g_w3a.ext && (g_w3a.ext = (RrcExtra *)calloc(n, sizeof(RrcExtra))) != NULL) g_w3a.next = n;   /* (the painted terrain bands: course3d.h C3_ProfileTex) */
+        if (g_w3a.ext && k < g_w3a.next) memcpy(g_w3a.ext[k].band, pm[k].band, sizeof pm[k].band);
         any++; }
     if (refr) { C3_Frames(&g_w3c); C3_FramesB(&g_w3c); }
     if (any) { g_w3lo = -1; LOG("viewer: %d piece(s) changed by the editor%s", any, refr ? " (frames again)" : ""); } }

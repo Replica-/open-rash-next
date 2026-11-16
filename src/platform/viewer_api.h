@@ -8,7 +8,7 @@
 #ifndef RR_VIEWER_API_H
 #define RR_VIEWER_API_H
 
-#define RRV_MAGIC 0x35565252u   /* "RRV5" (the layout changes: a new number - a game and an editor that do not match ignore each other) */
+#define RRV_MAGIC 0x36565252u   /* "RRV6" (the layout changes: a new number - a game and an editor that do not match ignore each other) */
 
 typedef struct RrViewer {
     unsigned magic;             /* RRV_MAGIC (the editor) */
@@ -37,8 +37,9 @@ typedef struct RrViewer {
     char course[260];           /* the course file the game built and shows (world3d\...rrx) */
 } RrViewer;
 
-/* the pieces memory (<name>P): every piece of the course as the editor has it now; ver +1 at each change - the game takes it into its 3D world */
+/* the pieces memory (<name>P): every piece of the course as the editor has it now; ver +1 at each change - the game takes it into its 3D world
+   (band: the painted terrain bands, road\course_edit.h RrcExtra.band) */
 #define RRV_SEC 0x164
-typedef struct RrvPiece { volatile unsigned ver; int layout; unsigned char a[RRV_SEC], b[RRV_SEC]; } RrvPiece;
+typedef struct RrvPiece { volatile unsigned ver; int layout; unsigned char a[RRV_SEC], b[RRV_SEC]; unsigned short band[2][2][3]; } RrvPiece;
 
 #endif

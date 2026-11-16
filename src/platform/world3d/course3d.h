@@ -594,7 +594,8 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
 }
 
 /* roadside textures of walls (kinds 1..3, see below) and SEC_PROFILE terrain (rr_StripTableDraw -> LaneLookupMax / LaneLookupFloor: BankEntry2(sideTex[side], 1, span)): span 0 = outer edge -> P0,
-   1 = P0 -> P1, 2 = P1 -> P2 (the far extension repeats span 2); in row terms (C3_Section) left spans 3 / 2 / 1 (+ 0), right 10 / 11 / 12 (+ 13) */
+   1 = P0 -> P1, 2 = P1 -> P2 (the far extension repeats span 2); in row terms (C3_Section) left spans 3 / 2 / 1 (+ 0), right 10 / 11 / 12 (+ 13).
+   A span painted in the Course Editor (ra->ext: course_edit.h RrcExtra.band) takes that row of that group instead - terrain only */
 static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int *tex)
 {
     int side, span, i;
@@ -602,8 +603,10 @@ static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int 
     if (!ra || s->kind == SEC_OPEN || s->kind > SEC_PROFILE) return;
     for (side = 0; side < 2; side++) {
         unsigned code = s->sideTex[side]; RxSet *set;
-        if (code == 0xff) continue;
-        set = RX_SetFor(ra, k, h, (int)(code >> 6) & 3);
+        const unsigned short *bd = s->kind == SEC_PROFILE && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].band[h & 1][side] : NULL;
+        if (bd && !((bd[0] | bd[1] | bd[2]) & RRC_BAND)) bd = NULL;
+        if (code == 0xff && !bd) continue;
+        set = code != 0xff ? RX_SetFor(ra, k, h, (int)(code >> 6) & 3) : NULL;
         if (s->kind != SEC_PROFILE) {   /* walls (OwnerTableFill / OctagonalDistance): row 0 = the face, row 1 = the rest (top + beyond) */
             int r0 = 0, r1 = 1; unsigned t0 = RX_Lookup(set, 1, code, &r0, 1), t1 = RX_Lookup(set, 1, code, &r1, 1);
             int x0 = t0 ? RX_TexIn(ra, set, t0) : -1, x1 = t1 ? RX_TexIn(ra, set, t1) : -1;
@@ -615,8 +618,10 @@ static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int 
             continue;
         }
         for (span = 0; span < 3; span++) {
-            unsigned t = RX_Lookup(set, 1, code, &span, 1);
-            int x = t ? RX_TexIn(ra, set, t) : -1;
+            unsigned cd = code, t; int row = span, x; RxSet *st = set;
+            if (bd && (bd[span] & RRC_BAND)) { cd = (bd[span] >> 2) & 0xff; row = bd[span] & 3; st = RX_SetFor(ra, k, h, (int)(cd >> 6) & 3); }   /* (painted) */
+            t = st && cd != 0xff ? RX_Lookup(st, 1, cd, &row, 1) : 0;
+            x = t ? RX_TexIn(ra, st, t) : -1;
             if (side == 0) tex[3 - span] = x; else tex[10 + span] = x;
         }
         {   int vg = RX_SideTex(ra, s, k, h, side, 1);   /* the verge road edge -> outer edge: SideStripDraw, set category 5 sideArg row 0 (else like span 0) */

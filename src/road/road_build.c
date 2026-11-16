@@ -5,6 +5,7 @@
 #include "../data/records.h"
 #include "../data/data_index.h"
 #include "../road/road_ring.h"
+#include "../road/course_edit.h"
 #include "../platform/gpu_api.h"
 #include "../legacy_decls.h"
 #include <string.h>
@@ -1181,7 +1182,8 @@ static int OneRoadWanted(void)
  *   SCRATCH_N, address of scratch record 0 (SCRATCH_N records of 0x2f8 bytes, contiguous: pointers into them are piece / section links), course pointer,
  *   6 spare words;
  * then n records of 0x2f8 bytes (piece i = road position piece0 + i * 0x100), as the generator left them, the perspective table (header word 10 =
- * entries), and (version 2) chunks { tag, byte size, payload } (format in the tracker): PCUR, MARK, PAL , TEXG, SET , END . */
+ * entries), and (version 2) chunks { tag, byte size, payload } (format in the tracker): PCUR, CEXT (an edited course's extras: n x course_edit.h RrcExtra),
+ * MARK, PAL , TEXG, SET , END . */
 static void XChunk(HANDLE f, unsigned tag, const void *a, unsigned na, const void *b, unsigned nb)
 {
     DWORD wr; unsigned h[2];
@@ -1193,7 +1195,25 @@ static void XChunk(HANDLE f, unsigned tag, const void *a, unsigned na, const voi
 /* texture objects (RENDERER.md): [0] 0xbc614e, [3] flags, [4..5] name, [8] / [9] size, [0xa] mip levels, [0xb] average colour, from [0xd] 3 words
    per level { u mask, bitmap, ... }; bitmaps are w * h palette indices */
 RR_DATA(int, tbl_roadTextures);   /* global road textures (TEXG index i = address 0x4c3c9c + 4 i) (lane strips: PieceTablePick reads tbl_roadTexPlain .. tbl_roadTexLanes2, walls tbl_roadTexSideLanes ..) */
+RR_DATA(int, tbl_roadTexPlain); RR_DATA(int, tbl_roadTexSideLanes); RR_DATA(int, g_roadTexFinish); RR_DATA(int, g_roadTexCrosswalk);
 RR_DATA(void **, g_ddPalette);   /* IDirectDrawPalette of the game */
+/* the word of TEXG index i (original address 0x4c3c9c + 4 i): since the data refactor these are separate objects, not one array - (&tbl_roadTextures)[i]
+   read past its 5 words into whatever lies next, and the course files had no lane strips (user, 2026-11-17: the road's wrong texture).  NULL = none */
+static const unsigned *RoadTexWord(int i)
+{
+    if (i >= 0 && i < 5) return (const unsigned *)&(&tbl_roadTextures)[i];
+    switch (i) {
+    case 5:  return (const unsigned *)&tbl_roadTexPlain;
+    case 7:  case 8: return (const unsigned *)&(&tbl_roadTexSideLanes)[i - 7];
+    case 9:  return (const unsigned *)&g_roadTexFinish;
+    case 10: return (const unsigned *)&g_roadTexCrosswalk;
+    case 13: return (const unsigned *)&rec_roadTexStart.tbl_roadTexStart;
+    case 14: case 15: case 16: return (const unsigned *)(rec_roadTexStart.g_roadTexStart1 + 4 * (i - 14));
+    case 17: case 18: return (const unsigned *)&rec_roadTexStart.tbl_roadTexLanes[i - 17];
+    case 19: return (const unsigned *)rec_roadTexStart.tbl_roadTexLanes2;
+    }
+    return 0;   /* (6, 11, 12: no object of their own; 20 on: not road textures) */
+}
 static void CourseExtract(int *course, int start)
 {
     char path[MAX_PATH]; HANDLE f; DWORD wr;
@@ -1238,6 +1258,11 @@ static void CourseExtract(int *course, int start)
     hdr[10] = 34 * 128;   /* the perspective table tbl_perspectiveScale (one int per 2/256 segment of depth, up to 34 segments) follows the records */
     WriteFile(f, &(*(int *)&rec_ShadoC.tbl_perspectiveScale), hdr[10] * 4, &wr, NULL);
     XChunk(f, 0x52554350, pcur, (unsigned)n * 24, NULL, 0);                     /* PCUR: per piece { block, marker image, block segment } x 2 sources */
+    {   extern int rr_courseEdited; const RrcExtra *rr_CourseEditExtra(unsigned pos);   /* CEXT: an edited course's extras per piece (course_edit.h RrcExtra: painted terrain bands) */
+        RrcExtra *x = rr_courseEdited ? (RrcExtra *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (SIZE_T)n * sizeof(RrcExtra)) : 0; int any = 0;
+        for (i = 0; x && i < n; i++) { const RrcExtra *e = rr_CourseEditExtra(back + (unsigned)i * 0x100); if (e) { x[i] = *e; any = 1; } }
+        if (x && any) XChunk(f, 0x54584543, x, (unsigned)n * sizeof(RrcExtra), NULL, 0);
+        if (x) HeapFree(GetProcessHeap(), 0, x); }
     {   unsigned slot[4];                                                        /* SLOT: the set in each slot at the set-up (the pieces before a slot's first marker) */
         for (i = 0; i < 4; i++) { unsigned id = (unsigned)(&(*(int *)&rec_featureAccum1.tbl_spriteSetIds))[i]; int j; slot[i] = (int)id > 0 ? id : 0;
             for (j = 0; j < nset && setId[j] != slot[i]; j++) ;
@@ -1263,7 +1288,7 @@ static void CourseExtract(int *course, int start)
     }
     {   unsigned w[32 * 17];                                                    /* TEXW: the 32 words from tbl_roadTextures, then 64 bytes behind each (diagnosis) */
         for (i = 0; i < 32; i++) {
-            unsigned p = (unsigned)(&tbl_roadTextures)[i];
+            unsigned p = RoadTexWord(i) ? *RoadTexWord(i) : 0;
             w[i] = p;
             if (p >= 0x10000 && !IsBadReadPtr((const void *)p, 64)) memcpy(&w[32 + i * 16], (const void *)p, 64); else memset(&w[32 + i * 16], 0, 64);
         }
@@ -1281,7 +1306,7 @@ static void CourseExtract(int *course, int start)
         XChunk(f, 0x46584554, rec, nr * 16, NULL, 0);
     }
     for (i = 0; i < 34; i++) {                                                  /* TEXG: global texture tbl_roadTextures[i] (32 = g_seaObject SEA128, 33 = g_shoreWater WATER128): { index } + texture */
-        const unsigned *o = (const unsigned *)(i < 32 ? (&tbl_roadTextures)[i] : (i == 32 ? (*(int *)&rec_sndPlayerEngine.g_seaObject) : rec_sndPlayerEngine.g_shoreWater)), *t;   /* a ' BCC' draw object (word [0] 0x7fee....): [2] = its texture object */
+        const unsigned *o = (const unsigned *)(i < 32 ? (RoadTexWord(i) ? *RoadTexWord(i) : 0) :(i == 32 ? (*(int *)&rec_sndPlayerEngine.g_seaObject) : rec_sndPlayerEngine.g_shoreWater)), *t;   /* a ' BCC' draw object (word [0] 0x7fee....): [2] = its texture object */
         if (!o || IsBadReadPtr(o, 16)) continue;
         t = (const unsigned *)o[2];
         if (t && !IsBadReadPtr(t, 0x40) && t[0] == 0xbc614e) { unsigned h[9]; h[0] = (unsigned)i; h[1] = (unsigned)o; h[2] = t[4]; h[3] = t[5]; h[4] = t[8]; h[5] = t[9]; h[6] = t[3]; h[7] = t[0xa]; h[8] = t[0xb];
@@ -1392,6 +1417,7 @@ void __fastcall rr_RoadRingBuild(int *course, int start)
 
     { void rr_CustomCoursePatch(int *course); rr_CustomCoursePatch(course); }   /* a custom race: the editor's road into the course (ui\custom_race.c) */
     { void rr_CourseEditLoad(int track, int level); rr_CourseEditLoad((*(int *)&rec_demoPage.g_raceTrack), (*(unsigned char *)&rec_playerRecord.g_playerLevel) + 1); }   /* an edited course of this track / level (road\course_edit.c) */
+    { void rr_CourseEditMap(int *course); rr_CourseEditMap(course); }   /* its pieces put in / taken out: the course's blocks as edited (before the game prepares them) */
     g_courseLength = 0;
     g_roadScene = course;
     RingSelect(); ring = rr_ring;

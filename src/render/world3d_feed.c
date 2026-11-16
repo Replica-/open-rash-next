@@ -40,6 +40,8 @@ static char *ExtractorEnv(const char *path, int track, int level, const char *cf
     o += wsprintfA(o, "RR_AUTORACE=%d", track) + 1;
     o += wsprintfA(o, "RR_LEVEL=%d", level + 1) + 1;
     o += wsprintfA(o, "RR_CONFIG=%s", cfg) + 1;
+    {   static const char *const keep[2] = { "RR_COURSEEDIT", "RR_COURSEEDITFILE" }; char v[MAX_PATH]; int i;   /* (the edited course this race uses - or none: road\course_edit.c) */
+        for (i = 0; i < 2; i++) if (GetEnvironmentVariableA(keep[i], v, sizeof v) > 0) o += wsprintfA(o, "%s=%s", keep[i], v) + 1; }
     lstrcpyA(o, "RR_HEADLESS=1"); o += 14;
     lstrcpyA(o, "RR_AUDIO=off"); o += 13;
     lstrcpyA(o, "RR_DETERMINISTIC=1"); o += 19;
@@ -60,7 +62,9 @@ static int CourseFile(char *path, int track, int level)
     {   extern int rr_courseEdited; extern unsigned rr_courseEditKey;   /* an edited course (Course Editor, road\course_edit.c): a course file of its own, named by the edit */
         if (rr_courseEdited) wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r_e%08x.rrx" : "world3d\\t%d_l%d_e%08x.rrx", track, level + 1, rr_courseEditKey);
         else wsprintfA(path, rr_oneRoad ? "world3d\\t%d_l%d_1r.rrx" : "world3d\\t%d_l%d.rrx", track, level + 1); }   /* (_1r: one road, no forks - True 3D) */
-    if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return 1;
+    {   char e[4];   /* the cached file is NOT used for now (user, 2026-11-17: files made by older builds drew an old roadside) - made again every race;
+                        test switch RR_W3CACHE=1: the cached one used, as before */
+        if (GetEnvironmentVariableA("RR_W3CACHE", e, sizeof e) > 0 && e[0] == '1' && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return 1; }
     rr_LoadStep(250, "Making the course file (the first time on this course)");
     wsprintfA(tmp, "%s.%lu.tmp", path, GetCurrentProcessId());
     wsprintfA(cfg, "world3d\\extract.%lu.cfg", GetCurrentProcessId());

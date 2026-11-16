@@ -98,7 +98,7 @@ static void W3FreeSoft(void)   /* the live copy's own arrays (forks on) */
 static void W3Free(void)
 {   W3FreeSoft(); free(g_w3l.piece); free(g_w3l.v); free(g_w3l.vpiece); memset(&g_w3l, 0, sizeof g_w3l); g_w3lnb = 0; g_w3lo = g_w3hi = -1;   /* (its frames / frameB are g_w3c's) */
     free(g_w3c.piece); free(g_w3c.frame); free(g_w3c.frameB); free(g_w3c.v); free(g_w3c.vpiece); free(g_w3c.bdead); free(g_w3c.pairA); free(g_w3c.pairB); free(g_w3c.bldg); memset(&g_w3c, 0, sizeof g_w3c);
-    free(g_w3a.file); free(g_w3a.bind); memset(&g_w3a, 0, sizeof g_w3a); }
+    free(g_w3a.file); free(g_w3a.bind); free(g_w3a.ext); memset(&g_w3a, 0, sizeof g_w3a); }
 
 /* ---- new buildings (urban tracks): generated facades in place of the course's (course3d.h C3_FacadeVary) - six kinds of wall (brick, stucco, concrete
    with balconies, stone with arched windows, a glass office tower, painted clapboard) in several colours, rows of windows (frames, sills, glass with
@@ -411,7 +411,7 @@ static void W3Live(void)
                 if (dp) { memcpy(s->profile, ls->profile, sizeof s->profile); changed = 1; } }
         }
     }
-    half = 2 - (g_w3camB != 0);   /* the live stretch leaves out the carriageway the camera is not on where it is far away (course3d.h C3_HideHalf) */
+    half = g_vwHold ? 0 : 2 - (g_w3camB != 0);   /* the live stretch leaves out the carriageway the camera is not on where it is far away (course3d.h C3_HideHalf); the editor's viewer: neither */
     if (half != g_w3l.hide) { g_w3l.hide = half; changed = 1; }
     if (g_w3l.soft) {   /* forks on (Draw distance = Original): with a split in the stretch the other carriageway is placed round the camera every frame */
         for (i = lo; i < hi && g_w3c.piece[i].layout != 2; i++) {}
@@ -488,10 +488,12 @@ static void W3Lamps(void)
             for (j = 0; j < g_w3c.nv; j++) { unsigned a = g_w3c.v[j].rgba >> 24; if (a >= 0xf3 && a <= 0xf5 && g_w3c.vpiece[j] != last) { last = g_w3c.vpiece[j]; np++; if (strlen(ln) < 300) _snprintf(ln + strlen(ln), sizeof ln - strlen(ln) - 1, " %d(%u)", last, a); } }
             LOG("w3patches %d:%s", np, ln); } }
     if (getenv("RR_W3TEXDUMP")) {   /* test switch RR_W3TEXDUMP=<folder>: the course's tree / bush / lamp pictures as .bmp (alpha 0 = magenta) */
-        int k2; for (k2 = 0; k2 < g_w3a.ntex; k2++) { const RxTex *x = &g_w3a.tex[k2]; unsigned *px2; char fn[MAX_PATH]; FILE *o; int X, Y;
-            if (strncmp(x->name, "TREE", 4) && strncmp(x->name, "BUSH", 4) && strncmp(x->name, "LAMPPST", 7) && strncmp(x->name, "LMPPST", 6) && strncmp(x->name, "PRKGLMP", 7) && strncmp(x->name, "STRTLTE", 7)) continue;
+        int k2; for (k2 = 0; k2 < g_w3a.ntex; k2++) { const RxTex *x = &g_w3a.tex[k2]; unsigned *px2; char fn[MAX_PATH]; FILE *o; int X, Y, gi, glob = -1;
+            for (gi = 0; gi < 64; gi++) if (g_w3a.global[gi] == k2) glob = gi;   /* (and the road's own pictures: TEXG entries, named g<entry>_) */
+            if (glob >= 0) { _snprintf(fn, sizeof fn, "%s\\g%02d_%s_%d.bmp", getenv("RR_W3TEXDUMP"), glob, x->name, k2); fn[sizeof fn - 1] = 0; }
+            if (glob < 0 && strncmp(x->name, "TREE", 4) && strncmp(x->name, "BUSH", 4) && strncmp(x->name, "LAMPPST", 7) && strncmp(x->name, "LMPPST", 6) && strncmp(x->name, "PRKGLMP", 7) && strncmp(x->name, "STRTLTE", 7)) continue;
             if (!(px2 = RX_Rgba(&g_w3a, (RxTex *)x))) continue;
-            _snprintf(fn, sizeof fn, "%s\\%s_%d.bmp", getenv("RR_W3TEXDUMP"), x->name, k2); fn[sizeof fn - 1] = 0;
+            if (glob < 0) { _snprintf(fn, sizeof fn, "%s\\%s_%d.bmp", getenv("RR_W3TEXDUMP"), x->name, k2); fn[sizeof fn - 1] = 0; }
             if ((o = fopen(fn, "wb"))) { BITMAPFILEHEADER bh; BITMAPINFOHEADER ih; memset(&bh, 0, sizeof bh); memset(&ih, 0, sizeof ih);
                 bh.bfType = 0x4d42; bh.bfOffBits = sizeof bh + sizeof ih; bh.bfSize = bh.bfOffBits + x->w * x->h * 4; ih.biSize = sizeof ih; ih.biWidth = x->w; ih.biHeight = x->h; ih.biPlanes = 1; ih.biBitCount = 32;
                 fwrite(&bh, sizeof bh, 1, o); fwrite(&ih, sizeof ih, 1, o);
@@ -1074,6 +1076,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         const char *e = getenv("RR_NOFORK");
         g_w3fork = (e && *e) ? *e != '0' : 1;
         g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork; g_w3c.noGround = !g_vid.ground;   /* (True 3D detail > Ground detail: rocks, fallen leaves) */
+        if (ViewerOn()) { g_w3c.forkPick = 0; g_w3c.soft = 0; }   /* (the Course Editor's viewer: the forks always seen - both carriageways, B on its own path: course3d.h C3_FramesB) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
         W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex();
@@ -1097,7 +1100,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     R3_SetStatic(&g_w3r, (const R3Vert *)g_w3c.v, g_w3c.nv);
     memset(&g_w3l, 0, sizeof g_w3l);   /* the live copy: the file's pieces, g_w3c's frames */
     g_w3l.skirts = 1;   /* (the skirts round the camera only: course3d.h C3_Skirt) */
-    g_w3l.forkPick = g_w3fork; g_w3l.noGround = g_w3c.noGround;
+    g_w3l.forkPick = g_w3c.forkPick; g_w3l.noGround = g_w3c.noGround;
     g_w3l.bdead = g_w3c.bdead; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB;   /* (shared, g_w3c's) */
     g_w3l.n = g_w3c.n; g_w3l.start = g_w3c.start; g_w3l.finish = g_w3c.finish; g_w3l.L = g_w3c.L; g_w3l.frame = g_w3c.frame; g_w3l.frameB = g_w3c.frameB; g_w3l.fr = g_w3l.frame;
     if ((g_w3l.piece = (RoadPiece *)malloc(sizeof(RoadPiece) * g_w3c.n)) != NULL) memcpy(g_w3l.piece, g_w3c.piece, sizeof(RoadPiece) * g_w3c.n);

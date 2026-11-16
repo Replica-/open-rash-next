@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../road/course_edit.h"   /* (RrcExtra: an edited course's CEXT chunk) */
 
 typedef struct RxSet { unsigned id, base, size; unsigned char *buf; } RxSet;
 typedef struct RxMarks { unsigned img; int count; const unsigned char *rec; } RxMarks;   /* records { pos, state, slot, -, id } of 12 bytes */
@@ -40,6 +41,7 @@ typedef struct RxAssets {
     int gen0, ngen;                            /* generated facades: tex[gen0 .. gen0 + ngen - 1] (course3d.h C3_FacadeVary) */
     int rockTex;                               /* the rocks' texture (world3d.inc W3RockTex; -1 = none: course3d.h C3_Rock flat colour) */
     int sign0, nsign;                          /* projecting signs (the City set): tex[sign0 .. sign0 + nsign - 1] (course3d.h C3_BladeSign) */
+    RrcExtra *ext; int next;                   /* per piece: an edited course's extras (CEXT: painted terrain bands, course3d.h C3_ProfileTex; NULL = none) - its own memory */
 } RxAssets;
 
 static void RX_Bind(RxAssets *a);
@@ -69,6 +71,7 @@ static int RX_Load(RxAssets *a, const char *path)
         if (total + ch[1] > cap || fread(p, 1, ch[1], f) != ch[1]) break;
         total += (ch[1] + 3) & ~3u;
         if (ch[0] == 0x52554350) { a->pcur = (unsigned (*)[6])p; a->npiece = (int)(ch[1] / 24); }
+        else if (ch[0] == 0x54584543 && !a->ext && (a->ext = (RrcExtra *)malloc(ch[1] + 1)) != NULL) { memcpy(a->ext, p, ch[1]); a->next = (int)(ch[1] / sizeof(RrcExtra)); }
         else if (ch[0] == 0x4b52414d && a->nmark < 256) { RxMarks *m = &a->mark[a->nmark++]; m->img = w[0]; m->count = (int)w[3]; m->rec = p + 4 + 0x18; }
         else if (ch[0] == 0x204c4150) memcpy(a->pal, p, 1024);
         else if (ch[0] == 0x544f4c53) memcpy(a->slot0, p, sizeof a->slot0);

@@ -990,6 +990,8 @@ void __fastcall rr_Cursor4Step(int *c, int delta)
     }
 }
 
+extern int rr_ceMaps; int rr_CourseEditSrc(int blk, int v);   /* road\course_edit.c: an edited course's pieces put in / taken out (0: none) */
+static void BankSubStep(int o, int d);
 /* ---- resource bank binding ---- */
 /* bind a 'sprite set' to a cursor object: its eight embedded cursors take the matching sub-blocks of the set's header (offset table at +0x10) */
 RR_REPLACE_FAST(SpriteSetBind, rr_SpriteSetBind, 12);
@@ -997,18 +999,21 @@ void __fastcall rr_SpriteSetBind(int obj, int set, char flag)
 {
     int *pos = (int *)(obj + 8);
     int hdr;
+    int sp;   /* (where the sub-cursors start: the course data's own position - an edited course's block with pieces put in / taken out, rr_CursorBankMove) */
     I32(obj, 4) = set;
     if (flag == 0) *pos = I32(set, 0x14) << 8;
     else           *pos = 0;
+    sp = rr_ceMaps ? (flag == 0 ? rr_CourseEditSrc(set, *pos) : 0) : *pos;
     hdr = I32(set, 0x10);
     RowCursorBind(obj + 0x2c, I32(hdr, 4), flag);
     TableCursorBind(obj + 0x10, I32(hdr, 0x18), flag);
     FrameCursorBind(obj + 0x84, I32(hdr, 8), flag);
-    KeyCursorBind(obj + 0x70, I32(hdr, 0xc), *pos);
-    SceneryCursorBind(obj + 0xb4, I32(hdr, 0x10), *pos);
+    KeyCursorBind(obj + 0x70, I32(hdr, 0xc), sp);
+    SceneryCursorBind(obj + 0xb4, I32(hdr, 0x10), sp);
     CursorInit(obj + 0x5c, I32(hdr, 0x24), flag);
     TableCursor24Bind(obj + 0x38, I32(hdr, 0x14), flag);
     ImageCursorBind(obj + 0x1b8, ((int *)hdr)[7], *(int *)hdr, flag);
+    if (rr_ceMaps && flag != 0 && rr_CourseEditSrc(set, 0) != 0) BankSubStep(obj, rr_CourseEditSrc(set, 0));   /* (its first piece taken out: the sub-cursors where it starts now) */
 }
 
 /* initialise an 0x1b0-byte record: header, then its eight embedded sub-objects (constructors with null storage) */
@@ -1031,7 +1036,27 @@ void __fastcall rr_CursorRecordInit(int *p, int src, int id, unsigned char tag)
 }
 
 /* ---- cursor bank ---- */
-/* move cursor object `o` by `delta` (24.8): if the new position leaves the current block switch to the neighbouring one (SpriteSetBind), then step all eight sub-cursors; returns 0 = stayed, 1 = switched, 2 / 3 = cannot (neighbour is a list / missing) */
+/* the eight sub-cursors by d: with pieces put in / taken out at most a piece per call (they count the pieces they cross, one per step) */
+static void BankSubStep(int o, int d)
+{
+    int once = !rr_ceMaps;   /* (no map: one step, as the original - even by 0) */
+    while (d != 0 || once) {
+        int s = once ? d : d > 0x100 ? 0x100 : d < -0x100 ? -0x100 : d;
+        once = 0;
+        d -= s;
+        SectionCursorStep(o + 0x10, s);
+        FrameCursorStep(o + 0x84, s);
+        SpriteCursorStep(o + 0x70, s);
+        RowCursorStep(o + 0x2c, s);
+        RangeCursorStep(o + 0x5c, s);
+        Cursor4Step(o + 0x38, s);
+        EffectAdvance(o + 0xb4, s);
+        KeyCursorStep(o + 0x1b8, s);
+    }
+}
+
+/* move cursor object `o` by `delta` (24.8): if the new position leaves the current block switch to the neighbouring one (SpriteSetBind), then step all eight sub-cursors; returns 0 = stayed, 1 = switched, 2 / 3 = cannot (neighbour is a list / missing).
+   An edited course's block with pieces put in / taken out: the position is the edited one, the sub-cursors step through the course data's own (rr_CourseEditSrc) */
 RR_REPLACE_FAST(CursorBankMove, rr_CursorBankMove, 8);
 unsigned __fastcall rr_CursorBankMove(int o, int delta)
 {
@@ -1052,6 +1077,7 @@ unsigned __fastcall rr_CursorBankMove(int o, int delta)
             }
             SpriteSetBind(o, (int)nb, 0);
             delta = -pos;
+            pos = I32(o, 8); blk = (int)nb;
             np = I32(I32(o, 4), 0x14) * 0x100 + delta;
             result = 1;
         }
@@ -1067,17 +1093,12 @@ unsigned __fastcall rr_CursorBankMove(int o, int delta)
         np = np + I32(blk, 0x14) * -0x100;
         SpriteSetBind(o, (int)nb, 1);
         delta = np;
+        pos = 0; blk = (int)nb;
         result = 1;
     }
     I32(o, 8) = np;
-    SectionCursorStep(o + 0x10, delta);
-    FrameCursorStep(o + 0x84, delta);
-    SpriteCursorStep(o + 0x70, delta);
-    RowCursorStep(o + 0x2c, delta);
-    RangeCursorStep(o + 0x5c, delta);
-    Cursor4Step(o + 0x38, delta);
-    EffectAdvance(o + 0xb4, delta);
-    KeyCursorStep(o + 0x1b8, delta);
+    if (rr_ceMaps) delta = rr_CourseEditSrc(blk, np) - rr_CourseEditSrc(blk, pos);
+    BankSubStep(o, delta);
     return result;
 }
 
