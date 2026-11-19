@@ -136,7 +136,8 @@ void __fastcall rr_RiderCrossFinish(int rider)
         int frame = (int)(*(unsigned *)&rec_featureAccum1.g_raceTime);
         *(unsigned char *)(rider + 0xc0) |= 0x10;
         *(unsigned char *)(*(int *)(rider + 0x1c4) + 0xc0) |= 0x10;
-        { char b[100]; wsprintfA(b, "course: rider %08x FINISHED at frame %d (player %08x)", (unsigned)rider, frame, g_copRider ? (unsigned)*(int *)(g_copRider + 0x2fc) : 0u); dbg(b); }
+        { char b[120]; wsprintfA(b, "course: rider %08x FINISHED at frame %d (player %08x)%s", (unsigned)rider, frame, g_copRider ? (unsigned)*(int *)(g_copRider + 0x2fc) : 0u,
+            g_playerRider && rider == *(int *)(g_playerRider + 0x2fc) ? " - the player's bike" : ""); dbg(b); }
         if (g_copRider == 0 || *(int *)(g_copRider + 0x2fc) != rider) {
             int off = rec_roadTexStart.g_finishCount * 8;
             *(int *)((char *)&(*(int *)&rec_roadTexStart.tbl_finishOrder) + off) = rider;

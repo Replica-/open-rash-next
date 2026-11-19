@@ -54,6 +54,11 @@ __declspec(dllexport) void __stdcall RR_Ambience(int kind,float vol){ g_ambKind=
 __declspec(dllexport) void __stdcall RR_Thunder(float strength){ if(strength>g_ambThunder) g_ambThunder=strength; }
 static volatile float g_ambSplash, g_ambSplashPan=0.5f;   /* a tyre through a puddle (RR_Splash: strength 0..1, pan 0 left .. 1 right) */
 __declspec(dllexport) void __stdcall RR_Splash(float strength,float pan){ if(strength>g_ambSplash){ g_ambSplash=strength>1?1:strength; g_ambSplashPan=pan<0?0:(pan>1?1:pan); } }
+/* the player's tyres on cobbles (user, 2026-11-18: "when the bike rides over cobble stone it makes a cobble road noise"): RR_Cobble(speed 0..1) every frame it
+   rides on them (road\course_edit.c rr_CourseEditCobble) - a rattle of thuds and clacks, one a stone, faster and louder with speed, over a low rumble; it fades
+   out when the calls stop (~0.15 s) */
+static volatile float g_cobSpd; static volatile DWORD g_cobT;
+__declspec(dllexport) void __stdcall RR_Cobble(float speed){ g_cobSpd=speed<0?0:(speed>1?1:speed); g_cobT=GetTickCount(); }
 static double MasterGain(void)
 {   const BYTE *t=g_mixTab; int gv; if(!t) return 1.0; if(t[4*24+20]) return 0.0; gv=*(const int*)(t+4*24+16); if(gv<0) gv=0; if(gv>100) gv=100; return gv/100.0; }
 static void AmbMix(float *acc,int frames)
@@ -62,6 +67,18 @@ static void AmbMix(float *acc,int frames)
     want[0]=0; want[1]=g_ambKind==1?g_ambVol:0; want[2]=g_ambKind==2?g_ambVol:0; (void)curKind;
     if(g_ambThunder>0){ thEnv+=g_ambThunder; if(thEnv>1.2f) thEnv=1.2f; g_ambThunder=0; }
     if(g_ambSplash>0){ if(g_ambSplash>spEnv) spEnv=g_ambSplash; spPan=g_ambSplashPan; g_ambSplash=0; }
+    {   static float cbL, cbW, cbPh, cbTh, cbCl, cbA, cbB, cbR, cbR2; float tgt=(GetTickCount()-g_cobT<150)?g_cobSpd:0;   /* (cobbles: RR_Cobble) */
+        if(tgt>0.01f || cbL>0.0005f){ double cg=MasterGain();
+            for(i=0;i<frames;i++){ float w, v; cbL+=(tgt-cbL)*0.0005f;
+                cbPh+=(7.0f+38.0f*cbL)/OUT_RATE;   /* stones a second */
+                s=s*1664525u+1013904223u; w=((s>>9)&0xffff)/32768.0f-1;
+                if(cbPh>=1){ cbPh-=1+(((s>>5)&255)/255.0f-0.5f)*0.35f; cbTh=0.7f+((s>>13)&255)/600.0f; cbCl=0.4f+((s>>21)&255)/500.0f; }   /* the next stone: a thud, a clack */
+                cbA+=(w-cbA)*0.012f; cbB+=(cbA-cbB)*0.03f;   /* low (thud) */
+                cbW+=(w-cbW)*0.45f;                            /* high-ish (clack) */
+                cbR=cbR*0.9985f+w*0.02f; cbR2+=(cbR-cbR2)*0.01f; /* rumble */
+                v=((cbA-cbB)*cbTh*3.0f+(w-cbW)*cbCl*0.35f+cbR2*1.4f)*cbL*0.9f;
+                cbTh*=0.9975f; cbCl*=0.992f;
+                acc[i*2]+=(float)(v*cg); acc[i*2+1]+=(float)(v*cg); } } }
     if(lvl[1]<0.0005f && lvl[2]<0.0005f && want[1]==0 && want[2]==0 && thEnv<0.001f && spEnv<0.001f) return;
     for(i=0;i<frames;i++){ float wl, wr, l=0, r=0;
         for(k=1;k<3;k++) lvl[k]+=(want[k]-lvl[k])*0.00004f;   /* ~0.5 s fades */

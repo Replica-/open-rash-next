@@ -10,6 +10,7 @@
 #include <stdbool.h>
 
 RR_DATA(int,              g_configBlock);
+RR_DATA(char,             g_demoMode);
 RR_DATA(char,             g_hiResRace);
 RR_DATA(char,             g_searchFirstRoot);
 RR_DATA(char,             g_altSpritePath);
@@ -109,6 +110,16 @@ static int AutoRaceTrack(void)
     return e[0] - '0';
 }
 
+/* the Course Editor's Test drive (user, 2026-11-18: "two test drive modes please - player and ai ... once i quit the race in test drive it should
+   quit the test drive completely and bring me back to the editor"): RR_TESTDRIVE=player / ai (with RR_AUTORACE) - 1 / 2, 0 = not a test drive.  ai: the
+   player's bike ridden by the game's own demo rider (g_demoMode, as the title screen's demo races); either way the game ends when the race does */
+static int TestDriveMode(void)
+{
+    char e[16];
+    if (!AutoRaceTrack() || GetEnvironmentVariableA("RR_TESTDRIVE", e, sizeof e) == 0) return 0;
+    return (e[0] == 'a' || e[0] == 'A') ? 2 : 1;
+}
+
 /* Test switch RR_START_MENU=<mode>: the first menu screen instead of 7 (the credits, a wall-clock animation that ends in a demo race).  9 = Game Mode. */
 static int StartMenu(void)
 {
@@ -130,7 +141,7 @@ RR_REPLACE_STD(WinMainLoop, rr_WinMainLoop, 16);
 int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdShow)
 {
     MSG msg;
-    int mode = StartMenu(), ok, autoTrack = AutoRaceTrack(), demoTrack = autoTrack;
+    int mode = StartMenu(), ok, autoTrack = AutoRaceTrack(), demoTrack = autoTrack, testDrive = TestDriveMode();
     char demoAll[4]; int demo = autoTrack && GetEnvironmentVariableA("RR_DEMO_ALL", demoAll, sizeof demoAll) > 0 && demoAll[0] == '1';   /* demo: every track in turn (launch.json "Demo: all tracks, level 5") */
     CrtSrand_x((unsigned)CrtTime_x(0));
     memcpy((char *)&rec_playerRecord.g_playerCharacter - 1, (char *)&(*(char *)&g_startupText.s_gamePath) + 0x20, 32);
@@ -183,11 +194,14 @@ int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdSho
         if (msg.wParam == 6) break;
         }
         SetCursor(LoadCursorA(0, (LPCSTR)0x7f02));
+        if (testDrive) g_demoMode = testDrive == 2;   /* (Test drive: ai - the demo rider rides the player's bike; player - you do: g_demoMode starts at 1 and only the menus,
+                                                        skipped by RR_AUTORACE, clear it - the automated races keep it as they always had) */
         RaceStart((int)msg.wParam);
         SetCursor(LoadCursorA(0, (LPCSTR)0x7f00));
         ShowCursor(0);
         rr_SurfacesCreate();
         MainLoop();
+        if (testDrive) { g_demoMode = 0; break; }   /* (Test drive: the race over or quit - back to the Course Editor) */
         g_unsavedChanges = 1;
         { void rr_ArsenalRaceEnd(void); rr_ArsenalRaceEnd(); }   /* a bounty paid or collected (race\arsenal.c) */
         rr_AutoSave();   /* the race is over: auto save (savegame.c) */

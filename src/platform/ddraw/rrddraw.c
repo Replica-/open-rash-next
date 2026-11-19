@@ -295,6 +295,7 @@ static void Present(Surf *s)
     SDL_UpdateTexture(g_tex,NULL,px,s->w*4);
     SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren); SDL_RenderTexture(g_ren,g_tex,NULL,&g_fullRect); MwDraw(px); SpDraw(px); free(px); TxDraw(s); }   /* (black bars: the draw colour is whatever an overlay last set) */
     { static int shot=-1; if(shot<0){ char *e=getenv("RR_SONGS_SHOT"); shot=(e && *e=='1'); } if(shot) SgDraw(); }   /* test switch RR_SONGS_SHOT=1: the ticker before the dumps (pictures of it) */
+    { static long r0=-2, r1=0; if(r0==-2){ char *e=getenv("RR_DUMP_GPU_RANGE"); r0=-1; if(e) sscanf(e,"%ld %ld",&r0,&r1); } if(r0>=0 && (long)g_frame>=r0 && (long)g_frame<=r1) gpuDump=1; }   /* (test switch RR_DUMP_GPU_RANGE="<from> <to>" + RR_DUMP_GPU: every frame between) */
     if (g_dumpGpu[0]){ if(gpuDump) DumpGpu(g_frame); else if(g_gpuReq){ unsigned long q=g_gpuReq; g_gpuReq=0; DumpGpu(q); } }   /* what the renderer drew (before the buffer flip) */
     { static int shot2=-1; if(shot2<0){ char *e=getenv("RR_SONGS_SHOT"); shot2=(e && *e=='1'); } if(!shot2) SgDraw(); }   /* "now playing" ticker of the song player (musicbox.inc; after the test dumps) */
     ShowRoadPos();

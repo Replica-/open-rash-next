@@ -1547,6 +1547,11 @@ void __fastcall rr_StripCellPick(int self, int arg)
         col = 0;
     }
     if (strip[9] == 0) { col = row; row = 0; }
+    {   int set = *(int *)(self + 0x8c + 4);   /* (the record's set without an object: an edited course's roadside sprite - nothing to pick; user's crash 2026-11-19) */
+        if (set == 0 || *(int *)(set + 0xc) == 0) { static int said; if (said++ < 4) { char m[160]; void (__stdcall *dl)(const char *); HMODULE sh = GetModuleHandleA("rrddraw.dll");
+                wsprintfA(m, "trackside: object %08x (draw %08x, road pos %d, strip %08x) has no sprite set - not drawn", self, *(int *)(self + 0xdc), *(int *)(self + 0x44) >> 8, (int)strip);
+                dl = sh ? (void (__stdcall *)(const char *))GetProcAddress(sh, "RR_DbgLog") : 0; if (dl) dl(m); }
+            s[0xa8 / 4] = 0; return; } }
     hit = (int *)((int (__fastcall *)(int, int, int, int))RRCODE_EntrySelect)(self + 0x8c, *(int *)strip + row, (signed char)strip[4] + col, self + 0xb8);
     if (hit == 0) { s[0xa8 / 4] = 0; return; }
     s[0xa8 / 4] = hit[0];

@@ -44,6 +44,7 @@ static RrvPiece *ViewerPm(void)
 /* piece k's section as the EDITOR has it (the paint grid's values: the course here has the City's footpaths lowered) - or the course's */
 static const RoadSection *ViewerEdSec(int k) { RrvPiece *pm = ViewerPm(); const RoadPiece *p = &g_w3c.piece[k]; int b = g_vw->half && p->layout == 2;
     return pm ? (const RoadSection *)(b ? pm[k].b : pm[k].a) : ViewerSec(k); }
+typedef char RrvExtFitsG[sizeof(RrcExtra) <= RRV_EXT ? 1 : -1];   /* (viewer_api.h RrvPiece.ext) */
 static void ViewerEdits(void)
 {   static unsigned seen; RrvPiece *pm; unsigned *ver; int k, n = g_w3c.n, refr = 0, any = 0;
     if (g_vw->editSeq == seen || n <= 0) return;
@@ -61,7 +62,7 @@ static void ViewerEdits(void)
         if (p->layout != 2) p->halfB = p->halfA;
         if (g_w3l.piece) g_w3l.piece[k] = *p;
         if (!g_w3a.ext && (g_w3a.ext = (RrcExtra *)calloc(n, sizeof(RrcExtra))) != NULL) g_w3a.next = n;   /* (the painted terrain bands: course3d.h C3_ProfileTex) */
-        if (g_w3a.ext && k < g_w3a.next) memcpy(g_w3a.ext[k].band, pm[k].band, sizeof pm[k].band);
+        if (g_w3a.ext && k < g_w3a.next) memcpy(&g_w3a.ext[k], pm[k].ext, sizeof(RrcExtra));   /* (all its editor settings: painted bands, footpath height, gutter, heights, lanes ...) */
         any++; }
     if (refr) { C3_Frames(&g_w3c); C3_FramesB(&g_w3c); }
     if (any) { g_w3lo = -1; LOG("viewer: %d piece(s) changed by the editor%s", any, refr ? " (frames again)" : ""); } }

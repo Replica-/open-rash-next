@@ -40,6 +40,8 @@ typedef struct RrViewer {
 /* the pieces memory (<name>P): every piece of the course as the editor has it now; ver +1 at each change - the game takes it into its 3D world
    (band: the painted terrain bands, road\course_edit.h RrcExtra.band) */
 #define RRV_SEC 0x164
-typedef struct RrvPiece { volatile unsigned ver; int layout; unsigned char a[RRV_SEC], b[RRV_SEC]; unsigned short band[2][2][3]; } RrvPiece;
+#define RRV_EXT 1024   /* (room for the piece's RrcExtra - road\course_edit.h; both sides check it fits) */
+typedef struct RrvPiece { volatile unsigned ver; int layout; unsigned char a[RRV_SEC], b[RRV_SEC]; unsigned char ext[RRV_EXT]; } RrvPiece;   /* (ext: ALL the piece's editor settings -
+    user, 2026-11-19: the curb / gutter blocks "none of them make a difference" - only its painted bands went over, the rest waited for Reload game) */
 
 #endif

@@ -34,6 +34,9 @@ typedef struct C3Course {
     int *vpiece, cur;           /* piece of every vertex (C3_Push: cur); C3_Batches keeps the pieces in order within a batch */
     int hide;                   /* C3_BuildRange: 1 + the split-road half left out where it is far from the other one (0 = both; C3_HideHalf) */
     int darkStrip;              /* C3_Strip: this cross-section span is drawn darker (-1 none): the median wedge under the rails at a fork */
+    int skOn, skind[2];         /* C3_BuildRange: skOn = the piece's sides' own kinds (C3_SideKind) in skind[left / right] for C3_Strip / C3_Skirt */
+    RxAssets *skRa;             /* C3_BuildRange: the assets (their CEXT: the sides' kinds) for C3_GroundAt */
+    int bldKind;                /* the buildings C3_Building is putting up: 0 a street's (C3_Roadside), 1 / 2 on a terrain side from that band (C3_BandBuildings) */
     int skirts;                 /* C3_BuildRange: build the skirts (C3_Skirt) - only the live stretch round the camera, never the whole course */
     int skirtEnd;               /* C3_BuildRange: > 0 = skirts only on the pieces before it (the game's ring: the far part of the one mesh has none, as the course file's had not) */
     int forkPick;               /* 1 = forks off: a split is only its left road A, built as an ordinary road (no B / rails / median); 0 = both */
@@ -238,21 +241,71 @@ static double C3_RoadMid(const C3Course *c, double p)
 /* ---- cross-sections ---- */
 enum { C3_NP = 15 };            /* points per carriageway cross-section, left to right */
 enum { M_FAR, M_TERRAIN, M_SLOPE, M_VERGE, M_WALK, M_CURB, M_ROAD, M_WALL };
-typedef struct C3Row { double u[C3_NP], h[C3_NP]; int mat[C3_NP - 1]; } C3Row;
+typedef struct C3Row { double u[C3_NP], h[C3_NP]; int mat[C3_NP - 1]; unsigned char wm[2]; double wl[2]; unsigned char hm[2]; double hl[2]; } C3Row;   /* (hm / hl: each side's hole cells, their water level - C3_HoleRow) */   /* (wm / wl: each side's water - C3_WaterRow) */
 
+static int g_c3Editor;   /* 1 = the Course Editor's own 3D view (courseedit.c, P3D): water, holes, dunes, cliffs, curbs, footpaths and gutters drawn flat, as painted */
 #define C3_TOP 1000.0    /* a cliff's top: rr_NearWallDraw steps it outwards from the face's top edge in tiles of 4 x lane record +0x24 = 1000 units (row 1, TOP1A) */
 #define C3_PLAT 4000.0   /* ... to the screen edge; here 1 + 4 tiles of a flat plateau at the face's height */
 #define C3_FAR 2500.0   /* the flat extension beyond the last profile point (longer ones stick out through other parts of a winding course) */
-/* one side (s = -1 left, +1 right) of a section, from the road edge outwards: 7 points (edge at road level, edge top, outer, 3 terrain, far) */
-static void C3_Side(const RoadSection *sec, int s, double *u, double *h, int *mat)
+/* the kind of piece k's half h on side 0 left / 1 right: the piece's - or, edited (course_edit.h RrcExtra.sideKind 2), terrain on that side of an open-road
+   piece (on a terrain piece the mark stays: its ground found further off where the sets loaded have none, C3_FarGround) */
+static int C3_SideKind(const RxAssets *ra, const RoadSection *s, int k, int h, int side)
 {
+    if (s->kind == SEC_OPEN && ra && ra->ext && k >= 0 && k < ra->next && ra->ext[k].sideKind[h & 1][side & 1] == 2) return SEC_PROFILE;
+    return s->kind;
+}
+/* buildings on piece k's terrain side (RrcExtra.bld): from band 1 / 2 outwards (3: past P2, 4: from P0 - the verge's edge), 0 none */
+static int C3_SideBld(const RxAssets *ra, const RoadSection *s, int k, int h, int side)
+{
+    int b;
+    if (!ra || !ra->ext || k < 0 || k >= ra->next || C3_SideKind(ra, s, k, h, side) != SEC_PROFILE) return 0;
+    b = ra->ext[k].bld[h & 1][side & 1];
+    return b >= 1 && b <= 4 ? b : 0;
+}
+/* a footpath on piece k's terrain side (RrcExtra.walk): 1 + its set code, 0 none */
+static int C3_SideWalk(const RxAssets *ra, const RoadSection *s, int k, int h, int side)
+{
+    if (!ra || !ra->ext || k < 0 || k >= ra->next || C3_SideKind(ra, s, k, h, side) != SEC_PROFILE) return 0;
+    return ra->ext[k].walk[h & 1][side & 1];
+}
+#define C3_KERB 20.0   /* a footpath's kerb (the City's) */
+/* the edits that shape a side: its buildings (C3_SideBld, & 7) | 8 = a footpath (C3_SideWalk) | 16 = its road edge painted (RrcExtra.edge: user, 2026-11-18 "i still cant
+   paint curbs" - a terrain side has none, its edge at road level: a kerb then, C3_KERB high) */
+static int C3_SideCells(const RxAssets *ra, const RoadSection *s, int k, int h, int side, int g);
+static int C3_SideEd(const RxAssets *ra, const RoadSection *s, int k, int h, int side)
+{
+    int e = C3_SideBld(ra, s, k, h, side) | (C3_SideWalk(ra, s, k, h, side) ? 8 : 0);
+    if (ra && ra->ext && k >= 0 && k < ra->next && (ra->ext[k].lift[h & 1][side & 1][0] | ra->ext[k].lift[h & 1][side & 1][1])) e |= 32;   /* (heights lifted: RrcExtra.lift) */
+    if (ra && ra->ext && k >= 0 && k < ra->next && C3_SideKind(ra, s, k, h, side) == SEC_PROFILE && (ra->ext[k].edge[h & 1][side & 1] & RRC_BAND)) e |= 16;   /* (an original course: no extras) */
+    if (!g_c3Editor) e |= C3_SideCells(ra, s, k, h, side, 2) << 6;   /* (the game: its holes - a hole ends square at its piece's end, a wall closing it: user, 2026-11-19
+                                                                              "should just go all the way down on 52"; bits 6.. read by nothing else) */
+    return e;
+}
+/* a side that ends square at piece k1 (user, 2026-11-17: "these should just be straight ... really they should just be rectangles"): an edited side (terrain painted
+   on, buildings, a footpath) next to a side of another kind / shape keeps its own cross-section to the end of its piece, not drawn out to the other's */
+static int C3_SideSig(const RxAssets *ra, const RoadSection *s, int k, int h, int side, int *ed)
+{
+    int m = ra && ra->ext && k >= 0 && k < ra->next && ra->ext[k].sideKind[h & 1][side & 1] == 2, e = C3_SideEd(ra, s, k, h, side);
+    *ed = m || e;
+    return C3_SideKind(ra, s, k, h, side) | e << 4 | m << 20;
+}
+static int C3_SideBreak(const RxAssets *ra, const RoadSection *s0, int k0, int h0, const RoadSection *s1, int k1, int h1, int side)
+{
+    int e0, e1, a = C3_SideSig(ra, s0, k0, h0, side, &e0), b = C3_SideSig(ra, s1, k1, h1, side, &e1);
+    return (e0 || e1) && a != b;
+}
+/* one side (s = -1 left, +1 right) of a section, from the road edge outwards: 7 points (edge at road level, edge top, outer, 3 terrain, far); kind: that side's;
+   ed: its edits (C3_SideEd) - & 7 buildings from that band on (C3_SideBld; 4 from P0): the terrain beyond its inner point flat, a building's depth (C3_BLDG) a band;
+   & 4 a footpath: road edge -> outer edge at kerb height */
+static void C3_Side(const RoadSection *sec, int s, int kind, int ed, double *u, double *h, int *mat)
+{
+    int bld = ed & 7;
     int r = s > 0, i;
     double edge = r ? (sec->laneEdgeR < sec->edgeR ? sec->laneEdgeR : sec->edgeR) : (sec->laneEdgeL > sec->edgeL ? sec->laneEdgeL : sec->edgeL), outer = r ? sec->outerR : sec->outerL, top = 0, t[3], th[3];
     /* (the road surface ends at the lane edge when that lies inside the road edge - a lane being added / dropped: Sierra 876..887, Napa 114..128 - the
        verge (outer = lane edge + shoulder) follows it, as the original draws it; the road edge jumps in one piece there, so using it left the verge
        collapsed and a sliver of terrain across the road) */
-    if (sec->kind >= SEC_WALL1 && sec->kind <= SEC_WALL_SPLIT) outer = edge;   /* walls: one shoulder strip from the road edge to the wall foot (SideStripDraw), no separate verge */
-    int kind = sec->kind;
+    if (kind >= SEC_WALL1 && kind <= SEC_WALL_SPLIT) outer = edge;   /* walls: one shoulder strip from the road edge to the wall foot (SideStripDraw), no separate verge */
     if (kind == SEC_OPEN) {
         top = sec->shoulderH[r];
         for (i = 0; i < 3; i++) { t[i] = outer + s * (500.0 + 1500.0 * i); th[i] = top; }
@@ -261,6 +314,9 @@ static void C3_Side(const RoadSection *sec, int s, double *u, double *h, int *ma
         for (i = 0; i < 3; i++) { t[i] = sec->profile[(i * 2 + r) * 2]; th[i] = sec->profile[(i * 2 + r) * 2 + 1];
             if ((t[i] - outer) * s < 0) { t[i] = outer; th[i] = 0; } }   /* (a terrain point inside the verge - the verge widens with a lane being added, Sierra 880..887: on its
                                                                            outer edge at verge level, not a step standing in the verge) */
+        if (ed & 24) top = C3_KERB;   /* (a footpath: the verge; a kerb painted) */
+        if (bld == 4) for (i = 0; i < 3; i++) { t[i] = outer + s * 1500.0 * (i + 1); th[i] = top; }   /* (from P0: flat from the verge's edge) */
+        else if (bld > 0) for (i = bld; i < 3; i++) { t[i] = t[bld - 1] + s * 1500.0 * (i - bld + 1); th[i] = th[bld - 1]; }
         mat[2] = M_TERRAIN; mat[3] = M_SLOPE; mat[4] = M_SLOPE;
     } else {   /* walls (rr_NearWallDraw): the face from (x0, road level) to (x1, height) */
         const int *w = sec->wall + r * 3;
@@ -280,22 +336,144 @@ static void C3_Side(const RoadSection *sec, int s, double *u, double *h, int *ma
     }
     mat[0] = M_CURB; mat[1] = M_WALK; mat[5] = M_FAR;
     if (kind != SEC_OPEN) mat[1] = M_VERGE;
+    if (ed & 56) mat[0] = mat[1] = M_VERGE;   /* (a footpath, a kerb, a lift: drawn by the strip - C3_Roadside draws a street's own) */   /* (a footpath: textured by the build - not C3_Roadside's kerb / path, skipped on open-road pieces) */
     for (i = 1; i < 7; i++) if ((u[i] - u[i - 1]) * s < 0) u[i] = u[i - 1];   /* keep the section going outwards */
 }
 
-/* the whole cross-section of a carriageway: 7 left points (outside in), 1 centre point, 7 right points */
-static void C3_Section(const RoadSection *sec, double ofs, C3Row *row)
+/* the whole cross-section of a carriageway: 7 left points (outside in), 1 centre point, 7 right points; kl / kr: the sides' kinds (C3_SideKind), bl / br their
+   edits (C3_SideEd) */
+static void C3_SectionK(const RoadSection *sec, double ofs, C3Row *row, int kl, int kr, int bl, int br)
 {
     double u[7], h[7]; int m[6], i;
-    C3_Side(sec, -1, u, h, m);
+    C3_Side(sec, -1, kl, bl, u, h, m);
     for (i = 0; i < 7; i++) { row->u[6 - i] = u[i] + ofs; row->h[6 - i] = h[i]; }
     for (i = 0; i < 6; i++) row->mat[5 - i] = m[i];
     row->u[7] = (sec->edgeL + sec->edgeR) * 0.5 + ofs; row->h[7] = 0;
-    row->mat[6] = M_ROAD; row->mat[7] = M_ROAD;
-    C3_Side(sec, 1, u, h, m);
+    row->mat[6] = M_ROAD; row->mat[7] = M_ROAD; row->wm[0] = row->wm[1] = 0; row->hm[0] = row->hm[1] = 0; row->wl[0] = row->wl[1] = 0;
+    C3_Side(sec, 1, kr, br, u, h, m);
     for (i = 0; i < 7; i++) { row->u[8 + i] = u[i] + ofs; row->h[8 + i] = h[i]; }
     for (i = 0; i < 6; i++) row->mat[8 + i] = m[i];
 }
+static void C3_Section(const RoadSection *sec, double ofs, C3Row *row) { C3_SectionK(sec, ofs, row, sec->kind, sec->kind, 0, 0); }
+/* water (user, 2026-11-18: "how do i use water, like how pacific highway has it?" - "can we make water a block on the ground list"; 2026-11-19: "the water should
+   act more like a texture with no depth ... just baked in"): the ground picture WATER (ground_art.h, k_c3Ground[C3_GWATER]) painted on a terrain side's cells
+   P0, P1, P2 or past P2 (1..4) - the cell drawn as water where it lies (C3_Strip: the sea's water shading, vertex alpha 253, render3d.h), nothing to set; past P2
+   painted: on out to the horizon from its far end, as Pacific Highway's sea (C3_Water, C3_SEA) */
+#define C3_GWATER 1
+static int C3_IsWaterTex(const RxAssets *ra, int t) { return ra && ra->nground > C3_GWATER && t == ra->ground0 + C3_GWATER; }
+static int C3_IsBridgeTex(const RxAssets *ra, int t) { return ra && ra->nground > 3 && t == ra->ground0 + 3; }
+static int C3_IsPitTex(const RxAssets *ra, int t);
+static int C3_NotPitTex(const RxAssets *ra, const int *tex, int i)   /* (a hole's sides / its end wall: the picture of the nearest strip on its side that is no pit - towards the
+                                                                       road first, then outwards; -1 none) */
+{
+    int left = i < C3_NP / 2, d, j;
+    for (d = 1; d < C3_NP; d++) { j = left ? i + d : i - d; if (j < 0 || j >= C3_NP - 1 || (j < C3_NP / 2) != left) break; if (tex[j] >= 0 && !C3_IsPitTex(ra, tex[j])) return tex[j]; }
+    for (d = 1; d < C3_NP; d++) { j = left ? i - d : i + d; if (j < 0 || j >= C3_NP - 1 || (j < C3_NP / 2) != left) break; if (tex[j] >= 0 && !C3_IsPitTex(ra, tex[j])) return tex[j]; }
+    return -1;
+}
+static int C3_IsPitTex(const RxAssets *ra, int t) { return C3_IsWaterTex(ra, t) || (ra && ra->nground > 2 && t == ra->ground0 + 2); }   /* (water or a hole - C3_GHOLE: the ground round it torn over its edge, never it over the ground) */
+static int C3_SideCells(const RxAssets *ra, const RoadSection *s, int k, int h, int side, int g)   /* bits 0..4: the cells (verge, P0..P2, past P2) of piece k's side painted
+                                                                                                  extra ground picture g (ground_art.h) */
+{
+    const RrcExtra *x; unsigned w = RRC_BAND | RRC_GEN | (unsigned)g; int c, m = 0;
+    if (!ra || !ra->ext || k < 0 || k >= ra->next || ra->nground <= g || C3_SideKind(ra, s, k, h, side) != SEC_PROFILE) return 0;
+    x = &ra->ext[k];
+    if (x->cell[h & 1][side & 1][0] == w) m |= 1;
+    for (c = 1; c <= 3; c++) if (x->band[h & 1][side & 1][c - 1] == w) m |= 1 << c;
+    if (x->cell[h & 1][side & 1][1] == w) m |= 16;
+    return m;
+}
+static int C3_SideWater(const RxAssets *ra, const RoadSection *s, int k, int h, int side) { return C3_SideCells(ra, s, k, h, side, C3_GWATER) & ~1; }   /* bits 1..4: water */
+/* a hole (user, 2026-11-19: "a hole texture which ... just in 3d mode will just reduce the height of the cell to -1000 ... in editing mode ... just another texture"): the
+   ground picture HOLE (k_c3Ground[C3_GHOLE]) painted on a terrain side's cell - in the game (not the Course Editor's own view: g_c3Editor) the cell's corners sunk to
+   C3_HOLEH (the cells beside it slope down into it); the player in it loses (road\course_edit.c rr_CourseEditWater) */
+#define C3_GHOLE 2
+#define C3_GBRIDGE 3
+#define C3_GDUNES 4    /* (DUNES: sand cells rolled into dunes in the game - C3_Dunes; flat in the editor) */
+#define C3_GCLIFF 5    /* (CLIFF: cells raised into a cliff in the game - C3_CliffRow; flat in the editor) */   /* (BRIDGE: a deck painted on the verge - concrete, its railing on the outer edge: C3_Railing) */
+#define C3_HOLEH (-2000.0)
+#define C3_ROCKPER 900.0   /* (a hole's rock wall: units per copy of the CLIFF picture, both ways - its sides and ends alike) */
+#define C3_HLIP 220.0   /* (a hole's wall: this far across at most - steep, not sheer: a lip) */
+#define C3_HOLEWD 1500.0   /* (the water in a hole: this far below the ground - 500 above its floor - unless set: RrcExtra.holeWater) */   /* (doubled: user, 2026-11-19) */
+static void C3_HoleRow(const RxAssets *ra, const RoadSection *sec, int k, int h, int side, C3Row *row)
+{
+    int m, c, i;
+    if (g_c3Editor || !(m = C3_SideCells(ra, sec, k, h, side, C3_GHOLE))) return;
+    {   int fc = 0, wv = ra->ext[k].holeWater[h & 1][side & 1]; while (fc < 4 && !(m & (1 << fc))) fc++;   /* (the water: below the ground inside the first hole cell) */
+        row->hm[side] = (unsigned char)(wv < 0 ? 0 : m); row->hl[side] = row->h[side ? 8 + fc + 1 : 6 - (fc + 1)] - (wv > 0 ? wv : C3_HOLEWD); }
+    /* each run of hole cells c0 .. c1: its points sunk; its walls where it meets ground (user, 2026-11-19: "a sheer edge" for a BRIDGE, then "it naturally drops down not
+       just drops down on a sudden incline", "the terrain is missing in beyond p2"): the boundary point on the ground's side stays up, the first point inside drawn in
+       towards it - a steep wall with a lip (C3_HLIP), the ground's ragged edge torn over it (C3_Blend); a single cell: its inner wall only, the cell outside sloping up */
+    {   double base[7], sg = side ? 1 : -1; int c0, c1;
+        for (i = 0; i < 7; i++) base[i] = row->h[side ? 8 + i : 6 - i];
+#define C3_HP(i) (side ? 8 + (i) : 6 - (i))
+        for (c0 = 0; c0 <= 4; c0++) if (m & (1 << c0)) {
+            int inUp, outUp, n;
+            c1 = c0; while (c1 < 4 && (m & (1 << (c1 + 1)))) c1++;
+            for (i = c0 + 1; i <= c1 + 2; i++) row->h[C3_HP(i)] = C3_HOLEH;
+            inUp = c0 >= 1; outUp = c1 < 4 && c1 > c0; n = c1 - c0;   /* (n: points inside the run) */
+            if (inUp) row->h[C3_HP(c0 + 1)] = base[c0 + 1];
+            if (outUp) row->h[C3_HP(c1 + 2)] = base[c1 + 2];
+            if (inUp && (n >= 2 || n == 0 || !outUp)) { double w = fabs(row->u[C3_HP(c0 + 2)] - row->u[C3_HP(c0 + 1)]), l = w * 0.3 < C3_HLIP ? w * 0.3 : C3_HLIP;
+                row->u[C3_HP(c0 + 2)] = row->u[C3_HP(c0 + 1)] + sg * l; }
+            if (outUp && (n >= 2 || !inUp)) { double w = fabs(row->u[C3_HP(c1 + 2)] - row->u[C3_HP(c1 + 1)]), l = w * 0.3 < C3_HLIP ? w * 0.3 : C3_HLIP;
+                row->u[C3_HP(c1 + 1)] = row->u[C3_HP(c1 + 2)] - sg * l; }
+            c0 = c1; }
+#undef C3_HP
+    }
+}
+/* cliffs (user, 2026-11-19: "cliff textures that are flat in P3D but actually form full cliffs ... the cliff textures should dynamically join together"): the cells painted
+   CLIFF - in the game their points raised C3_CliffH (varying slowly along the road, a little more for each cliff cell further out: the cells next to each other one rock
+   mass, rising away from the road); where a cliff starts outside a cell that is not one, its face steep - the raised point drawn in towards the foot (C3_Strip: rock) */
+static double C3_CliffH(int k, int n) { return 1500.0 + 600.0 * (0.5 + 0.5 * sin(k * 0.23 + 0.7 * sin(k * 0.071))) + 350.0 * n; }
+static void C3_CliffRow(const RxAssets *ra, const RoadSection *sec, int k, int h, int side, C3Row *row)
+{
+    int m, c, i, n = 0; double sg = side ? 1 : -1, base[7];
+    if (g_c3Editor || !(m = C3_SideCells(ra, sec, k, h, side, C3_GCLIFF))) return;
+    for (i = 0; i < 7; i++) base[i] = row->h[side ? 8 + i : 6 - i];
+    for (c = 0; c <= 4; c++) if (m & (1 << c)) { int first = c == 0 || !(m & (1 << (c - 1)));
+        double H = C3_CliffH(k, n++);
+        for (i = first ? c + 2 : c + 1; i <= c + 2; i++) { double t = base[i] + H; if (row->h[side ? 8 + i : 6 - i] < t) row->h[side ? 8 + i : 6 - i] = t; }
+        if (first) {   /* (the face: steep - its top drawn in towards its foot) */
+            double u0 = row->u[side ? 8 + c + 1 : 6 - (c + 1)], u1 = row->u[side ? 8 + c + 2 : 6 - (c + 2)], w = fabs(u1 - u0), in = w * 0.75;
+            if (w - in > 220) in = w - 220;
+            row->u[side ? 8 + c + 2 : 6 - (c + 2)] = u1 - sg * in; } }
+}
+static void C3_WaterRow(const RxAssets *ra, const RoadSection *sec, int k, int h, int side, C3Row *row)   /* the side's water cells: row->wm (bits 1..4), wl the far end's height
+                                                                                                         (flat, where it lies: user, 2026-11-19 - 500 deeper "looks odd") */
+{
+    row->wm[side] = (unsigned char)C3_SideWater(ra, sec, k, h, side); row->wl[side] = row->h[side ? 14 : 0];
+}
+static void C3_EdgeStyle(const RxAssets *ra, int k, int h, int side, double *kmul, double *roll, double *gw, double *gd);
+static void C3_SectionAt(const RxAssets *ra, const RoadSection *sec, int k, int h, double ofs, C3Row *row)   /* (piece k's: its sides' own kinds; the editor's heights -
+                                                                                                         RrcExtra.lift: the curb's top, the verge's outer edge - an open-road
+                                                                                                         side's flat ground beyond with it) */
+{
+    int side, i;
+    C3_SectionK(sec, ofs, row, C3_SideKind(ra, sec, k, h, 0), C3_SideKind(ra, sec, k, h, 1), C3_SideEd(ra, sec, k, h, 0), C3_SideEd(ra, sec, k, h, 1));
+    for (side = 0; side < 2; side++) { int sk = C3_SideKind(ra, sec, k, h, side); double km, rl, gw, gd, sg = side ? 1 : -1;   /* (the curb's style: C3_EdgeStyle) */
+        if (sk != SEC_OPEN && sk != SEC_PROFILE) continue;
+        C3_EdgeStyle(ra, k, h, side, &km, &rl, &gw, &gd);
+        if (km != 1) for (i = 1; i <= (sk == SEC_OPEN ? 6 : 2); i++) row->h[side ? 8 + i : 6 - i] *= km;
+        if (rl > 0) { row->u[side ? 9 : 5] += sg * rl; if ((row->u[side ? 10 : 4] - row->u[side ? 9 : 5]) * sg < 0) row->u[side ? 10 : 4] = row->u[side ? 9 : 5]; } }
+    if (!ra || !ra->ext || k < 0 || k >= ra->next) return;
+    for (side = 0; side < 2; side++) { const short *L = ra->ext[k].lift[h & 1][side]; int sk = C3_SideKind(ra, sec, k, h, side);
+        if (!(L[0] | L[1]) || (sk != SEC_OPEN && sk != SEC_PROFILE)) continue;
+        row->h[side ? 9 : 5] += L[0]; row->h[side ? 10 : 4] += L[1];
+        if (sk == SEC_OPEN) for (i = 3; i <= 6; i++) row->h[side ? 8 + i : 6 - i] += L[1]; }
+    for (side = 0; side < 2; side++) { C3_WaterRow(ra, sec, k, h, side, row); C3_HoleRow(ra, sec, k, h, side, row); C3_CliffRow(ra, sec, k, h, side, row); }
+}
+/* the road edge's style (user, 2026-11-19: "more variations of side gutters and curbs. they should come out flat on P3D but done properly in T3D"; RrcExtra.gutter
+   bits 2..4 the curb, 5..6 the gutter): the curb's height times kmul (standard 1, low 0.5, high 2, rolled 1 - its top roll units out from the road: a sloped face -
+   flush 0), the gutter gw wide, gd deep (standard 45 / 6, wide 90 / 6, a deep channel 60 / 18); in the editor's P3D all flat (user: footpaths "flat and joined to the road") */
+static void C3_EdgeStyle(const RxAssets *ra, int k, int h, int side, double *kmul, double *roll, double *gw, double *gd)
+{
+    int g = ra && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].gutter[h & 1][side & 1] : 0, ks = (g >> 2) & 7, gs = (g >> 5) & 3;
+    static const double km[5] = { 1, 0.5, 2, 1, 0 }, gws[3] = { 45, 90, 60 }, gds[3] = { 6, 6, 18 };
+    *kmul = ks < 5 ? km[ks] : 1; *roll = ks == 3 ? 45 : 0; *gw = gws[gs < 3 ? gs : 0]; *gd = gds[gs < 3 ? gs : 0];
+    if (g_c3Editor) { *kmul = 0; *roll = 0; *gd = 0; }
+}
+static double C3_Lift(const RxAssets *ra, int k, int h, int side, int i) { return ra && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].lift[h & 1][side & 1][i] : 0; }   /* (RrcExtra.lift) */
 
 /* ---- mesh ---- */
 static unsigned C3_Colour(int mat, int kind, int k)
@@ -398,7 +576,7 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
         double el1 = s1->laneEdgeL > s1->edgeL ? s1->laneEdgeL : s1->edgeL, er1 = s1->laneEdgeR < s1->edgeR ? s1->laneEdgeR : s1->edgeR;   /*  C3_OneRoadWidth narrows the road only) */
         double n0 = x0 > el0 ? x0 : el0, n1 = x1 < er0 ? x1 : er0;   /* near end (piece k), clipped */
         double f0 = x0 > el1 ? x0 : el1, f1 = x1 < er1 ? x1 : er1;   /* far end (piece k + 1) */
-        int tex = -1;
+        int tex = -1, cob = 0, m0 = c->nv;
         if (ra) {   /* PieceTablePick: finish line (half flag 0x20) -> g_roadTexFinish; start grid (kind flags 8 / 0x10) -> tbl_roadTexStart[v]; cross street
                        (0x20) -> tbl_roadTexPlain (plain); else tbl_roadTexLanes[v] (TEXG index = (address - 0x4c3c9c) / 4).  v: lane 0 plain, lane lanesL
                        yellow; while the left side is fractional lanes 0..1 plain (the line of the lane being added is not drawn yet); the lanes past
@@ -415,6 +593,11 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
             else if (s0->kindFlags & 0x20) tex = ra->global[5];
             else tex = ra->global[17 + v];
             if (tex < 0) tex = ra->global[17 + v];
+            if (ra->ext && k >= 0 && k < ra->next) {   /* the editor's road surface (RrcExtra.road: the lanes left / right of the centre line) */
+                unsigned rv = ra->ext[k].road[s0 == &c->piece[k].halfB][j < (int)s0->lanesL ? 0 : 1];
+                if (j >= 0 && j < 8 && ra->ext[k].lane[s0 == &c->piece[k].halfB][j]) rv = ra->ext[k].lane[s0 == &c->piece[k].halfB][j];   /* (this lane's own: RrcExtra.lane) */
+                if ((rv & (RRC_BAND | RRC_TEXG)) == (RRC_BAND | RRC_TEXG) && ra->global[(rv >> 2) & 63] >= 0) tex = ra->global[(rv >> 2) & 63];
+                else if ((rv & (RRC_BAND | RRC_GEN | RRC_TEXG)) == (RRC_BAND | RRC_GEN) && (int)(rv & 0xff) < ra->nroad) { tex = ra->road0 + (int)(rv & 0xff); cob = 1 + (int)(rv & 0xff); } }   /* (an extra surface: ground_art.h k_c3Road - COBBLE) */
         }
         if (n1 - n0 < 0.5 && f1 - f0 < 0.5) continue;   /* the lane is off the road at both ends */
         if (n1 < n0) n1 = n0;
@@ -422,20 +605,24 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
         {   float a[3], b[3], cc[3], d[3], uv[8], e = (ra && tex >= 0 && tex < ra->ntex && ra->tex[tex].w > 0) ? 0.5f / ra->tex[tex].w : 0.0f;   /* u half a texel inside: the wrap must not bleed the line of the far edge into a lane that ends in the road */
             /* across the lane in up to 3 parts: the gutter's slope where the lane ends at a curb (gut > 0), the flat road between */
             double nx[4], fx[4], hy[4]; int np = 0, q;
-            int gl = gut > 0 && n0 <= el0 + 0.01 && f0 <= el1 + 0.01, gr = gut > 0 && n1 >= er0 - 0.01 && f1 >= er1 - 0.01;
-            if ((gl + gr) * C3_GUTW >= (n1 - n0 < f1 - f0 ? n1 - n0 : f1 - f0)) gl = gr = 0;   /* (a lane narrower than its gutter: flat) */
-            nx[np] = n0; fx[np] = f0; hy[np++] = gl ? -gut : 0;
-            if (gl) { nx[np] = n0 + C3_GUTW; fx[np] = f0 + C3_GUTW; hy[np++] = 0; }
-            if (gr) { nx[np] = n1 - C3_GUTW; fx[np] = f1 - C3_GUTW; hy[np++] = 0; }
-            nx[np] = n1; fx[np] = f1; hy[np++] = gr ? -gut : 0;
+            int gl = gut > 0 && n0 <= el0 + 0.01 && f0 <= el1 + 0.01, gr = gut > 0 && n1 >= er0 - 0.01 && f1 >= er1 - 0.01; double gwl = C3_GUTW, gwr = C3_GUTW, gdl = gut, gdr = gut;
+            if (gut > 0) { double km, rl; int hh = s0 == &c->piece[k].halfB; C3_EdgeStyle(ra, k, hh, 0, &km, &rl, &gwl, &gdl); C3_EdgeStyle(ra, k, hh, 1, &km, &rl, &gwr, &gdr);   /* (each side's gutter style) */
+                if (ra && ra->ext && k < ra->next) { if ((ra->ext[k].gutter[hh][0] & 3) == 2) gl = 0; if ((ra->ext[k].gutter[hh][1] & 3) == 2) gr = 0; } }   /* ("gutter: none": the lane flat to the curb) */
+            if (gl * gwl + gr * gwr >= (n1 - n0 < f1 - f0 ? n1 - n0 : f1 - f0)) gl = gr = 0;   /* (a lane narrower than its gutter: flat) */
+            nx[np] = n0; fx[np] = f0; hy[np++] = gl ? -gdl : 0;
+            if (gl) { nx[np] = n0 + gwl; fx[np] = f0 + gwl; hy[np++] = 0; }
+            if (gr) { nx[np] = n1 - gwr; fx[np] = f1 - gwr; hy[np++] = 0; }
+            nx[np] = n1; fx[np] = f1; hy[np++] = gr ? -gdr : 0;
 #define C3_LU(x) (float)((x) - x0 <= 0 ? e : ((x) - x0 >= w0 ? 1 - e : ((x) - x0) / w0))   /* u of lateral x in this lane */
             for (q = 0; q + 1 < np; q++) {
                 C3_Point(c, k, nx[q] + o0, hy[q], a); C3_Point(c, k, nx[q + 1] + o0, hy[q + 1], b); C3_Point(c, k + 1, fx[q + 1] + o1, hy[q + 1], cc); C3_Point(c, k + 1, fx[q] + o1, hy[q], d);
                 uv[0] = C3_LU(nx[q]); uv[1] = 1; uv[2] = C3_LU(nx[q + 1]); uv[3] = 1; uv[4] = C3_LU(fx[q + 1]); uv[5] = 0; uv[6] = C3_LU(fx[q]); uv[7] = 0;
                 if (s0->kindFlags & 0x10) { uv[1] = uv[3] = 0; uv[5] = uv[7] = 1; }   /* rr_RoadsideStripDraw swaps the near and far edges of a 0x10 piece: the crossing
                                                                                        after a junction is the one before it turned round (zebra at the junction, the lane lines after it) */
+                if (cob) { double rep = c->L / (w0 > 1 ? w0 : 1), b0 = -fmod((k + 1) * rep, 64.0); uv[5] = uv[7] = (float)b0; uv[1] = uv[3] = (float)(b0 + rep); }   /* (cobbles: square, on from piece to piece) */
                 C3_QuadT(c, a, b, cc, d, C3_Colour(M_ROAD, 0, k), tex, uv); }
 #undef C3_LU
+            if (cob) C3_Mark(c, m0, cob == 2 ? 0xeb : 0xf0);   /* (cobbles: vertex alpha 240 - render3d.h, each stone bumped and glossy; the rainbow road: 235, animated) */
         }
     }
 }
@@ -447,6 +634,9 @@ static double C3_Dist(const float *a, const float *b) { double x = a[0] - b[0], 
 #define C3_ALONG 4.0f
 /* dirt ground (user, 2026-11-14: "render dirt terrain make it look more like dirt terrain and put rocks and stuff maybe in it"): a ground texture
    whose average colour is brown - red over green over blue, not too pale (sand) nor green (grass) - once per texture (RxTex.gkind) */
+/* ground pictures whose HD picture was redone without the band of road painted in at its side (user, 2026-11-19: "remove the baked in street blend" -
+   analysis\redwood\retex.py): dirt (C3_TexDirt), no band (C3_TexBaked) whatever the original's pixels say */
+static int C3_TexRedone(const char *n) { return !strcmp(n, "SAND") || !strcmp(n, "DARK1L"); }
 static int C3_TexDirt(const RxAssets *ra, int t)
 {
     RxTex *x; unsigned *px; double r = 0, g = 0, b = 0; int i, n = 0;
@@ -454,6 +644,7 @@ static int C3_TexDirt(const RxAssets *ra, int t)
     x = (RxTex *)&ra->tex[t];
     if (x->gkind) return x->gkind == 1;
     x->gkind = 2;
+    if (C3_TexRedone(x->name)) { x->gkind = 1; return 1; }   /* (redone as plain dirt / sand: the shader's bumps - user, 2026-11-19 "give it a bump mapping finish") */
     if (x->gen || !(px = RX_Rgba(ra, x))) return 0;
     for (i = 0; i < x->w * x->h; i += 2) if (px[i] >> 24) { r += px[i] & 255; g += (px[i] >> 8) & 255; b += (px[i] >> 16) & 255; n++; }
     free(px);
@@ -494,16 +685,273 @@ static void C3_DirtRocks(C3Course *c, int k, double u0, double u1, double h0, do
         C3_Rock(c, pp, x, f, r, s, col, tex);   /* (f: the ground height there) */
     }
 }
+/* the trees of an extra ground picture (ground_art.h: REDWOOD - user, 2026-11-18 "massive redwood trees ... really higher and spaced out on the tile")
+   on one quad of it (piece k .. k + 1, across u0 .. u1 at heights h0 .. h1; row k + 1: v, g): about one a 1100 x 1100 square, 4200 .. 7000 high,
+   kept off the quad's sides; each two crossed upright quads of the tree picture (its foot at the bottom middle), both faces, 40 sunk into the
+   ground - the same wherever this piece is built */
+static void C3_GroundTrees(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1, int tex)
+{
+    double w = fabs(u1 - u0); unsigned s = (unsigned)k * 2246822519u ^ (unsigned)(int)(u0 * 3.0) * 3266489917u; int i, n;
+    static const float uv[8] = { 0, 1, 1, 1, 1, 0, 0, 0 };
+    if (w < 300) return;
+    s = (s ^ (s >> 15)) * 2654435761u;
+    n = (int)(w * c->L / (1100.0 * 1100.0) + ((s >> 8) % 1000) / 1000.0); if (n > 6) n = 6;
+    for (i = 0; i < n; i++) {
+        double f, pp, x, y, ht, hw, t, a0, a1, y0, y1; float a[3], b[3], cc[3], d[3]; int pl;
+        s = s * 1664525u + 1013904223u; f = 0.12 + 0.76 * ((s >> 8) / 16777216.0);
+        s = s * 1664525u + 1013904223u; pp = k + 0.1 + 0.8 * ((s >> 8) / 16777216.0);
+        s = s * 1664525u + 1013904223u; ht = 4200 + (s >> 8) % 2800; hw = ht * 0.125;
+        t = pp - k; a0 = u0 + (v0 - u0) * t; a1 = u1 + (v1 - u1) * t; y0 = h0 + (g0 - h0) * t; y1 = h1 + (g1 - h1) * t;
+        x = a0 + (a1 - a0) * f; y = y0 + (y1 - y0) * f - 40;
+        for (pl = 0; pl < 2; pl++) {   /* across the road, then along it */
+            if (pl == 0) { C3_Point(c, pp, x - hw, y, a); C3_Point(c, pp, x + hw, y, b); C3_Point(c, pp, x + hw, y + ht, cc); C3_Point(c, pp, x - hw, y + ht, d); }
+            else { double dp = hw / c->L; C3_Point(c, pp - dp, x, y, a); C3_Point(c, pp + dp, x, y, b); C3_Point(c, pp + dp, x, y + ht, cc); C3_Point(c, pp - dp, x, y + ht, d); }
+            C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex, uv, 0xffffffffu); C3_QuadTint(c, b, a, d, cc, 0xffffffffu, tex, uv + 0, 0xffffffffu); } }
+}
+/* the hedge of an extra ground picture (ground_art.h: REDWOOD_HEDGE - user, 2026-11-18 "for redwood for the beyond piece ... a hedge of bushes ... like a wall
+   of shrubbery ... it should be tall"): on a "beyond" cell (strip i: 0 left, C3_NP - 2 right) painted with it, an upright wall C3_HEDGEH high along its inner
+   edge (P2), C3_HEDGEIN out into it; the picture across C3_HEDGEH * 2 a copy, running on from piece to piece; both faces */
+#define C3_HEDGEH 1300.0
+#define C3_HEDGEIN 80.0
+static void C3_GroundHedge(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex)
+{
+    int in = i == 0 ? 1 : i, out = i == 0 ? 0 : i + 1, rr; float p[2][2][3], uv[8]; double rep = c->L / (2 * C3_HEDGEH);
+    for (rr = 0; rr < 2; rr++) {
+        const C3Row *R = rr ? r1 : r0; double w = fabs(R->u[out] - R->u[in]), f = w > 1 ? (C3_HEDGEIN < 0.4 * w ? C3_HEDGEIN : 0.4 * w) / w : 0,
+            u = R->u[in] + (R->u[out] - R->u[in]) * f, h = R->h[in] + (R->h[out] - R->h[in]) * f - 20;
+        C3_Point(c, k + rr, u, h, p[rr][0]); C3_Point(c, k + rr, u, h + C3_HEDGEH, p[rr][1]); }
+    uv[0] = (float)fmod(k * rep, 64.0); uv[1] = 1; uv[2] = uv[0] + (float)rep; uv[3] = 1; uv[4] = uv[2]; uv[5] = 0; uv[6] = uv[0]; uv[7] = 0;
+    C3_QuadTint(c, p[0][0], p[1][0], p[1][1], p[0][1], 0xffffffffu, tex, uv, 0xffffffffu);
+    {   float ub[8]; ub[0] = uv[2]; ub[1] = 1; ub[2] = uv[0]; ub[3] = 1; ub[4] = uv[0]; ub[5] = 0; ub[6] = uv[2]; ub[7] = 0;   /* (the other face) */
+        C3_QuadTint(c, p[1][0], p[0][0], p[0][1], p[1][1], 0xffffffffu, tex, ub, 0xffffffffu); }
+}
+/* a bridge's railing (user, 2026-11-19: "side railings like a bridge would have using the verge maybe to form side walls"): on a verge painted BRIDGE, along its outer
+   edge (row point 2): a concrete parapet C3_PARH high, steel posts every quarter piece and a rail on top C3_RAILH high; both faces */
+#define C3_PARH 45.0
+#define C3_RAILH 110.0
+static void C3_Railing(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int side)
+{
+    int j = side ? 10 : 4, q; double sg = side ? 1 : -1; float a[3], b[3], cc[3], d[3];
+    const unsigned con = 0xff9aa0a4u, stl = 0xff5a5e64u;   /* (ABGR: concrete grey, steel) */
+#define C3_RQ(u0, u1, ha, hb, col) { C3_Point(c, k, u0, r0->h[j] + (ha), a); C3_Point(c, k + 1, u1, r1->h[j] + (ha), b); C3_Point(c, k + 1, u1, r1->h[j] + (hb), cc); C3_Point(c, k, u0, r0->h[j] + (hb), d); \
+        C3_Quad(c, a, b, cc, d, col); C3_Quad(c, d, cc, b, a, col); }
+    C3_RQ(r0->u[j] - sg * 12, r1->u[j] - sg * 12, 0, C3_PARH, con);   /* the parapet's inner face, */
+    C3_RQ(r0->u[j], r1->u[j], 0, C3_PARH, con);                       /* its outer face, */
+    {   C3_Point(c, k, r0->u[j] - sg * 12, r0->h[j] + C3_PARH, a); C3_Point(c, k + 1, r1->u[j] - sg * 12, r1->h[j] + C3_PARH, b); C3_Point(c, k + 1, r1->u[j], r1->h[j] + C3_PARH, cc); C3_Point(c, k, r0->u[j], r0->h[j] + C3_PARH, d);
+        C3_Quad(c, a, b, cc, d, con); C3_Quad(c, d, cc, b, a, con); }   /* its top */
+    C3_RQ(r0->u[j] - sg * 6, r1->u[j] - sg * 6, C3_RAILH - 14, C3_RAILH, stl);   /* the rail */
+    for (q = 0; q < 4; q++) { double t = (q + 0.5) / 4, u = r0->u[j] + (r1->u[j] - r0->u[j]) * t - sg * 6, hh = r0->h[j] + (r1->h[j] - r0->h[j]) * t, dp = 4.0 / c->L;
+        C3_Point(c, k + t - dp, u, hh + C3_PARH, a); C3_Point(c, k + t + dp, u, hh + C3_PARH, b); C3_Point(c, k + t + dp, u, hh + C3_RAILH, cc); C3_Point(c, k + t - dp, u, hh + C3_RAILH, d);
+        C3_Quad(c, a, b, cc, d, stl); C3_Quad(c, d, cc, b, a, stl); }   /* the posts */
+#undef C3_RQ
+}
+/* grounds meeting each other (user, 2026-11-18: "any terrain that touches up against another terrain should dynamically just mesh in what that terrain"):
+   where two ground strips with different pictures meet - side by side across the road, or one piece after another along it - the inner / earlier one's
+   picture runs on over the other's edge, torn raggedly (RX_EdgeCut: as DARK4's tarmac is painted into its dirt), on a quad C3_BLIFT over the ground.
+   The tear is the picture's own texels past its edge (it repeats on), so it joins without a seam; across C3_BDEEP deep (a quarter of a wide copy, or
+   up to 4 copies of a small one) but less than half the strip it lies on; along one copy (C3_ALONG a piece).  Test switch RR_W3NOBLEND=1: none */
+#define C3_BDEEP 160.0   /* (softer: user, 2026-11-19 "the blending looks abit aggressive ... not protrude so much" - was 300) */
+#define C3_BLIFT 3.0
+/* a torn edge's point at u, h on a face running du, dh across: lifted out of that face, not straight up (user, 2026-11-19: a hole's wall "wobbling ... while i move
+   the camera" - lifted up, the edge lay in the steep wall's own plane and fought it for the depth); steeper: further, 4x on a wall */
+static void C3_BPoint(C3Course *c, double k, double u, double h, double du, double dh, float *out)
+{   double l = sqrt(du * du + dh * dh), nu = 0, nh = 1, st;
+    if (l > 1e-6) { nu = -dh / l; nh = du / l; if (nh < 0) { nu = -nu; nh = -nh; } }
+    st = C3_BLIFT * (1 + 3 * (1 - nh));
+    C3_Point(c, k, u + nu * st, h + nh * st, out); }
+#define C3_WBDEEP 130.0   /* (land onto water across: at most this far; at the water's ends 3/4 of a picture along - a little more: user, 2026-11-19 "abit more dramatic on the sides but not too much") */
+static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int *tex);
+static int C3_WalkTex(RxAssets *ra, const RoadSection *s, int k, int h, int side, int row);
+static void C3_CellOverride(RxAssets *ra, const RoadSection *s, int k, int h, int *tex);
+static void C3_PieceTex(RxAssets *ra, const RoadSection *s0, int k, int h, int *tex)   /* piece k's strip pictures (C3_NP - 1): the profile's, its footpath, the editor's cells */
+{
+    int sd;
+    C3_ProfileTex(ra, s0, k, h, tex);
+    for (sd = 0; sd < 2; sd++) if (C3_SideWalk(ra, s0, k, h, sd)) {   /* a footpath (C3_SideWalk): the kerb face, road edge -> outer edge */
+        int w = C3_WalkTex(ra, s0, k, h, sd, 0), cb = C3_WalkTex(ra, s0, k, h, sd, 1); if (cb < 0) cb = w;
+        if (sd) { tex[8] = cb; tex[9] = w; } else { tex[5] = cb; tex[4] = w; } }
+    C3_CellOverride(ra, s0, k, h, tex);   /* (the editor's cells painted) */
+}
+static int C3_IsGround(int m) { return m == M_FAR || m == M_TERRAIN || m == M_SLOPE || m == M_VERGE; }
+static int C3_EdgeTex(const RxAssets *cra, int t, int dir)   /* (dir: RxTex.edgeDir) texture t's ragged edge (made once: its pixels when drawn - RX_EdgeCut); -1 none */
+{
+    RxAssets *ra = (RxAssets *)cra; RxTex *x, *b;
+    if (!ra || t < 0 || t >= ra->ntex) return -1;
+    b = &ra->tex[t];
+    if (b->edgeOf || b->key || b->holes) return -1;   /* (not of an edge, nor of a cut-out) */
+    if (b->edge[dir]) return b->edge[dir] - 1;
+    if (ra->ntex >= 8192) return -1;
+    x = &ra->tex[ra->ntex]; memset(x, 0, sizeof *x);
+    _snprintf(x->name, sizeof x->name, "%c%.7s", "~|2345"[dir], b->name); x->name[8] = 0;
+    x->w = dir == 1 ? b->w : dir >= 2 ? b->w * (dir - 1) : (b->w / 4 > 1 ? b->w / 4 : 1); x->h = dir == 1 ? b->h : 4 * b->h;   /* (RX_EdgeCut's size) */ x->edgeOf = t + 1; x->edgeDir = dir; x->key = 1; x->gpu = -1;
+    b->edge[dir] = ra->ntex + 1;
+    if (getenv("RR_W3LOGBLEND")) LOG("c3 blend: edge %d of %s (%dx%d) dir %d", ra->ntex, b->name, b->w, b->h, dir);   /* (test switch) */
+    return ra->ntex++;
+}
+static int C3_TexBaked(const RxAssets *ra, int t)   /* ground texture t has a band painted in at its road side (DARK4: tarmac then dirt) - its first fifth's
+                                                    colour far from the rest's; once per texture */
+{
+    RxTex *x; unsigned *px; double a[3] = { 0, 0, 0 }, b[3] = { 0, 0, 0 }, na = 0, nb = 0, d; int X, Y, j;
+    if (!ra || t < 0 || t >= ra->ntex) return 0;
+    x = (RxTex *)&ra->tex[t];
+    if (x->baked) return x->baked == 1;
+    x->baked = 2;
+    if (C3_TexRedone(x->name)) return 0;
+    if (x->w < 10 || !(px = RX_Rgba(ra, x))) return 0;
+    for (Y = 0; Y < x->h; Y++) for (X = 0; X < x->w; X++) { unsigned c = px[Y * x->w + X]; double *s = X < x->w / 5 ? a : X >= x->w / 2 ? b : NULL;
+        if (!s || !(c >> 24)) continue; for (j = 0; j < 3; j++) s[j] += (c >> (8 * j)) & 255; if (s == a) na++; else nb++; }
+    free(px);
+    if (na && nb) { d = 0; for (j = 0; j < 3; j++) d += fabs(a[j] / na - b[j] / nb); if (d > 70) x->baked = 1; }
+    return x->baked == 1;
+}
+static double C3_TexPer(const C3Course *c, const RxAssets *ra, int t)   /* units across one copy of ground texture t (as C3_Strip lays it) */
+{
+    return ra->tex[t].w * (c->L / C3_ALONG / ra->tex[t].h);
+}
+#define C3_RDEEP C3_GUTW   /* (the verge over the road's edge: no further than a gutter is wide - user, 2026-11-18 "it shouldnt cross the gutter width") */
+static int C3_BlendNot(int i, int sf)   /* strip i never blends: the road edge's kerb face (5 / 8), a footpath (4 / 9 - user, 2026-11-18: the footpath's grey was torn into the grass) */
+{
+    return i == 5 || i == 8 || (i == 4 && (sf & 1)) || (i == 9 && (sf & 2));
+}
+/* sf: & 1 / 2 the left / right side has a footpath, & 4 / 8 its verge (or footpath) may run onto the road (a terrain side, no gutter, no kerb painted - user, 2026-11-18: "the blending
+   should only happen if the gutters are off and the face matches the road face": the verge's road-side edge at the road edge's height, checked here) */
+static void C3_Blend(C3Course *c, int k, const C3Row *r0, const C3Row *r1, const int *tex, const int *prev, const RxAssets *ra, int sf)
+{
+    static int off = -1, only = -1; int i, sd;   /* (test switch RR_W3BLENDONLY=1 across / 2 along) */
+    if (off < 0) { off = getenv("RR_W3NOBLEND") != NULL; only = getenv("RR_W3BLENDONLY") ? atoi(getenv("RR_W3BLENDONLY")) : 0; }
+    if (off || !ra) return;
+    /* the verge onto the road: its picture torn over the road's edge (as across below, mirrored: the verge the inner strip, the road the outer) */
+    for (sd = 0; sd < 2 && only != 2; sd++) {
+        int vs = sd ? 9 : 4, ep = sd ? 8 : 6, tp = sd ? 9 : 5, ip = sd ? 10 : 4, e = -1, rr, ok = 1, dir = 0;   /* (the verge strip; the road edge, the edge's top, the verge's far point) */
+        const C3Row *R[2]; float P[2][2][3], s[2]; R[0] = r0; R[1] = r1;
+        if (!(sf & (4 << sd))) continue;
+        if (vs == c->darkStrip || tex[vs] < 0 || !C3_IsGround(r0->mat[vs]) || C3_TexBaked(ra, tex[vs]) || C3_IsPitTex(ra, tex[vs])) continue;
+        for (rr = 0; rr < 2 && ok; rr++) {
+            double wIn = fabs(R[rr]->u[ip] - R[rr]->u[tp]), wRd = fabs(R[rr]->u[7] - R[rr]->u[ep]), per = C3_TexPer(c, ra, tex[vs]), copy = wIn / per <= 1.5 ? wIn : per, w = C3_RDEEP, in, fi, span;
+            if (fabs(R[rr]->h[tp] - R[rr]->h[ep]) > 1 || fabs(R[rr]->u[tp] - R[rr]->u[ep]) > 1) { ok = 0; break; }   /* (a step or a kerb between them: a hard edge) */
+            if (w > 0.2 * wRd) w = 0.2 * wRd;
+            if (wIn < 1 || copy < 1) { ok = 0; break; }
+            in = copy / 10.0; fi = in / wIn; if (fi > 0.3) fi = 0.3, in = 0.3 * wIn;
+            if (rr == 0) { dir = w + in <= 0.25 * copy ? 0 : 2; if ((e = C3_EdgeTex(ra, tex[vs], dir)) < 0) { ok = 0; break; } }   /* (a quarter of a copy, or one whole copy) */
+            span = dir ? copy : 0.25 * copy;
+            if (w + in > 0.98 * span) w = 0.98 * span - in;   /* (never past its edge picture's end: it would repeat - a second, opaque band out on the road) */
+            if (w < 8) { ok = 0; break; }
+            s[rr] = (float)((w + in) / span);
+            C3_Point(c, k + rr, R[rr]->u[tp] + (R[rr]->u[ip] - R[rr]->u[tp]) * fi, R[rr]->h[tp] + (R[rr]->h[ip] - R[rr]->h[tp]) * fi + C3_BLIFT, P[rr][0]);
+            C3_Point(c, k + rr, R[rr]->u[ep] + (R[rr]->u[7] > R[rr]->u[ep] ? w : -w), R[rr]->h[ep] + C3_BLIFT, P[rr][1]); }
+        if (ok) { float uv[8];
+            if (sd) { uv[0] = s[0]; uv[1] = C3_ALONG / 4; uv[2] = 0.01f; uv[3] = C3_ALONG / 4; uv[4] = 0.01f; uv[5] = 0; uv[6] = s[1]; uv[7] = 0;   /* (the tear towards the left: as a left side's across) */
+                C3_QuadTint(c, P[0][1], P[0][0], P[1][0], P[1][1], 0xffffffffu, e, uv, 0xffffffffu); }
+            else { uv[0] = 0.01f; uv[1] = C3_ALONG / 4; uv[2] = s[0]; uv[3] = C3_ALONG / 4; uv[4] = s[1]; uv[5] = 0; uv[6] = 0.01f; uv[7] = 0;
+                C3_QuadTint(c, P[0][0], P[0][1], P[1][1], P[1][0], 0xffffffffu, e, uv, 0xffffffffu); } } }
+    for (i = 0; i < C3_NP - 1; i++) {
+        int left = i < C3_NP / 2, kind = c->skOn ? c->skind[left ? 0 : 1] : SEC_PROFILE;
+        if (kind >= SEC_WALL1 && kind <= SEC_WALL_SPLIT) continue;
+        if (i == c->darkStrip || tex[i] < 0 || !C3_IsGround(r0->mat[i]) || C3_BlendNot(i, sf) || C3_IsBridgeTex(ra, tex[i])) continue;   /* (a bridge deck: its edge sharp) */
+        /* across: strip i the inner one, the next one out the outer (left: i - 1, right: i + 1) - the inner picture over the outer strip's edge; painted water (user,
+           2026-11-19: "the neighbouring texture should just blend right into the water"): never torn itself - the land's picture over the water's edge, whichever
+           side of it the water is (mir: the outer strip's picture inwards over water inside it) */
+        {   int o = left ? i - 1 : i + 1, bp = left ? i : i + 1, fpN = left ? i - 1 : i + 2, ipN = left ? i + 1 : i, mir;
+            if (only != 2 && o >= 0 && o < C3_NP - 1 && (o < C3_NP / 2) == left && o != c->darkStrip && tex[o] >= 0 && tex[o] != tex[i] && C3_IsGround(r0->mat[o]) && !C3_BlendNot(o, sf))
+            for (mir = 0; mir < 2; mir++) {
+                int src = mir ? o : i, ip = mir ? fpN : ipN, fp = mir ? ipN : fpN, lw = mir ? !left : left, t = tex[src], e = -1;
+                const C3Row *R[2]; float P[2][2][3], Pm[2][3], s[2], sm[2]; int rr, ok = 1, dir = 0; R[0] = r0; R[1] = r1;
+                if (mir ? !(C3_IsPitTex(ra, tex[i]) && !C3_IsPitTex(ra, tex[o])) : C3_IsPitTex(ra, tex[i])) continue;
+                if (C3_EdgeTex(ra, t, 0) < 0) continue;
+                for (rr = 0; rr < 2; rr++) {
+                    double wIn = fabs(R[rr]->u[bp] - R[rr]->u[ip]), wOut = fabs(R[rr]->u[fp] - R[rr]->u[bp]), per = C3_TexPer(c, ra, t), copy = wIn / per <= 1.5 ? wIn : per, w = C3_BDEEP, f;
+                    if (w > 0.3 * wOut) w = 0.3 * wOut;
+                    if (C3_IsPitTex(ra, tex[i]) || C3_IsPitTex(ra, tex[o])) { if (w > C3_WBDEEP) w = C3_WBDEEP; if (w > 0.22 * wOut) w = 0.22 * wOut; }   /* (onto water, along the road: gentler - user, 2026-11-19 "too dramatic make it match the other side") */
+                    if (C3_TexBaked(ra, t) && w > 0.6 * copy) w = 0.6 * copy;   /* (DARK4 ...: never as far as its road-side band - the reflection would bring it back) */
+                    if (w < 8 || wOut < 1 || copy < 1) { ok = 0; break; }
+                    if (rr == 0) { int n = (int)ceil(w / copy - 1e-6); dir = w <= 0.25 * copy ? 0 : 1 + (n < 1 ? 1 : n > 4 ? 4 : n); if (dir >= 2 && w > copy * (dir - 1)) w = copy * (dir - 1);
+                        if ((e = C3_EdgeTex(ra, t, dir)) < 0) { ok = 0; break; } }
+                    else if (w > (dir ? copy * (dir - 1) : 0.25 * copy)) w = dir ? copy * (dir - 1) : 0.25 * copy;
+                    {   double in = copy / 10.0, fi = wIn > 1 ? in / wIn : 0;   /* (RX_EDGEIN: the reflection's start, inside the inner strip) */
+                        double span = dir ? copy * (dir - 1) : 0.25 * copy;
+                        if (fi > 0.3) fi = 0.3, in = 0.3 * wIn;
+                        if (w + in > 0.98 * span) { w = 0.98 * span - in; if (w < 4) w = 4; }   /* (never past the edge picture's end: it would repeat, opaque again) */
+                        f = w / wOut; s[rr] = (float)((w + in) / span); sm[rr] = 0.01f + (s[rr] - 0.01f) * (float)(in / (w + in));
+                        C3_BPoint(c, k + rr, R[rr]->u[bp] + (R[rr]->u[ip] - R[rr]->u[bp]) * fi, R[rr]->h[bp] + (R[rr]->h[ip] - R[rr]->h[bp]) * fi, R[rr]->u[ip] - R[rr]->u[bp], R[rr]->h[ip] - R[rr]->h[bp], P[rr][0]); }
+                    C3_BPoint(c, k + rr, R[rr]->u[bp] + (R[rr]->u[fp] - R[rr]->u[bp]) * f, R[rr]->h[bp] + (R[rr]->h[fp] - R[rr]->h[bp]) * f, R[rr]->u[fp] - R[rr]->u[bp], R[rr]->h[fp] - R[rr]->h[bp], P[rr][1]);
+                    {   float q0[3], q1[3]; int j;   /* (the strips' meeting line: lifted off both faces - the two halves bend with the ground there; one flat quad across a bank going
+                                                        down to the water cut under its crease and the water showed through as a dark line: user, 2026-11-19 "it has a line in the middle") */
+                        C3_BPoint(c, k + rr, R[rr]->u[bp], R[rr]->h[bp], R[rr]->u[ip] - R[rr]->u[bp], R[rr]->h[ip] - R[rr]->h[bp], q0);
+                        C3_BPoint(c, k + rr, R[rr]->u[bp], R[rr]->h[bp], R[rr]->u[fp] - R[rr]->u[bp], R[rr]->h[fp] - R[rr]->h[bp], q1);
+                        for (j = 0; j < 3; j++) Pm[rr][j] = (q0[j] + q1[j]) / 2; Pm[rr][1] += (float)C3_BLIFT; } }
+                if (ok) { float uv[8];
+                    if (lw) { uv[0] = sm[0]; uv[1] = C3_ALONG / 4; uv[2] = 0.01f; uv[3] = C3_ALONG / 4; uv[4] = 0.01f; uv[5] = 0; uv[6] = sm[1]; uv[7] = 0;   /* (its 4 copies down: one piece) */
+                        C3_QuadTint(c, Pm[0], P[0][0], P[1][0], Pm[1], 0xffffffffu, e, uv, 0xffffffffu);
+                        uv[0] = s[0]; uv[2] = sm[0]; uv[4] = sm[1]; uv[6] = s[1]; C3_QuadTint(c, P[0][1], Pm[0], Pm[1], P[1][1], 0xffffffffu, e, uv, 0xffffffffu); }
+                    else { uv[0] = 0.01f; uv[1] = C3_ALONG / 4; uv[2] = sm[0]; uv[3] = C3_ALONG / 4; uv[4] = sm[1]; uv[5] = 0; uv[6] = 0.01f; uv[7] = 0;
+                        C3_QuadTint(c, P[0][0], Pm[0], Pm[1], P[1][0], 0xffffffffu, e, uv, 0xffffffffu);
+                        uv[0] = sm[0]; uv[2] = s[0]; uv[4] = s[1]; uv[6] = sm[1]; C3_QuadTint(c, Pm[0], P[0][1], P[1][1], Pm[1], 0xffffffffu, e, uv, 0xffffffffu); } } } }
+        /* along: the piece before had another picture in this strip - its picture on over this piece's start, one copy long */
+        if (only != 1 && prev && prev[i] >= 0 && prev[i] != tex[i] && !C3_BlendNot(i, sf >> 4) && !C3_IsPitTex(ra, prev[i]) && !C3_TexBaked(ra, prev[i]) && !C3_TexBaked(ra, tex[i])) { int e = C3_EdgeTex(ra, prev[i], 1);   /* (DARK4 ...: its band would run on) */
+            if (e >= 0) { double g = (C3_IsPitTex(ra, tex[i]) ? 0.75 : 0.5) / C3_ALONG, per = C3_TexPer(c, ra, prev[i]), wa = fabs(r0->u[i + 1] - r0->u[i]), q = wa / per <= 1.5 ? 1 : wa / per;
+                float a[3], b[3], cc[3], d[3], uv[8];
+                C3_Point(c, k, r0->u[i], r0->h[i] + C3_BLIFT, a); C3_Point(c, k, r0->u[i + 1], r0->h[i + 1] + C3_BLIFT, b);
+                C3_Point(c, k + g, r0->u[i + 1] + (r1->u[i + 1] - r0->u[i + 1]) * g, r0->h[i + 1] + (r1->h[i + 1] - r0->h[i + 1]) * g + C3_BLIFT, cc);
+                C3_Point(c, k + g, r0->u[i] + (r1->u[i] - r0->u[i]) * g, r0->h[i] + (r1->h[i] - r0->h[i]) * g + C3_BLIFT, d);
+                if (left) { uv[0] = (float)q; uv[2] = 0; uv[4] = 0; uv[6] = (float)q; } else { uv[0] = 0; uv[2] = (float)q; uv[4] = (float)q; uv[6] = 0; }
+                uv[1] = uv[3] = 0.99f; uv[5] = uv[7] = 0;
+                C3_QuadTint(c, a, b, cc, d, 0xffffffffu, e, uv, 0xffffffffu); } }
+        /* along, onto water ending (user, 2026-11-19: "it didnt work here" - water in the piece before, land in this one): this piece's picture back over the water's
+           end, one copy long (the piece before's rows: this one's start, a straight run back) */
+        if (only != 1 && prev && prev[i] >= 0 && C3_IsPitTex(ra, prev[i]) && !C3_IsPitTex(ra, tex[i]) && !C3_TexBaked(ra, tex[i])) { int e = C3_EdgeTex(ra, tex[i], 1);
+            if (e >= 0) { double g = 0.75 / C3_ALONG, per = C3_TexPer(c, ra, tex[i]), wa = fabs(r0->u[i + 1] - r0->u[i]), q = wa / per <= 1.5 ? 1 : wa / per;
+                float a[3], b[3], cc[3], d[3], uv[8];
+                C3_Point(c, k, r0->u[i + 1], r0->h[i + 1] + C3_BLIFT, a); C3_Point(c, k, r0->u[i], r0->h[i] + C3_BLIFT, b);
+                C3_Point(c, k - g, r0->u[i], r0->h[i] + C3_BLIFT, cc); C3_Point(c, k - g, r0->u[i + 1], r0->h[i + 1] + C3_BLIFT, d);
+                if (left) { uv[0] = 0; uv[2] = (float)q; uv[4] = (float)q; uv[6] = 0; } else { uv[0] = (float)q; uv[2] = 0; uv[4] = 0; uv[6] = (float)q; }
+                uv[1] = uv[3] = 0.99f; uv[5] = uv[7] = 0;
+                C3_QuadTint(c, a, b, cc, d, 0xffffffffu, e, uv, 0xffffffffu); } }
+    }
+}
+/* dunes (user, 2026-11-19: "sand dunes in T3D but just do flat textures in P3D"): a cell painted DUNES drawn as a grid of 6 x 6 quads, rolled into dunes - long ridges
+   across the wind, the same function of the place on every piece (they run on from piece to piece), none at the cell's sides (it joins its neighbours) nor at its ends where
+   the piece before / after has no dunes there; sand (vertex alpha 239: the dirt bumps) */
+#define C3_DUNEH 650.0   /* (larger: user, 2026-11-19) */
+static double C3_DuneAt(double p, double u) { double d = 0.5 + 0.5 * sin(u / 950.0 + p * 0.3 + 1.7 * sin(p * 0.07 + u / 3800.0)); return C3_DUNEH * d * d; }
+static void C3_Dunes(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex, const float *uv, const RxAssets *ra)
+{
+    enum { NA = 6, NC = 6 }; int left = i < C3_NP / 2, cell = left ? 4 - i : i - 9, side = !left, ea, ec, m0 = c->nv, pv = 0, nx = 0;
+    if (cell >= 0 && cell <= 4) {
+        if (k > 0) pv = (C3_SideCells(ra, &c->piece[k - 1].halfA, k - 1, 0, side, C3_GDUNES) >> cell) & 1;
+        if (k + 1 < c->n) nx = (C3_SideCells(ra, &c->piece[k + 1].halfA, k + 1, 0, side, C3_GDUNES) >> cell) & 1; }
+    for (ea = 0; ea < NA; ea++) for (ec = 0; ec < NC; ec++) { float P[4][3], q[8]; int v;
+        for (v = 0; v < 4; v++) { double ta = (double)(ea + (v >= 2)) / NA, tc = (double)(ec + (v == 1 || v == 2)) / NC,
+                u = (r0->u[i] + (r0->u[i + 1] - r0->u[i]) * tc) * (1 - ta) + (r1->u[i] + (r1->u[i + 1] - r1->u[i]) * tc) * ta,
+                hh = (r0->h[i] + (r0->h[i + 1] - r0->h[i]) * tc) * (1 - ta) + (r1->h[i] + (r1->h[i + 1] - r1->h[i]) * tc) * ta,
+                fa = (pv || ta >= 0.5 ? 1 : sin(3.14159265 * ta)) * (nx || ta <= 0.5 ? 1 : sin(3.14159265 * ta)), fc = sin(3.14159265 * tc);
+            C3_Point(c, k + ta, u, hh + C3_DuneAt(k + ta, u) * fa * fc, P[v]);
+            {   double ua = uv[0] + (uv[2] - uv[0]) * tc, va = uv[1] + (uv[3] - uv[1]) * tc, ub = uv[6] + (uv[4] - uv[6]) * tc, vb = uv[7] + (uv[5] - uv[7]) * tc;   /* (the cell's uv, across then along) */
+                q[v * 2] = (float)(ua + (ub - ua) * ta); q[v * 2 + 1] = (float)(va + (vb - va) * ta); } }
+        C3_QuadTint(c, P[0], P[1], P[2], P[3], 0xffffffffu, tex, q, 0xffffffffu); }
+    C3_Mark(c, m0, 0xea);   /* (sand: vertex alpha 234 - render3d.h, bumped; not 239: that grows dry scrub, world3d.inc W3GrassCollect) */
+}
 static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int kind, int skipWalk, const int *tex, unsigned ground, const RxAssets *ra)
 {
-    int i;
+    int i, kind0 = kind, tl[C3_NP - 1], rk[C3_NP - 1] = { 0 };
+    memcpy(tl, tex, sizeof tl);   /* a hole's sides (user, 2026-11-19: "this texture here should be inherited from the neighbour"): a HOLE strip not lying wholly at the
+                                     bottom - its end climbing out, the ground beside it - its neighbour's picture across (outwards, else inwards); only the floor black */
+    for (i = 0; i < C3_NP - 1; i++) if (!g_c3Editor && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE
+            && (r0->h[i] > C3_HOLEH + 1 || r0->h[i + 1] > C3_HOLEH + 1 || r1->h[i] > C3_HOLEH + 1 || r1->h[i + 1] > C3_HOLEH + 1)) {
+        int o = i < C3_NP / 2 ? i - 1 : i + 1;
+        if (o >= 0 && o < C3_NP - 1 && tex[o] >= 0 && !C3_IsPitTex(ra, tex[o])) tl[i] = tex[o]; else { int t = C3_NotPitTex(ra, tex, i); if (t >= 0) tl[i] = t; }   /* (between holes: the nearest ground) */
+        if (tl[i] >= 0 && !C3_IsBridgeTex(ra, tl[i]) && !C3_TexBaked(ra, tl[i]) && ra->nground > C3_GCLIFF) { tl[i] = ra->ground0 + C3_GCLIFF; rk[i] = 1; } }   /* (user, 2026-11-19: rock - "replace this
+                                                        texture is a suitable cliff texture ... only replace the texture where the texture can be blended": a bridge's face keeps its deck) */
+    tex = tl;
     for (i = 0; i < C3_NP - 1; i++) {
         float a[3], b[3], cc[3], d[3];
+        kind = c->skOn ? c->skind[i < C3_NP / 2 ? 0 : 1] : kind0;   /* (each side its own kind) */
         if (r0->mat[i] == M_ROAD) continue;
         if (skipWalk && (r0->mat[i] == M_CURB || r0->mat[i] == M_WALK)) continue;
         if (tex && tex[i] == -2) continue;   /* (nothing there) */
         C3_Point(c, k, r0->u[i], r0->h[i], a); C3_Point(c, k, r0->u[i + 1], r0->h[i + 1], b);
         C3_Point(c, k + 1, r1->u[i + 1], r1->h[i + 1], cc); C3_Point(c, k + 1, r1->u[i], r1->h[i], d);
+        if (!g_c3Editor && tex && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE) { C3_Quad(c, a, b, cc, d, 0xff050505u); continue; }   /* (a hole's floor in the game: black - its sides took
+                                                                                                                         their neighbour's picture above; any branch: the slopes' too) */
         if (tex && tex[i] >= 0) {
             /* u runs from the road outwards on both sides (the game mirrors the left side's strips: SANDL's white line lies on the road edge) */
             /* along the road C3_ALONG copies per segment (the game's terrain grain: one copy per segment looked stretched beside it); across
@@ -515,6 +963,7 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                 if (wall && r0->h[i] > 0 && r0->h[i] == r0->h[i + 1]) per = C3_TOP;   /* a cliff's top: tiles of 1000 units across, one per segment along (rr_NearWallDraw) */
                 q0 = C3_Dist(a, b) / per; q1 = C3_Dist(d, cc) / per;
                 if (q0 <= 1.5 && q1 <= 1.5) q0 = q1 = 1; }
+            if (rk[i]) { q0 = C3_Dist(a, b) / C3_ROCKPER; q1 = C3_Dist(d, cc) / C3_ROCKPER; V = (float)(C3_Dist(a, d) / C3_ROCKPER); }   /* (a hole's side: rock as big as on its ends - user, 2026-11-19) */
             if (i < C3_NP / 2) { uv[0] = (float)q0; uv[1] = V; uv[2] = 0; uv[3] = V; uv[4] = 0; uv[5] = 0; uv[6] = (float)q1; uv[7] = 0; }
             else { uv[0] = 0; uv[1] = V; uv[2] = (float)q0; uv[3] = V; uv[4] = (float)q1; uv[5] = 0; uv[6] = 0; uv[7] = 0; }
             if (wall && (r0->h[i] == 0) != (r0->h[i + 1] == 0) && r0->h[i] >= 0 && r0->h[i + 1] >= 0 && (r0->h[i] > 300 || r0->h[i + 1] > 300)) {
@@ -539,7 +988,16 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                     C3_QuadTint(c, p0[0], p0[1], p1[1], p1[0], 0xffffffffu, tex[i], u2, i == c->darkStrip ? 0xfc8a8a8au : 0xfcffffffu); }
                 continue; }
             {   int m0 = c->nv, m = r0->mat[i], dirt = (m == M_TERRAIN || m == M_FAR || m == M_SLOPE || m == M_VERGE) && kind != SEC_OPEN && C3_TexDirt(ra, tex[i]);
+                if (C3_IsWaterTex(ra, tex[i])) { C3_QuadTint(c, a, b, cc, d, 0xfd8a5a2au, tex[i], uv, 0xfdffffffu); continue; }
+                if (!g_c3Editor && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE) { C3_QuadTint(c, a, b, cc, d, 0xff000000u, tex[i], uv, 0xff000000u); continue; }
+                if (!g_c3Editor && ra && ra->nground > C3_GDUNES && tex[i] == ra->ground0 + C3_GDUNES) { C3_Dunes(c, k, i, r0, r1, tex[i], uv, ra); continue; }   /* (dunes in the game) */   /* (a hole's floor in the game: black, not its stripes) */   /* (painted water: the sea's shading, as it lies) */
                 C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex[i], uv, i == c->darkStrip ? 0xff8a8a8au : 0xffffffffu);
+                if (!g_c3Editor && ra && ra->nground > C3_GCLIFF && tex[i] == ra->ground0 + C3_GCLIFF && (fabs(r0->h[i + 1] - r0->h[i]) > fabs(r0->u[i + 1] - r0->u[i]) * 0.8 || fabs(r1->h[i + 1] - r1->h[i]) > fabs(r1->u[i + 1] - r1->u[i]) * 0.8))
+                    C3_Mark(c, m0, 0xfc);   /* (a cliff's face: rock - render3d.h vertex alpha 252, strata) */
+                if (ra && tex[i] >= ra->ground0 && tex[i] < ra->ground0 + ra->nground && tex[i] - ra->ground0 < 4 && ra->groundTree[tex[i] - ra->ground0])   /* (REDWOOD: its trees) */
+                    C3_GroundTrees(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], ra->groundTree[tex[i] - ra->ground0] - 1);
+                if (ra && (i == 0 || i == C3_NP - 2) && tex[i] >= ra->ground0 && tex[i] < ra->ground0 + ra->nground && tex[i] - ra->ground0 < 4 && ra->groundHedge[tex[i] - ra->ground0])   /* (REDWOOD beyond P2: its hedge) */
+                    C3_GroundHedge(c, k, i, r0, r1, ra->groundHedge[tex[i] - ra->ground0] - 1);
                 if (dirt) { C3_Mark(c, m0, 0xef);   /* dirt ground (vertex alpha 239: render3d.h - mottled, pebbles, bumps) and rocks on the flatter of it */
                     if (fabs(r0->h[i + 1] - r0->h[i]) < fabs(r0->u[i + 1] - r0->u[i]) * 0.6) C3_DirtRocks(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], m == M_VERGE, ra ? ra->rockTex : -1); } }
         } else C3_Quad(c, a, b, cc, d, (ground && r0->mat[i] != M_CURB && r0->mat[i] != M_WALK) ? ground : C3_Colour(r0->mat[i], kind, k));
@@ -576,10 +1034,11 @@ static void C3_SnowBank(C3Course *c, int k, const C3Row *r0, const C3Row *r1)
 #define C3_SKIRT 60000.0
 static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int kind, const int *tex, unsigned ground, const RoadSection *s0, const RxAssets *ra)
 {
-    int side;
+    int side, kind0 = kind;
     for (side = 0; side < 2; side++) {
         int i = side ? C3_NP - 1 : 0, sp = side ? C3_NP - 2 : 0, t = tex ? tex[sp] : -1, j; float a[3], b[3], cc[3], d[3], uv[8]; unsigned col;
         double per = C3_TOP, q;
+        kind = c->skOn ? c->skind[side] : kind0;
         if (kind >= SEC_WALL1 && kind <= SEC_WALL_SPLIT && s0->wall[side * 3 + 2] < 0) continue;   /* (drop to the sea) */
         if (side) { C3_Point(c, k, r0->u[i], r0->h[i], a); C3_Point(c, k, r0->u[i] + C3_SKIRT, r0->h[i], b); C3_Point(c, k + 1, r1->u[i] + C3_SKIRT, r1->h[i], cc); C3_Point(c, k + 1, r1->u[i], r1->h[i], d); }
         else { C3_Point(c, k, r0->u[i] - C3_SKIRT, r0->h[i], a); C3_Point(c, k, r0->u[i], r0->h[i], b); C3_Point(c, k + 1, r1->u[i], r1->h[i], cc); C3_Point(c, k + 1, r1->u[i] - C3_SKIRT, r1->h[i], d); }
@@ -588,6 +1047,7 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
         if (side) { uv[0] = 0; uv[1] = C3_ALONG; uv[2] = (float)q; uv[3] = C3_ALONG; uv[4] = (float)q; uv[5] = 0; uv[6] = 0; uv[7] = 0; }
         else { uv[0] = (float)q; uv[1] = C3_ALONG; uv[2] = 0; uv[3] = C3_ALONG; uv[4] = 0; uv[5] = 0; uv[6] = (float)q; uv[7] = 0; }
         col = t >= 0 ? 0xffffffffu : (ground ? ground : C3_Colour(r0->mat[side ? C3_NP - 2 : 0], kind, k));
+        if (!g_c3Editor && ra && ra->nground > C3_GHOLE && t == ra->ground0 + C3_GHOLE) { t = -1; col = 0xff050505u; }   /* (beyond a hole: the abyss, black - not its stripes) */
         C3_QuadT(c, a, b, cc, d, col, t, uv);
         for (j = c->nv - 6; j < c->nv; j++) c->v[j].tex += (float)C3_BG;   /* (also flat colour: -1 + C3_BG) */
     }
@@ -596,18 +1056,53 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
 /* roadside textures of walls (kinds 1..3, see below) and SEC_PROFILE terrain (rr_StripTableDraw -> LaneLookupMax / LaneLookupFloor: BankEntry2(sideTex[side], 1, span)): span 0 = outer edge -> P0,
    1 = P0 -> P1, 2 = P1 -> P2 (the far extension repeats span 2); in row terms (C3_Section) left spans 3 / 2 / 1 (+ 0), right 10 / 11 / 12 (+ 13).
    A span painted in the Course Editor (ra->ext: course_edit.h RrcExtra.band) takes that row of that group instead - terrain only */
+static int C3_FarGround(RxAssets *ra, int k, int h, unsigned code, int row)   /* ground picture code / row from the sprite sets loaded nearest piece k that
+                                                                                have it (-1 none): an edited terrain side (RrcExtra.sideKind) where the sets
+                                                                                loaded have no ground (downtown) */
+{
+    int r, d;
+    for (r = 1; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
+        int j = k + d * r, rw = row; RxSet *st; unsigned t;
+        if (j < 0 || j >= ra->next) continue;
+        st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3); t = st ? RX_Lookup(st, 1, code, &rw, 1) : 0;
+        if (t) return RX_TexIn(ra, st, t);
+    }
+    return -1;
+}
+/* a painted picture (course_edit.h RRC_BAND value: RRC_CAT5 | code << 2 | row) from set sid (RxSet.id; 0: the code's slot at piece k) -> texture, -1 none */
+static int C3_PaintTex(RxAssets *ra, int k, int h, unsigned v, unsigned sid)
+{
+    unsigned cd = (v >> 2) & 0xff, t; int row = (int)(v & 3); RxSet *st;
+    if (!(v & RRC_BAND)) return -1;
+    if ((v & (RRC_GEN | RRC_TEXG | RRC_CAT5)) == RRC_GEN) return (int)(v & 0xff) < ra->nground ? ra->ground0 + (int)(v & 0xff) : -1;   /* (an extra ground picture: ground_art.h) */
+    st = sid ? RX_SetById(ra, sid) : RX_SetFor(ra, k, h, (int)(cd >> 6) & 3);
+    t = st ? RX_Lookup(st, (v & RRC_CAT5) ? 5 : 1, cd, &row, 1) : 0;
+    return t ? RX_TexIn(ra, st, t) : -1;
+}
+/* the picture painted on a cell of piece k's side (the editor's grid: 0 road side, 1..3 the bands P0..P2, 4 past P2, 5 the road edge - RrcExtra.band / cell / edge);
+   -1 none */
+static int C3_CellTex(RxAssets *ra, int k, int h, int side, int cell)
+{
+    const RrcExtra *x;
+    if (!ra || !ra->ext || k < 0 || k >= ra->next) return -1;
+    x = &ra->ext[k];
+    if (cell >= 1 && cell <= 3) return C3_PaintTex(ra, k, h, x->band[h & 1][side & 1][cell - 1], x->bandSet[h & 1][side & 1][cell - 1]);
+    if (cell == 5) return C3_PaintTex(ra, k, h, x->edge[h & 1][side & 1], x->edgeSet[h & 1][side & 1]);
+    return C3_PaintTex(ra, k, h, x->cell[h & 1][side & 1][cell ? 1 : 0], x->cellSet[h & 1][side & 1][cell ? 1 : 0]);
+}
 static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int *tex)
 {
     int side, span, i;
     for (i = 0; i < C3_NP - 1; i++) tex[i] = -1;
-    if (!ra || s->kind == SEC_OPEN || s->kind > SEC_PROFILE) return;
+    if (!ra || s->kind > SEC_PROFILE) return;
     for (side = 0; side < 2; side++) {
-        unsigned code = s->sideTex[side]; RxSet *set;
-        const unsigned short *bd = s->kind == SEC_PROFILE && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].band[h & 1][side] : NULL;
+        unsigned code = s->sideTex[side]; RxSet *set; int sk = C3_SideKind(ra, s, k, h, side);
+        const unsigned short *bd = sk == SEC_PROFILE && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].band[h & 1][side] : NULL;
         if (bd && !((bd[0] | bd[1] | bd[2]) & RRC_BAND)) bd = NULL;
         if (code == 0xff && !bd) continue;
+        if (sk == SEC_OPEN) continue;   /* (an open-road side: its facade, C3_Roadside) */
         set = code != 0xff ? RX_SetFor(ra, k, h, (int)(code >> 6) & 3) : NULL;
-        if (s->kind != SEC_PROFILE) {   /* walls (OwnerTableFill / OctagonalDistance): row 0 = the face, row 1 = the rest (top + beyond) */
+        if (sk != SEC_PROFILE) {   /* walls (OwnerTableFill / OctagonalDistance): row 0 = the face, row 1 = the rest (top + beyond) */
             int r0 = 0, r1 = 1; unsigned t0 = RX_Lookup(set, 1, code, &r0, 1), t1 = RX_Lookup(set, 1, code, &r1, 1);
             int x0 = t0 ? RX_TexIn(ra, set, t0) : -1, x1 = t1 ? RX_TexIn(ra, set, t1) : -1;
             {   int pl = RX_SideTex(ra, s, k, h, side, 1);   /* the shoulder road edge -> wall foot: SideStripDraw, set category 5 sideArg row 0 (SANDL: sand with the white edge line) */
@@ -619,13 +1114,34 @@ static void C3_ProfileTex(RxAssets *ra, const RoadSection *s, int k, int h, int 
         }
         for (span = 0; span < 3; span++) {
             unsigned cd = code, t; int row = span, x; RxSet *st = set;
-            if (bd && (bd[span] & RRC_BAND)) { cd = (bd[span] >> 2) & 0xff; row = bd[span] & 3; st = RX_SetFor(ra, k, h, (int)(cd >> 6) & 3); }   /* (painted) */
-            t = st && cd != 0xff ? RX_Lookup(st, 1, cd, &row, 1) : 0;
-            x = t ? RX_TexIn(ra, st, t) : -1;
+            if (bd && (bd[span] & RRC_BAND)) { unsigned sid = ra->ext[k].bandSet[h & 1][side][span]; cd = (bd[span] >> 2) & 0xff; row = bd[span] & 3;   /* (painted: from its own set, */
+                st = sid ? RX_SetById(ra, sid) : RX_SetFor(ra, k, h, (int)(cd >> 6) & 3); }                                                         /* or the slot's here) */
+            {   int row0 = row; t = st && cd != 0xff ? RX_Lookup(st, bd && (bd[span] & RRC_BAND) && (bd[span] & RRC_CAT5) ? 5 : 1, cd, &row, 1) : 0;
+                x = t ? RX_TexIn(ra, st, t) : -1;
+                if (x < 0 && cd != 0xff && ra->ext && k >= 0 && k < ra->next && ra->ext[k].sideKind[h & 1][side] == 2) x = C3_FarGround(ra, k, h, cd, row0); }   /* (edited: see C3_FarGround) */
             if (side == 0) tex[3 - span] = x; else tex[10 + span] = x;
         }
-        {   int vg = RX_SideTex(ra, s, k, h, side, 1);   /* the verge road edge -> outer edge: SideStripDraw, set category 5 sideArg row 0 (else like span 0) */
-            if (side == 0) { tex[0] = tex[1]; tex[4] = vg >= 0 ? vg : tex[3]; } else { tex[13] = tex[12]; tex[9] = vg >= 0 ? vg : tex[10]; } }
+        {   int vg = RX_SideTex(ra, s, k, h, side, 1);   /* the verge road edge -> outer edge: SideStripDraw, set category 5 sideArg row 0 (else like span 0 - its own
+                                                            picture, not one painted on P0: user, 2026-11-18 "when setting p0 it shouldn't automatically apply to the verge") */
+            if (vg < 0 && bd && (bd[0] & RRC_BAND)) { int row = 0; unsigned t = set && code != 0xff ? RX_Lookup(set, 1, code, &row, 1) : 0; vg = t ? RX_TexIn(ra, set, t) : -1;
+                if (vg < 0 && code != 0xff && ra->ext && k >= 0 && k < ra->next && ra->ext[k].sideKind[h & 1][side] == 2) vg = C3_FarGround(ra, k, h, code, 0); }
+            int fr = side ? tex[12] : tex[1];   /* (past P2: P2's own picture too, not one painted there) */
+            if (bd && (bd[2] & RRC_BAND)) { int row = 2; unsigned t = set && code != 0xff ? RX_Lookup(set, 1, code, &row, 1) : 0; int x = t ? RX_TexIn(ra, set, t) : -1;
+                if (x < 0 && code != 0xff && ra->ext && k >= 0 && k < ra->next && ra->ext[k].sideKind[h & 1][side] == 2) x = C3_FarGround(ra, k, h, code, 2);
+                if (x >= 0) fr = x; }
+            if (side == 0) { tex[0] = fr; tex[4] = vg >= 0 ? vg : tex[3]; } else { tex[13] = fr; tex[9] = vg >= 0 ? vg : tex[10]; } }
+    }
+}
+
+/* the cells painted (C3_CellTex) onto the strip's textures tex (C3_ProfileTex): open-road and terrain sides - a street's road side is C3_Roadside's */
+static void C3_CellOverride(RxAssets *ra, const RoadSection *s, int k, int h, int *tex)
+{
+    int side, c, t, sk;
+    for (side = 0; side < 2; side++) {
+        if ((sk = C3_SideKind(ra, s, k, h, side)) != SEC_OPEN && sk != SEC_PROFILE) continue;
+        for (c = sk == SEC_OPEN ? 1 : 0; c < (sk == SEC_OPEN ? 5 : 6); c++) if ((t = C3_CellTex(ra, k, h, side, c)) >= 0) {
+            int i = c == 5 ? (side ? 8 : 5) : c == 4 ? (side ? 13 : 0) : c == 0 ? (side ? 9 : 4) : (side ? 9 + c : 4 - c);   /* (the strip's segment: C3_ProfileTex) */
+            tex[i] = t; }
     }
 }
 
@@ -661,13 +1177,61 @@ static void C3_FacadeVary(const RxAssets *ra, int k, int h, int side, int *fac, 
         *fh *= 0.85 + ((v >> 20) % 106) / 100.0; return; }
     u ^= u >> 15; u *= 2246822519u; u ^= u >> 13;
     *fac = ra->gen0 + (int)((u >> 8) % (unsigned)ra->ngen); *fh *= 1.0 + ((u >> 20) % 61) / 100.0; }
+/* a footpath's texture (C3_SideWalk): row 0 the path, 1 the kerb face - from the sprite sets loaded nearest piece k that have it; -1 none */
+static int C3_WalkTex(RxAssets *ra, const RoadSection *s, int k, int h, int side, int row)
+{
+    int w = C3_SideWalk(ra, s, k, h, side), r, d; unsigned code;
+    if (!w) return -1;
+    code = (unsigned)(w - 1);
+    for (r = 0; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
+        int j = k + d * r, rw = row, x; RxSet *st; unsigned t;
+        if ((r == 0 && d > 0) || j < 0 || j >= ra->next || !(st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3))) continue;
+        if ((t = RX_Lookup(st, 5, code, &rw, 1)) && (x = RX_TexIn(ra, st, t)) >= 0) return x;
+    }
+    return -1;
+}
+/* the facade chosen for piece k's side in the editor (RrcExtra.fac) into *fac: 1, else 0 (the course's own mix) */
+static int C3_FacPick(RxAssets *ra, int k, int h, int side, int *fac)
+{
+    unsigned v; int x;
+    if (!ra || !ra->ext || k < 0 || k >= ra->next || !((v = ra->ext[k].fac[h & 1][side & 1]) & RRC_BAND)) return 0;
+    if (v & RRC_GEN) { if ((int)(v & 0xff) >= ra->ngen) return 0; *fac = ra->gen0 + (int)(v & 0xff); return 1; }
+    {   RxSet *st = ra->ext[k].facSet[h & 1][side & 1] ? RX_SetById(ra, ra->ext[k].facSet[h & 1][side & 1]) : RX_SetFor(ra, k, h, (int)(v >> 8) & 3); unsigned t;
+        if (!st || !(t = RX_Lookup(st, 1, (v >> 2) & 0xff, NULL, 0)) || (x = RX_TexIn(ra, st, t)) < 0) return 0;
+        *fac = x; return 1; }
+}
+/* the facade of the buildings on piece k's terrain side (C3_SideBld): RrcExtra.bldCode from the sprite sets loaded nearest k that have it as a facade; 0 none */
+static int C3_BandFacade(RxAssets *ra, const RoadSection *s, int k, int h, int side, int *fac, double *fh)
+{
+    unsigned code; int r, d;
+    if (!C3_SideBld(ra, s, k, h, side)) return 0;
+    code = ra->ext[k].bldCode[h & 1][side & 1];
+    for (r = 0; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
+        int j = k + d * r; RxSet *st; unsigned t; const unsigned char *g;
+        if ((r == 0 && d > 0) || j < 0 || j >= ra->next || !(st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3))) continue;
+        t = RX_Lookup(st, 1, code, NULL, 0); g = (const unsigned char *)RX_W(st, RX_Entry(st, 1, code, NULL, 0), 0x20);
+        if (!t || !g || *(const unsigned *)g != 0x434c4750 || g[0x16] * 16 <= 0x10 || (*fac = RX_TexIn(ra, st, t)) < 0) continue;
+        *fh = g[0x16] * 16; C3_FacadeVary(ra, k, h, side, fac, fh); C3_FacPick(ra, k, h, side, fac); return 1;
+    }
+    return 0;
+}
 static double C3_FacadeH(C3Course *c, RxAssets *ra, int k, int h, int side)
 {
     const RoadSection *s;
     if (k < 0 || k >= c->n || (h && c->piece[k].layout != 2)) return 0;
     s = h ? &c->piece[k].halfB : &c->piece[k].halfA;
-    if (s->kind != SEC_OPEN || (s->kindFlags & 0x20) || RX_SideTex(ra, s, k, h, side, 0) < 0) return 0;
+    if (C3_SideKind(ra, s, k, h, side) != SEC_OPEN || (s->kindFlags & 0x20) || RX_SideTex(ra, s, k, h, side, 0) < 0) return 0;
     {   int fac = RX_SideTex(ra, s, k, h, side, 0); double fh = RX_FacadeHeight(ra, s, k, h, side); C3_FacadeVary(ra, k, h, side, &fac, &fh); return fh; }
+}
+/* the height of piece k's buildings on that side when they stand on the same line as those being put up (kind: c->bldKind - a street's, or a terrain side's
+   from the same band); 0 otherwise: the row ends there, its end wall drawn (user, 2026-11-17: "the buildings should always just have closed faces") */
+static double C3_FacadeLike(C3Course *c, RxAssets *ra, int k, int h, int side, int kind)
+{
+    const RoadSection *s; int fac; double fh = 0;
+    if (k < 0 || k >= c->n || (h && c->piece[k].layout != 2)) return 0;
+    if (!kind) return C3_FacadeH(c, ra, k, h, side);
+    s = h ? &c->piece[k].halfB : &c->piece[k].halfA;
+    return C3_SideBld(ra, s, k, h, side) == kind && C3_BandFacade(ra, s, k, h, side, &fac, &fh) ? fh : 0;
 }
 
 /* a building behind a facade (the game only draws the front, rr_SkidMarkDraw): the facade, a roof and a back wall C3_BLDG deep, and an end wall
@@ -724,7 +1288,7 @@ static void C3_Building(C3Course *c, int k, int h, int side, double pa, double p
         int nb = end ? k + 1 : k - 1; double p = end ? pb : pa, xa = end ? x1 : x0, xb = end ? b1 : b0, t = end ? t1 : t0;
         float a[3], b[3], cc[3], d[3], uv[8];
         uv[0] = 0; uv[1] = 1; uv[2] = ud; uv[3] = 1; uv[4] = ud; uv[5] = 0; uv[6] = 0; uv[7] = 0;   /* square texels across the building's depth too */
-        if (!corner[end] && C3_FacadeH(c, ra, nb, h, side) == fh) continue;
+        if (!corner[end] && C3_FacadeLike(c, ra, nb, h, side, c->bldKind) == fh) continue;
         C3_Point(c, p, xa, t, a); C3_Point(c, p, xb, t, b); C3_Point(c, p, xb, t + fh, cc); C3_Point(c, p, xa, t + fh, d);
         C3_QuadTint(c, a, b, cc, d, 0xffffffffu, fac, uv, 0xfec8c8c8u);   /* the side wall a little in shade (the sun shades it more, or less: render3d.h) */
     }
@@ -773,6 +1337,36 @@ static double C3_Corner(C3Course *c, int k, int h, int side, const RoadSection *
 }
 
 
+/* the buildings on a terrain side (C3_SideBld): their front on the band's inner profile point, rows r0 / r1 (C3_SectionAt) */
+static void C3_BandBuildings(C3Course *c, int k, int h, const RoadSection *s0, const C3Row *r0, const C3Row *r1, RxAssets *ra)
+{
+    int side;
+    for (side = 0; side < 2; side++) {
+        int fb = C3_SideBld(ra, s0, k, h, side), fac, i, corner[2] = { 0, 0 }; double fh;
+        if (!fb || !C3_BandFacade(ra, s0, k, h, side, &fac, &fh) || fh <= 0) continue;
+        {   int pt = fb == 4 ? 2 : 2 + fb; i = side ? 8 + pt : 6 - pt; }   /* (their front's point in the row: the verge's edge / profile point fb - 1 - C3_SectionK) */
+        c->bldKind = fb; C3_Building(c, k, h, side, k, k + 1, r0->u[i], r1->u[i], r0->h[i], r1->h[i], fh, fac, ra, corner); c->bldKind = 0;
+    }
+}
+
+/* the gutter along a road edge (vertex alpha 241: render3d.h draws the concrete pan and the drains): a strip ~45 units wide on the road at the curb's foot,
+   u = 0 at the curb .. 1 out, v = the piece number (the drains' places); e0 / e1 the edge at k / k + 1, t0 / t1 the kerb's height there; lift: the road not
+   sunk at its edges (C3_Lanes: a terrain side's gutter, RrcExtra.gutter 1) - the strip that much higher */
+static void C3_Gutter(C3Course *c, int k, int side, double e0, double e1, double t0, double t1, double lift, double gw, double gdp)
+{
+    float a[3], b[3], cc[3], d[3], uv[8]; double ga, gb, gc, gd, ya, yb; int m0 = c->nv;   /* (sunk: C3_GUTD at the curb, the road's level at its outer edge) */
+    if (side == 0) { ga = e0; gb = e0 + gw; gc = e1 + gw; gd = e1; uv[0] = 0; uv[2] = 1; uv[4] = 1; uv[6] = 0; ya = 0.6 - gdp + lift; yb = 0.6 + lift; }
+    else { ga = e0 - gw; gb = e0; gc = e1; gd = e1 - gw; uv[0] = 1; uv[2] = 0; uv[4] = 0; uv[6] = 1; ya = 0.6 + lift; yb = 0.6 - gdp + lift; }
+    uv[1] = (float)k; uv[3] = (float)k; uv[5] = (float)(k + 1); uv[7] = (float)(k + 1);
+    C3_Point(c, k, ga, ya, a); C3_Point(c, k, gb, yb, b); C3_Point(c, k + 1, gc, yb, cc); C3_Point(c, k + 1, gd, ya, d);
+    C3_QuadT(c, a, b, cc, d, 0xff8a8a86u, -1, uv); C3_Mark(c, m0, 0xf1);
+    if (C3_Hu(k, 3.7) > 0.55f && C3_Hu(k / 6, 9.1) >= 0.25f && C3_Hu(k, 5.3) > 0.4f) {   /* a drain (render3d.h: Hu(pc, 3.7) > 0.55, not a grate run) with a
+                                                                            kerb inlet (Hu(pc, 5.3) > 0.4, its grate then reaching the curb): the dark mouth in the curb face behind it */
+        double f0 = 0.39, f1 = 0.61, xa = e0 + (e1 - e0) * f0 + (side ? -1 : 1), xb = e0 + (e1 - e0) * f1 + (side ? -1 : 1), y1 = (t0 + (t1 - t0) * 0.5) * 0.42;
+        if (y1 > 1.5) { C3_Point(c, k + f0, xa, 0.6 - gdp + lift, a); C3_Point(c, k + f0, xa, y1, b); C3_Point(c, k + f1, xb, y1, cc); C3_Point(c, k + f1, xb, 0.6 - gdp + lift, d);
+            C3_Quad(c, a, b, cc, d, 0xff0c0d0eu); C3_Quad(c, d, cc, b, a, 0xff0c0d0eu); } }
+}
+
 /* SEC_OPEN roadside with the track's textures: curb face and sidewalk (rr_EdgeStripDraw: set category 5, sideArg rows 1 / 0) and the facade on the
    sidewalk's outer edge (rr_SkidMarkDraw: category 1, sideTex; height from the group, WheelLaneEntriesFill) */
 static void C3_Roadside(C3Course *c, int k, int h, const RoadSection *s0, double o0, const RoadSection *s1, double o1, RxAssets *ra)
@@ -794,37 +1388,39 @@ static void C3_Roadside(C3Course *c, int k, int h, const RoadSection *s0, double
     }
     for (side = 0; side < 2; side++) {   /* (the curb where C3_Side ends the road: the inner of lane edge and road edge - forks off, C3_OneRoadWidth pulls the
                                             road edge in beside a split and leaves the lane edge, City 3263..3302 after the join: a hole down to the backdrop) */
+        if (C3_SideKind(ra, s0, k, h, side) != SEC_OPEN) continue;   /* (a terrain side of an open-road piece: C3_Strip's hillside) */
+        {
         double e0 = (side ? (s0->laneEdgeR < s0->edgeR ? s0->laneEdgeR : s0->edgeR) : (s0->laneEdgeL > s0->edgeL ? s0->laneEdgeL : s0->edgeL)) + o0;
         double e1 = (side ? (s1->laneEdgeR < s1->edgeR ? s1->laneEdgeR : s1->edgeR) : (s1->laneEdgeL > s1->edgeL ? s1->laneEdgeL : s1->edgeL)) + o1;
         double x0 = (side ? s0->outerR : s0->outerL) + o0, x1 = (side ? s1->outerR : s1->outerL) + o1;
         double t0 = s0->shoulderH[side], t1 = s1->shoulderH[side];
+        double km, rl, gw, gdp, sgn = side ? 1 : -1;
+        C3_EdgeStyle(ra, k, h, side, &km, &rl, &gw, &gdp); t0 *= km;   /* (the curb's style: C3_EdgeStyle - P3D flat) */
+        { double k1, r1, g1, d1; C3_EdgeStyle(ra, k + 1, h, side, &k1, &r1, &g1, &d1); t1 *= k1; }   /* (its end: the next piece's - a flush footpath meeting a raised one ramps
+                                                                                                    up along the piece, no step with the sky through it: user, 2026-11-19) */
+        double t0e = t0 + C3_Lift(ra, k, h, side, 0), t1e = t1 + C3_Lift(ra, k + 1, h, side, 0), t0x = t0 + C3_Lift(ra, k, h, side, 1), t1x = t1 + C3_Lift(ra, k + 1, h, side, 1);   /* (the editor's heights: the curb's top, the footpath's outer edge) */
+        if (C3_SideBreak(ra, s0, k, h, s1, k + 1, h, side)) { C3Row rn; C3_SectionAt(ra, s1, k + 1, h, o1, &rn); t1e = rn.h[side ? 9 : 5]; t1x = rn.h[side ? 10 : 4]; }   /* (the next piece's side another kind
+                                                                          - terrain: the footpath down / up to its edge's heights, no step between them; user's note 2026-11-18) */
         int curb = RX_SideTex(ra, s0, k, h, side, 2), walk = RX_SideTex(ra, s0, k, h, side, 1), fac = RX_SideTex(ra, s0, k, h, side, 0);
+        { int o = C3_CellTex(ra, k, h, side, 0); if (o >= 0) walk = o; if ((o = C3_CellTex(ra, k, h, side, 5)) >= 0) curb = o; }   /* (its road side / road edge painted:
+                                                                                                                                   the editor's cells 0 / 5) */
         double fh = fac >= 0 ? RX_FacadeHeight(ra, s0, k, h, side) : 0;
-        C3_FacadeVary(ra, k, h, side, &fac, &fh);
-        { int m0 = c->nv; C3_Span(c, k, e0, -C3_GUTD, e0, t0, e1, -C3_GUTD, e1, t1, C3_Colour(M_CURB, 0, k), curb, 1); C3_Mark(c, m0, 0xf7); }   /* (vertex alpha 247: the curb, 246: the sidewalk - render3d.h, the improved street textures) */
-        {   /* the footpath: concrete slabs (vertex alpha 246) or, a block of ~24 pieces at a time, glossy tiles (242) - render3d.h */
-            unsigned bh = ((unsigned)(k / 24) * 2654435761u + (unsigned)side * 40503u) >> 16;
-            int m0 = c->nv; C3_Span(c, k, e0, t0, x0, t0, e1, t1, x1, t1, C3_Colour(M_WALK, 0, k), walk, 0); C3_Mark(c, m0, (bh & 3) == 1 || (bh & 3) == 2 ? 0xf2 : 0xf6); }
-        {   /* the gutter along the curb (vertex alpha 241: render3d.h draws the concrete pan and the drains): a strip ~45 units wide on the road at the
-               curb's foot, u = 0 at the curb .. 1 out, v = the piece number (the drains' places) */
-            float a[3], b[3], cc[3], d[3], uv[8]; double gw = C3_GUTW, ga, gb, gc, gd, ya, yb; int m0 = c->nv;   /* (sunk: C3_GUTD at the curb, the road's level at its outer edge) */
-            if (side == 0) { ga = e0; gb = e0 + gw; gc = e1 + gw; gd = e1; uv[0] = 0; uv[2] = 1; uv[4] = 1; uv[6] = 0; ya = 0.6 - C3_GUTD; yb = 0.6; }
-            else { ga = e0 - gw; gb = e0; gc = e1; gd = e1 - gw; uv[0] = 1; uv[2] = 0; uv[4] = 0; uv[6] = 1; ya = 0.6; yb = 0.6 - C3_GUTD; }
-            uv[1] = (float)k; uv[3] = (float)k; uv[5] = (float)(k + 1); uv[7] = (float)(k + 1);
-            C3_Point(c, k, ga, ya, a); C3_Point(c, k, gb, yb, b); C3_Point(c, k + 1, gc, yb, cc); C3_Point(c, k + 1, gd, ya, d);
-            C3_QuadT(c, a, b, cc, d, 0xff8a8a86u, -1, uv); C3_Mark(c, m0, 0xf1);
-            if (C3_Hu(k, 3.7) > 0.55f && C3_Hu(k / 6, 9.1) >= 0.25f && C3_Hu(k, 5.3) > 0.4f) {   /* a drain (render3d.h: Hu(pc, 3.7) > 0.55, not a grate run) with a
-                                                                                    kerb inlet (Hu(pc, 5.3) > 0.4, its grate then reaching the curb): the dark mouth in the curb face behind it */
-                double f0 = 0.39, f1 = 0.61, xa = e0 + (e1 - e0) * f0 + (side ? -1 : 1), xb = e0 + (e1 - e0) * f1 + (side ? -1 : 1), y1 = (t0 + (t1 - t0) * 0.5) * 0.42;
-                if (y1 > 1.5) { C3_Point(c, k + f0, xa, 0.6 - C3_GUTD, a); C3_Point(c, k + f0, xa, y1, b); C3_Point(c, k + f1, xb, y1, cc); C3_Point(c, k + f1, xb, 0.6 - C3_GUTD, d);
-                    C3_Quad(c, a, b, cc, d, 0xff0c0d0eu); C3_Quad(c, d, cc, b, a, 0xff0c0d0eu); } } }
-        {   double pc = 0, f = C3_Corner(c, k, h, side, s0, e0, x0, t0, e1, x1, t1, ra, &pc), pa = k, pb = k + 1, xa = x0, xb = x1, ta = t0, tb = t1;
+        C3_FacadeVary(ra, k, h, side, &fac, &fh); if (fac >= 0) C3_FacPick(ra, k, h, side, &fac);   /* (the editor's facade) */
+        { int m0 = c->nv; C3_Span(c, k, e0, -gdp, e0 + sgn * rl, t0e, e1, -gdp, e1 + sgn * rl, t1e, C3_Colour(M_CURB, 0, k), curb, 1); C3_Mark(c, m0, 0xf7); }   /* (rolled: its top rl out) */   /* (vertex alpha 247: the curb, 246: the sidewalk - render3d.h, the improved street textures) */
+        {   /* the footpath: concrete slabs (vertex alpha 246) or, a block of ~24 pieces at a time, glossy tiles (242) - render3d.h; painted SLABS / TILES (the Course
+               Editor's Footpaths list, ground_art.h): that one */
+            unsigned bh = ((unsigned)(k / 24) * 2654435761u + (unsigned)side * 40503u) >> 16; int tiles = (bh & 3) == 1 || (bh & 3) == 2;
+            if (walk >= 0 && walk < ra->ntex && ra->tex[walk].gen) { if (!strcmp(ra->tex[walk].name, "TILES")) tiles = 1; else if (!strcmp(ra->tex[walk].name, "SLABS")) tiles = 0; }
+            int m0 = c->nv; C3_Span(c, k, e0 + sgn * rl, t0e, x0, t0x, e1 + sgn * rl, t1e, x1, t1x, C3_Colour(M_WALK, 0, k), walk, 0); C3_Mark(c, m0, tiles ? 0xf2 : 0xf6); }
+        {   int g = ra->ext && k < ra->next ? ra->ext[k].gutter[h & 1][side] & 3 : 0; if (g != 2) C3_Gutter(c, k, side, e0, e1, t0e, t1e, 0, gw, gdp); }   /* (RrcExtra.gutter 2: none) */
+        {   double pc = 0, f = C3_Corner(c, k, h, side, s0, e0, x0, t0x, e1, x1, t1x, ra, &pc), pa = k, pb = k + 1, xa = x0, xb = x1, ta = t0x, tb = t1x;
             int corner[2] = { 0, 0 };
             if (f > 0) {   /* the building stops short of the cross street by the corner's depth */
-                if (pc == k) { pa = k + f; corner[0] = 1; xa = x0 + (x1 - x0) * f; ta = t0 + (t1 - t0) * f; }
-                else { pb = k + 1 - f; corner[1] = 1; xb = x0 + (x1 - x0) * (1 - f); tb = t0 + (t1 - t0) * (1 - f); }
+                if (pc == k) { pa = k + f; corner[0] = 1; xa = x0 + (x1 - x0) * f; ta = t0x + (t1x - t0x) * f; }
+                else { pb = k + 1 - f; corner[1] = 1; xb = x0 + (x1 - x0) * (1 - f); tb = t0x + (t1x - t0x) * (1 - f); }
             }
             if (fac >= 0 && fh > 0 && pb - pa > 1e-3) C3_Building(c, k, h, side, pa, pb, xa, xb, ta, tb, fh, fac, ra, corner);
+        }
         }
     }
 }
@@ -872,7 +1468,7 @@ static double C3_GroundAt(C3Course *c, int k, int h, double x)
     C3Row r0, r1; int k1 = k + 1 < c->n ? k + 1 : k;
     const RoadPiece *p0 = &c->piece[k], *p1 = &c->piece[k1];
     const RoadSection *s0 = h ? &p0->halfB : &p0->halfA, *s1 = h ? (p1->layout == 2 ? &p1->halfB : &p1->halfA) : &p1->halfA;
-    C3_Section(s0, 0, &r0); C3_Section(s1, 0, &r1);   /* (half B: in its own frames) */
+    C3_SectionAt(c->skRa, s0, k, h, 0, &r0); C3_SectionAt(c->skRa, s1, k1, h, 0, &r1);   /* (half B: in its own frames; each side its own kind) */
     if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2) C3_InnerClamp(c, k1, h, &r1); }   /* (as the mesh: beside a fork / join the inner side is
                                                                                                          the flat median, not the hillside - objects there stood in it) */
     return (C3_RowHeight(&r0, x) + C3_RowHeight(&r1, x)) * 0.5;
@@ -992,9 +1588,12 @@ static void C3_Patch(C3Course *c, double p, double x, double g, int t, int ax, f
 static int C3_IsTree(const RxAssets *ra, int t) { const char *n = ra->tex[t].name; return !strncmp(n, "TREE", 4) || !strncmp(n, "BUSH", 4) || !strncmp(n, "BSH", 3); }
 static void C3_Sprites(C3Course *c, int k, int h, const RoadSection *s, double o, RxAssets *ra)
 {
-    int i, ax, ay, t; unsigned col = 0;   /* (the row's tree colour, C3_LeafColour: once) */
+    int i, ax, ay, t, fb[2]; unsigned col = 0;   /* (the row's tree colour, C3_LeafColour: once) */
+    double fx[2];   /* (buildings on a terrain side: their front - nothing stands behind it, C3_SideBld) */
+    for (i = 0; i < 2; i++) { fb[i] = C3_SideBld(ra, s, k, h, i); fx[i] = fb[i] ? (fb[i] == 4 ? (i ? s->outerR : s->outerL) : s->profile[((fb[i] - 1) * 2 + i) * 2]) + o + (i ? -100 : 100) : 0; }
+#define C3_INBLDG(gx) ((fb[0] && (gx) < fx[0]) || (fb[1] && (gx) > fx[1]))
     for (i = 0; i < s->spriteN && i < 2; i++)   /* the section's own sprites (rr_MixChannelRefresh, kind 1): texel = 8 / 4 units */
-        if ((t = RX_NarrTex(ra, k, h, s->sprite[i].code, 4, 1, &ax, &ay)) >= 0)
+        if ((t = RX_NarrTex(ra, k, h, s->sprite[i].code, 4, 1, &ax, &ay)) >= 0 && !C3_INBLDG(C3_SpriteX(s, s->sprite[i].x) + o))
             { double gx = C3_SpriteX(s, s->sprite[i].x) + o, gh = C3_GroundAt(c, k, h, gx), px, hp; if (gh < s->sprite[i].h) gh = s->sprite[i].h;
               double cx; int pit = C3_IsTree(ra, t) && C3_PitAtCurb(s, ra, s->sprite[i].x, &px, &hp, &gh, &cx); if (pit) { gx = px + o; C3_TreePit(c, k + 0.5, gx, hp, gh); C3_Leaves(c, k + 0.5, gx, hp, gh, cx + o, C3_LeafColour(ra, t)); }
               if (C3_PatchKind(ra, t)) C3_Patch(c, k + 0.5, gx, gh, t, ax, 2.0f, C3_PatchKind(ra, t), ra);   /* (a road patch: flat) */
@@ -1004,9 +1603,11 @@ static void C3_Sprites(C3Course *c, int k, int h, const RoadSection *s, double o
         for (i = 0; i < s->rowN && i < 8; i++)
             { double gx = C3_SpriteX(s, s->rowX[i]) + o, gh = C3_GroundAt(c, k, h, gx), g0 = s->rowH[i] > 0x3e6 ? 0 : s->rowH[i], px, hp; if (gh < g0) gh = g0;
               double pp = k + 0.5, cx; int pit = 0;
+              if (C3_INBLDG(gx)) continue;
               if (C3_IsTree(ra, t) && C3_PitAtCurb(s, ra, s->rowX[i], &px, &hp, &gh, &cx)) { pit = 1; gx = px + o; pp = k + 0.5 + (i % 3 - 1) * 0.3; C3_TreePit(c, pp, gx, hp, gh); C3_Leaves(c, pp, gx, hp, gh, cx + o, col ? col : (col = C3_LeafColour(ra, t))); }   /* (several in a row: spread along the kerb, not stacked) */
               if (C3_PatchKind(ra, t)) { C3_Patch(c, k + 0.5, gx, gh, t, ax, s->rowScale * 0.25f, C3_PatchKind(ra, t), ra); continue; }   /* (a road patch: flat) */
               C3_BillboardEx(c, pp, gx, gh, t, ax, ay, s->rowScale * 0.25f, s->rowFlags & 1, ra, pit); }   /* (in a pit: cut at its ground line) */
+#undef C3_INBLDG
 }
 
 /* side structures of kindArg[0] == 5 pieces (rr_AiZoneActions -> GroundMarkQueue, per side when bit 1 / 2 of kindArg[3]): a vertical wall parallel to the
@@ -1039,14 +1640,44 @@ static void C3_Sea(C3Course *c, int k, const RoadSection *s0, double o0, const R
         int sea = ra->global[32];
         float a[3], b[3], cc[3], d[3], uv[8]; float rep = (float)(C3_SEA / 1024.0);
         if (s0->wall[side * 3 + 2] >= 0) continue;
-        C3_Side(s0, side ? 1 : -1, u0, h0, m); C3_Side(drop1 ? s1 : s0, side ? 1 : -1, u1, h1, m);
+        C3_Side(s0, side ? 1 : -1, s0->kind, 0, u0, h0, m); C3_Side(drop1 ? s1 : s0, side ? 1 : -1, (drop1 ? s1 : s0)->kind, 0, u1, h1, m);
         d0 = h0[6]; d1 = h1[6]; e0 = u0[6] + o0; e1 = u1[6] + o1; f0 = e0 + sg * C3_SEA; f1 = e1 + sg * C3_SEA;
         C3_Point(c, k, side ? e0 : f0, d0, a); C3_Point(c, k, side ? f0 : e0, d0, b); C3_Point(c, k + 1, side ? f1 : e1, d1, cc); C3_Point(c, k + 1, side ? e1 : f1, d1, d);
         uv[0] = 0; uv[1] = 1; uv[2] = rep; uv[3] = 1; uv[4] = rep; uv[5] = 0; uv[6] = 0; uv[7] = 0;
         C3_QuadTint(c, a, b, cc, d, 0xfd8a5a2au, sea, uv, 0xfdffffffu);   /* (vertex alpha 253: water - the world renderer draws a water surface there, render3d.h) */
     }
 }
+/* painted water past P2 (C3_WaterRow): from its far end on out C3_SEA at that height - the sea of Pacific Highway (C3_Sea) */
+static void C3_Water(C3Course *c, int k, const C3Row *r0, const C3Row *r1, const RxAssets *ra)
+{
+    int side;
+    for (side = 0; side < 2; side++) if ((r0->wm[side] | r1->wm[side]) & 16) {
+        float P[2][2][3], uv[8], a0[3], b0[3], a1[3], b1[3]; int rr;
+        for (rr = 0; rr < 2; rr++) { const C3Row *R = rr ? r1 : r0; double u = R->u[side ? 14 : 0];
+            C3_Point(c, k + rr, u, R->wl[side], P[rr][0]); C3_Point(c, k + rr, u + (side ? C3_SEA : -C3_SEA), R->wl[side], P[rr][1]); }
+        uv[0] = 0; uv[1] = 1; uv[2] = 8; uv[3] = 1; uv[4] = 8; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+        if (side) { memcpy(a0, P[0][0], 12); memcpy(b0, P[0][1], 12); memcpy(b1, P[1][1], 12); memcpy(a1, P[1][0], 12); }   /* (as C3_Sea: the smaller u first) */
+        else { memcpy(a0, P[0][1], 12); memcpy(b0, P[0][0], 12); memcpy(b1, P[1][0], 12); memcpy(a1, P[1][1], 12); }
+        C3_QuadTint(c, a0, b0, b1, a1, 0xfd8a5a2au, ra ? ra->ground0 + C3_GWATER : -1, uv, 0xfdffffffu); }
+}
 
+/* the water in a hole (user, 2026-11-19): over each side's hole cells, at the row's water level (C3_HoleRow: hl), from the hole's inner edge to its outer - the sea's
+   water (vertex alpha 253); a row without the hole: the other row's */
+static void C3_HoleWater(C3Course *c, int k, const C3Row *r0, const C3Row *r1, const RxAssets *ra)
+{
+    int side;
+    for (side = 0; side < 2; side++) { unsigned m = (unsigned)(r0->hm[side] | r1->hm[side]); int c0 = 0, c1 = 4, rr; float P[2][2][3], uv[8], a0[3], b0[3], a1[3], b1[3];
+        if (!m) continue;
+        while (c0 < 4 && !(m & (1u << c0))) c0++;
+        while (c1 > 0 && !(m & (1u << c1))) c1--;
+        for (rr = 0; rr < 2; rr++) { const C3Row *R = rr ? r1 : r0, *O = rr ? r0 : r1; double lv = R->hm[side] ? R->hl[side] : O->hl[side], ui = R->u[side ? 8 + c0 + 1 : 6 - (c0 + 1)], uo = R->u[side ? 8 + c1 + 2 : 6 - (c1 + 2)];
+            if (c1 == 4) uo += side ? C3_SEA : -C3_SEA;   /* (the hole on to the horizon: the water too) */
+            C3_Point(c, k + rr, ui, lv, P[rr][0]); C3_Point(c, k + rr, uo, lv, P[rr][1]); }
+        uv[0] = 0; uv[1] = 1; uv[2] = 8; uv[3] = 1; uv[4] = 8; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+        if (side) { memcpy(a0, P[0][0], 12); memcpy(b0, P[0][1], 12); memcpy(b1, P[1][1], 12); memcpy(a1, P[1][0], 12); }
+        else { memcpy(a0, P[0][1], 12); memcpy(b0, P[0][0], 12); memcpy(b1, P[1][0], 12); memcpy(a1, P[1][1], 12); }
+        C3_QuadTint(c, a0, b0, b1, a1, 0xfd8a5a2au, ra ? ra->ground0 + C3_GWATER : -1, uv, 0xfdffffffu); }
+}
 /* split roads: the two carriageways have their own paths and hills (C3_FramesB), which can cross over or under each other far from the fork (Sierra
    ~1450: A overhead; Pacific Highway ~1500: A's terrain as a ceiling).  The original only shows the other carriageway while it is near (its view is
    one carriageway wide plus the shear offset).  B's closed path weaves around A (Pacific Highway 1560..1680: centre lines 350..5600 apart, heights
@@ -1343,7 +1974,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
     for (k = k0; k < k1; k++) {
         const RoadPiece *p0 = &c->piece[k], *p1 = &c->piece[k + 1];
         if (C3_progress && !((k - k0) & 31)) C3_progress(k - k0, k1 - k0);
-        C3Row r0, r1; int h;
+        C3Row r0, r1; int h, brk[2], nbrk; double bu[2][7], bh[2][7];
         c->cur = k;
         for (h = 0; h < (p0->layout == 2 ? 2 : 1); h++) {   /* split road: half B in its own frames (C3_FramesB; at the join they are A's) */
             const RoadSection *s0 = h ? &p0->halfB : &p0->halfA, *s1 = h ? (p1->layout == 2 ? &p1->halfB : &p1->halfA) : &p1->halfA;
@@ -1354,10 +1985,18 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
             nv0 = c->nv;
             if (p0->layout != 2 && p1->layout == 2 && !c->forkPick) { C3_ForkMerge(p1, &merged); s1 = &merged; }
             c->fr = h ? c->frameB : c->frame;
-            C3_Section(s0, o0, &r0); C3_Section(s1, o1, &r1);
+            C3_SectionAt(ra, s0, k, h, o0, &r0); C3_SectionAt(ra, s1, k + 1, h, o1, &r1);
+            {   int sd, i; nbrk = 0;   /* (an edited side next to another: square to the end of the piece - its shape moved to the road edge there) */
+                for (sd = 0; sd < 2; sd++) if (C3_SideBreak(ra, s0, k, h, s1, k + 1, h, sd)) { C3Row t; double dx; int e = sd ? 8 : 6;
+                    C3_SectionAt(ra, s0, k, h, o1, &t); dx = r1.u[e] - t.u[e];
+                    r1.hm[sd] = t.hm[sd]; r1.hl[sd] = t.hl[sd];   /* (a square end: its hole's water too) */
+                brk[nbrk] = sd; for (i = 0; i < 7; i++) { int j = sd ? 8 + i : i; bu[nbrk][i] = r1.u[j]; bh[nbrk][i] = r1.h[j]; r1.u[j] = t.u[j] + dx; r1.h[j] = t.h[j]; }
+                    for (i = 0; i < 6; i++) r1.mat[sd ? 8 + i : i] = t.mat[sd ? 8 + i : i];
+                    nbrk++; } }
+            c->skRa = ra; c->skOn = 1; c->skind[0] = C3_SideKind(ra, s0, k, h, 0); c->skind[1] = C3_SideKind(ra, s0, k, h, 1);
             if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2) C3_InnerClamp(c, c->soft ? k : k + 1, h, &r1); }   /* (forks on: the piece's end as its start -
                                                                                      the other road's last piece clamped at one end only fanned its hillside across the road) */
-            C3_ProfileTex(ra, s0, k, h, tex);
+            C3_PieceTex(ra, s0, k, h, tex);
             c->darkStrip = -1;
             if (ra && C3_NearForkJoin(c, k, h) && ra->global[18] >= 0 && (!c->soft || C3_Gap(c, k, h) < C3_DARKGAP)) {   /* (forks on: only where the roads are close -
                                                                                                                           Peninsula's join has its plain verge further out) */   /* where B's inner rail stands (Sierra 898..903) the inner shoulders are asphalt with the white edge line at
@@ -1368,6 +2007,45 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 /* near a fork / join, where the inner side (A's right, B's left) has its rail (GroundMarkQueue side structure on the shoulder's outer edge), the shoulder
                    is dark road surface: the wedge the rails stand on in software (Sierra 898..903 on B) */
             if (!(walk && (s0->kindFlags & 0x20))) C3_Strip(c, k, &r0, &r1, s0->kind, walk, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, ra);
+            if (ra && !(walk && (s0->kindFlags & 0x20))) {   /* (grounds meeting: torn into each other - C3_Blend; the piece before's pictures for the seam along) */
+                int pv[C3_NP - 1], hp = h && k > 0 && c->piece[k - 1].layout == 2, sd, sf = 0; const RoadSection *sp = k > 0 ? (hp ? &c->piece[k - 1].halfB : &c->piece[k - 1].halfA) : NULL;
+                if (sp && !(sp->kind == SEC_OPEN && (sp->kindFlags & 0x20))) C3_PieceTex(ra, sp, k - 1, hp, pv);
+                for (sd = 0; sd < 2; sd++) {
+                    if (sp && C3_SideWalk(ra, sp, k - 1, hp, sd)) sf |= 16 << sd;   /* (the piece before's footpath: not torn on along) */
+                    if (C3_SideWalk(ra, s0, k, h, sd)) sf |= 1 << sd;   /* (a footpath lowered to the road - its curb's height 0 - runs on too) */
+                    if (C3_SideKind(ra, s0, k, h, sd) == SEC_PROFILE && !(C3_SideEd(ra, s0, k, h, sd) & 16) && !(ra->ext && k < ra->next && (ra->ext[k].gutter[h & 1][sd] & 3) == 1)) sf |= 4 << sd; }
+                C3_Blend(c, k, &r0, &r1, tex, sp && !(sp->kind == SEC_OPEN && (sp->kindFlags & 0x20)) ? pv : NULL, ra, sf);
+                if (r0.wm[0] | r0.wm[1] | r1.wm[0] | r1.wm[1]) C3_Water(c, k, &r0, &r1, ra);
+                for (sd = 0; sd < 2; sd++) if (C3_SideCells(ra, s0, k, h, sd, C3_GBRIDGE) & 1) C3_Railing(c, k, &r0, &r1, sd); }
+                if (r0.hm[0] | r0.hm[1] | r1.hm[0] | r1.hm[1]) C3_HoleWater(c, k, &r0, &r1, ra);   /* (the water in the holes) */   /* (a bridge's railing) */   /* (painted water's surface) */
+            {   int b, i, texN[C3_NP - 1], hasTn = 0; if (ra && nbrk) { C3_PieceTex(ra, s1, k + 1, h, texN); hasTn = 1; }   /* (the next piece's pictures: a hole's end wall) */
+                for (b = 0; b < nbrk; b++) for (i = 0; i < 6; i++) {   /* the step where a square end meets the next piece's side: closed (both faces) */
+                    int j = brk[b] ? 8 + i : 6 - i, jn = brk[b] ? j + 1 : j - 1; float a[3], bb[3], cc[3], d[3]; unsigned col = C3_Colour(M_TERRAIN, SEC_PROFILE, k);
+                    C3_Point(c, k + 1, r1.u[j], r1.h[j], a); C3_Point(c, k + 1, r1.u[jn], r1.h[jn], bb);
+                    C3_Point(c, k + 1, bu[b][brk[b] ? jn - 8 : jn], bh[b][brk[b] ? jn - 8 : jn], cc); C3_Point(c, k + 1, bu[b][brk[b] ? j - 8 : j], bh[b][brk[b] ? j - 8 : j], d);
+                    {   int sg = brk[b] ? j : jn, t = sg >= 0 && sg < C3_NP - 1 ? tex[sg] : -1, tn = sg >= 0 && sg < C3_NP - 1 && hasTn ? texN[sg] : -1;   /* (the ground of the band it closes: no flat-coloured seam) */
+                        if ((t >= 0 && C3_IsPitTex(ra, t)) || (tn >= 0 && C3_IsPitTex(ra, tn))) {   /* a hole's end wall (user, 2026-11-19: "between 53, 52 ... a better cliff face texture ...
+                                                                    on both sides of the hole"): the ground beyond the hole's end (this piece or the next one), rock if that can blend */
+                            if (t < 0 || C3_IsPitTex(ra, t)) t = tn >= 0 && !C3_IsPitTex(ra, tn) ? tn : C3_NotPitTex(ra, tex, sg);
+                            if (t >= 0 && !C3_IsBridgeTex(ra, t) && !C3_TexBaked(ra, t) && ra->nground > C3_GCLIFF) t = ra->ground0 + C3_GCLIFF; }
+                        if (t >= 0) { float uv[8] = { 0, 1, 1, 1, 1, 0, 0, 0 }, ub[8];
+                            if (ra->nground > C3_GCLIFF && t == ra->ground0 + C3_GCLIFF) { uv[1] = (float)(C3_Dist(a, d) / C3_ROCKPER); uv[2] = (float)(C3_Dist(a, bb) / C3_ROCKPER);
+                                uv[3] = (float)(C3_Dist(bb, cc) / C3_ROCKPER); uv[4] = (float)(C3_Dist(d, cc) / C3_ROCKPER); }   /* (rock: the world's scale) */
+                            ub[0] = uv[0]; ub[1] = uv[1]; ub[2] = uv[6]; ub[3] = uv[7]; ub[4] = uv[4]; ub[5] = uv[5]; ub[6] = uv[2]; ub[7] = uv[3];
+                            C3_QuadTint(c, a, bb, cc, d, 0xffffffffu, t, uv, 0xffffffffu); C3_QuadTint(c, a, d, cc, bb, 0xffffffffu, t, ub, 0xffffffffu); }   /* (the back face: the same
+                                                                    diagonal, the same mapping - before, mirrored and split the other way, the two fought for the depth) */
+                        else { C3_Quad(c, a, bb, cc, d, col); C3_Quad(c, d, cc, bb, a, col); } } }
+                for (b = 0; b < nbrk; b++) {   /* beyond P2 (user, 2026-11-19: "beyond p2 using hole the cliff face should be filled here too"): the skirts' step, where the
+                                                  outer cell is a hole on one side of the break - rock from the ground's skirt down to the abyss's */
+                    int o = brk[b] ? C3_NP - 2 : 0, j = brk[b] ? C3_NP - 1 : 0, bi = brk[b] ? 6 : 0, tn = hasTn ? texN[o] : -1; double sg = brk[b] ? C3_SKIRT : -C3_SKIRT;
+                    float a[3], bb[3], cc[3], d[3], uv[8], ub[8];
+                    if (!(tex[o] >= 0 && C3_IsPitTex(ra, tex[o])) == !(tn >= 0 && C3_IsPitTex(ra, tn))) continue;
+                    if (fabs(r1.h[j] - bh[b][bi]) < 1 || ra->nground <= C3_GCLIFF) continue;
+                    C3_Point(c, k + 1, r1.u[j], r1.h[j], a); C3_Point(c, k + 1, r1.u[j] + sg, r1.h[j], bb);
+                    C3_Point(c, k + 1, bu[b][bi] + sg, bh[b][bi], cc); C3_Point(c, k + 1, bu[b][bi], bh[b][bi], d);
+                    uv[0] = 0; uv[1] = (float)(C3_Dist(a, d) / C3_ROCKPER); uv[2] = (float)(C3_SKIRT / C3_ROCKPER); uv[3] = uv[1]; uv[4] = uv[2]; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+                    ub[0] = uv[0]; ub[1] = uv[1]; ub[2] = uv[6]; ub[3] = uv[7]; ub[4] = uv[4]; ub[5] = uv[5]; ub[6] = uv[2]; ub[7] = uv[3];
+                    C3_QuadTint(c, a, bb, cc, d, 0xffffffffu, ra->ground0 + C3_GCLIFF, uv, 0xffffffffu); C3_QuadTint(c, a, d, cc, bb, 0xffffffffu, ra->ground0 + C3_GCLIFF, ub, 0xffffffffu); } }
             if (!(walk && (s0->kindFlags & 0x20)) && s0->kind != SEC_WALL_SPLIT) C3_SnowBank(c, k, &r0, &r1);   /* (seen only in snow; not in tunnels / across cross streets; no drifts on the road itself) */
             if (c->darkStrip >= 0) {   /* the solid white edge line at the road side of that dark shoulder (no TEXG texture has one: drawn as a strip) */
                 double e0 = h ? s0->edgeL : s0->edgeR, e1 = h ? s1->edgeL : s1->edgeR, w = h ? -C3_EDGELINE : C3_EDGELINE; float a[3], b[3], cc[3], d[3];
@@ -1375,11 +2053,19 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 C3_Quad(c, a, b, cc, d, 0xffe8e8e8u); }
             if (ra && !h && p0->layout == 2 && C3_NearForkJoin(c, k, 0)) C3_Median(c, k, ra);   /* the ground between the carriageways (built once, with A) */
             if (ra && c->skirts && (c->skirtEnd <= 0 || k < c->skirtEnd) && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
+            c->skOn = 0;
             if (ra && s0->kind >= SEC_WALL1 && s0->kind <= SEC_WALL_SPLIT) C3_Sea(c, k, s0, o0, s1, o1, ra);
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) C3_Tunnel(c, k, h, s0, o0, s1, o1, ra, tex[2]);   /* (Peninsula 385..413, 475..499; the rock: the left cliff face's texture) */
             {   int nr0 = c->nv, j; C3_Lanes(c, k, s0, o0, s1, o1, ra, walk && !(s0->kindFlags & 0x20) ? C3_GUTD : 0);   /* the road surface: vertex alpha 248 (render3d.h: Video / Esc "Road" = new asphalt, a sheen in the sun) */
                 for (j = nr0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf8000000u; }
             if (walk) C3_Roadside(c, k, h, s0, o0, s1, o1, ra);
+            if (ra) C3_BandBuildings(c, k, h, s0, &r0, &r1, ra);
+            if (ra && ra->ext && k < ra->next) { int sd; for (sd = 0; sd < 2; sd++) if ((ra->ext[k].gutter[h & 1][sd] & 3) == 1 && C3_SideKind(ra, s0, k, h, sd) == SEC_PROFILE) {   /* (a terrain side's gutter) */
+                double km, rl, gw, gdp; C3_EdgeStyle(ra, k, h, sd, &km, &rl, &gw, &gdp);
+                double kb = C3_SideWalk(ra, s0, k, h, sd) ? C3_KERB * km : 0, e0 = (sd ? (s0->laneEdgeR < s0->edgeR ? s0->laneEdgeR : s0->edgeR) : (s0->laneEdgeL > s0->edgeL ? s0->laneEdgeL : s0->edgeL)) + o0;
+                double e1 = (sd ? (s1->laneEdgeR < s1->edgeR ? s1->laneEdgeR : s1->edgeR) : (s1->laneEdgeL > s1->edgeL ? s1->laneEdgeL : s1->edgeL)) + o1;
+                double k1, r1, g1, d1, kb1; C3_EdgeStyle(ra, k + 1, h, sd, &k1, &r1, &g1, &d1); kb1 = C3_SideWalk(ra, s1, k + 1, h, sd) ? C3_KERB * k1 : 0;   /* (its end: the next piece's curb) */
+                C3_Gutter(c, k, sd, e0, e1, kb, kb1, gdp, gw, gdp); } }
             if (ra) { C3_Sprites(c, k, h, s0, o0, ra); C3_SideStructs(c, k, h, s0, o0, s1, o1, ra); }
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) { int j; for (j = nv0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff || (c->v[j].rgba >> 24) == 0xf8) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf9000000u; }   /* under a roof (a tunnel: vertex alpha 249) - no rain, puddles or snow there (render3d.h) */
         }

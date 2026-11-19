@@ -26,4 +26,7 @@ if (Test-Path "$a\build\OpenRash.exe") {
         catch { $old = "$($f.Name).old" + (Get-Date -Format HHmmss); Rename-Item $to $old; Copy-Item $f.From $to -Force; "staged $($f.Name) (the running game's copy renamed to $old)" } }
     Get-ChildItem "$play\*.old*" -ErrorAction SilentlyContinue | ForEach-Object { try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch {} }   # (old copies no game holds any more)
 } else { "no game build (analysis\build\OpenRash.exe): the editor can open courses already extracted, but cannot extract new ones, test drive or show the game renderer" }
+# the annotate server (the editor's Note tool sends its notes there for Claude: scripts\annotate_server.ps1), when it is not running
+if (-not (Get-NetTCPConnection -LocalPort 8737 -State Listen -ErrorAction SilentlyContinue)) {
+    Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\annotate_server.ps1`"" }
 Start-Process $ed -ArgumentList "-data `"$data`" -game `"$play\OpenRash.exe`" -track $Track -level $Level$(if ($GameRenderer) { ' -gamerenderer 1' })" -WorkingDirectory $data

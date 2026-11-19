@@ -287,6 +287,7 @@ int __fastcall rr_SoundParamsCopy(int set, int n)
     if (set == 0) return 0;
     snd = I32(set, 0xc);
     entry = set + 0x1c + n * 0x1c;
+    if (snd == 0) return entry;   /* (no object to set: an edited course's roadside sprite of a set without one - the original wrote through 0 and crashed: user, 2026-11-19) */
     I32(snd, 0x14) = I32(set, 0x20 + n * 0x1c);
     I32(snd, 0x48) = *(int *)((char *)&(*(unsigned *)&tbl_objectTables.tbl_shiftTable) + I32(entry, 0x14) * 4);
     I32(snd, 0x4c) = *(int *)((char *)&(*(unsigned *)&tbl_objectTables.tbl_shiftTable) + I32(entry, 0x18) * 4);

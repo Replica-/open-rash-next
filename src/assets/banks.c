@@ -410,6 +410,12 @@ unsigned __fastcall rr_BankEntry2(unsigned code, unsigned a, unsigned b)
         return 0;
     }
     ent = *(int *)(row + (code & 0x3f) * 4);
+    if (ent && *(unsigned *)ent == 0x434c4750) {   /* (the entry a group itself, no rows - a facade's code where a ground's is looked up: an edited course, the Course
+                                                     Editor. Indexed as rows it gave the group's own 'PGLC' word as a record - CRASH in PglcLookup. The group then,
+                                                     for any row, as the True 3D reader takes it: RX_Leaf. Original courses never get here) */
+        GlobalGet((int)lock);
+        return (unsigned)ent;
+    }
     if (-1 < (int)b && b < *(unsigned *)(ent - 4)) {
         unsigned v = *(unsigned *)(ent + b * 4);
         GlobalGet((int)lock);

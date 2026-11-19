@@ -58,6 +58,19 @@ void __fastcall rr_PlayerControlTick(int self)
         if ((U8(ctl, 0xc0) & 0x10) && I32(ctl, 0xec) < 0x12c) RRF_RaceStateSet(0x7f, 0xb4);
         return;
     }
+    {   /* painted water (road\course_edit.c rr_CourseEditWater; user, 2026-11-18: "if the player lands in the water its instant game lost"): out of the race at once,
+           as over the edge of Pacific Highway's coast (ai.c: the bike meter 0, race state 5) */
+        int rr_CourseEditWater(unsigned pos, int lat);
+        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditWater((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+            RiderCollide(ctl, 0x2000000, 0x2000000, 2); I32(ctl, 0x2f0) = 0; RRF_RaceStateSet(5, 0xb4); return; }
+    }
+    {   /* cobbles (road\course_edit.c rr_CourseEditCobble): their rattle while the player rides on them (rrdsound.dll RR_Cobble, synthesised there; the speed
+           +0xec, 0 .. ~16000 at full) */
+        int rr_CourseEditCobble(unsigned pos, int lat); static void (__stdcall *cob)(float);
+        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditCobble((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+            if (!cob) { HMODULE m = GetModuleHandleA("rrdsound.dll"); cob = m ? (void (__stdcall *)(float))GetProcAddress(m, "RR_Cobble") : 0; }
+            if (cob) cob((float)I32(ctl, 0xec) / 16000.0f); }
+    }
     {   /* the player's weapon (arsenal.c: a Big Game's carried weapon, else the Esc pause choice) at the race start and when it changes; the race
            set-up gave the level's weapon; a rival can still steal it */
         void rr_ArsenalPlayerTick(int self);

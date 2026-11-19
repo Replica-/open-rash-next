@@ -26,6 +26,10 @@ typedef struct RxTex {                         /* one texture object */
     int facade;                                /* used as a building facade (course3d.h C3_Building): its windows light up at night */
     int gkind;                                 /* as ground (course3d.h C3_TexDirt): 0 not looked at yet, 1 dirt, 2 something else */
     float shopV;                               /* a facade picture of the City set (world3d.inc W3LoadCityArt): its shop line, v from the top (0 = not one) */
+    int baked;                                 /* (course3d.h C3_TexBaked) 0 not looked at, 1 a band painted in at its road side (DARK4's tarmac), 2 none */
+    int edgeOf, edgeDir;                       /* the ragged edge of texture edgeOf - 1 (course3d.h C3_Blend): its pixels cut from that one's (RX_EdgeCut) as it is
+                                                  drawn (the HD picture where there is one); edgeDir 0 across (its first quarter), 1 along (all of it), 2..5 across 1..4 copies of it */
+    int edge[6];                               /* this texture's edges by edgeDir (tex index + 1; 0 = not made yet) */
 } RxTex;
 
 typedef struct RxAssets {
@@ -41,6 +45,10 @@ typedef struct RxAssets {
     int gen0, ngen;                            /* generated facades: tex[gen0 .. gen0 + ngen - 1] (course3d.h C3_FacadeVary) */
     int rockTex;                               /* the rocks' texture (world3d.inc W3RockTex; -1 = none: course3d.h C3_Rock flat colour) */
     int sign0, nsign;                          /* projecting signs (the City set): tex[sign0 .. sign0 + nsign - 1] (course3d.h C3_BladeSign) */
+    int ground0, nground;                      /* extra ground pictures (ground_art.h: REDWOOD): tex[ground0 + n] = RRC_BAND | RRC_GEN | n painted on a cell */
+    int groundTree[4];                         /* each one's tree (tex index + 1; 0 none): stands on the cells painted with it (course3d.h C3_GroundTrees) */
+    int road0, nroad;                          /* the extra road surfaces (ground_art.h k_c3Road: COBBLE ...): painted as RRC_BAND | RRC_GEN | n in RrcExtra.road (course3d.h C3_Lanes) */
+    int groundHedge[4];                        /* each one's hedge (tex index + 1; 0 none): along the inner edge of a "beyond" cell painted with it (course3d.h C3_GroundHedge) */
     RrcExtra *ext; int next;                   /* per piece: an edited course's extras (CEXT: painted terrain bands, course3d.h C3_ProfileTex; NULL = none) - its own memory */
 } RxAssets;
 
@@ -241,14 +249,44 @@ static int RX_ShadowTex(RxAssets *a)
 }
 
 /* RGBA (ABGR words) of a texture through the palette; colour-key textures: index 0 transparent */
+/* a ground picture's ragged edge (user, 2026-11-18: "any terrain that touches up against another terrain should dynamically just mesh in"): from
+   W x H RGBA px - dir 0: a quarter of its width, dir 2..5: 1..4 widths - its columns from the outer edge inwards, mirrored on (a reflection at the boundary) -
+   4 copies down (one piece along) - opaque at column 0 (the boundary), torn away towards the far side; dir 1: all of it, opaque at the bottom row (the boundary along the road), torn
+   away upwards.  The tear wavers along the boundary in whole periods (it repeats as the picture does), in broad tongues with a little fraying, and
+   falls at the same place at any resolution (the HD picture or the original) */
+#define RX_EDGEIN(W) ((W) / 10)   /* (across: reflected this many columns in from the outer edge - its last columns are often a seam line; course3d.h
+                                         C3_Blend starts the edge as far into the inner strip) */
+static unsigned *RX_EdgeCut(const unsigned *px, int W, int H, int dir, int *ow, int *oh)
+{
+    int w = dir == 1 ? W : dir >= 2 ? W * (dir - 1) : (W / 4 > 1 ? W / 4 : 1), h = dir == 1 ? H : 4 * H, x, y; unsigned *o = (unsigned *)malloc((size_t)w * h * 4);
+    if (!o) return NULL;   /* (across: 4 copies down it - one piece along, C3_ALONG - so the tear repeats once a piece, not once a copy) */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        double t = dir == 1 ? (double)x / W : (double)y / h, s = dir == 1 ? (double)(H - 1 - y) / (H > 1 ? H - 1 : 1) : (double)x / (w > 1 ? w - 1 : 1), n; unsigned c, hq; int sp = W - RX_EDGEIN(W), m = x % (2 * sp), col = dir == 1 ? x : m < sp ? sp - 1 - m : m - sp;   /* (across: its outer columns mirrored at the
+                                                                                                    boundary - side pictures run once road -> field (DARK4: tarmac on the road side), so what lies at
+                                                                                                    the outer edge is what goes on) */
+        c = px[(size_t)(y % H) * W + col];
+        hq = (unsigned)(int)(t * 160) * 2654435761u ^ (unsigned)(int)(s * 40) * 2246822519u; hq ^= hq >> 15; hq *= 2654435761u; hq ^= hq >> 13;
+        n = 0.5 + 0.6 * (0.21 * sin(6.2831853 * t + 1.3) + 0.13 * sin(6.2831853 * 2 * t + 0.4) + 0.07 * sin(6.2831853 * 5 * t + 2.2) + 0.035 * sin(6.2831853 * 11 * t + 0.9))   /* (0.6: gentler - user, 2026-11-19) */
+              + ((hq & 1023) / 1023.0 - 0.5) * 0.04;
+        o[(size_t)y * w + x] = (s < 0.05 || (s < n && s < 0.95)) && (c >> 24) ? c | 0xff000000u : c & 0x00ffffffu; }   /* (torn away: its colour kept, no dark fringe when filtered) */
+    *ow = w; *oh = h; return o;
+}
 static unsigned *RX_Rgba(const RxAssets *a, const RxTex *t)
 {
+    if (t->edgeOf > 0 && t->edgeOf <= a->ntex) {   /* (a ragged edge: cut from its picture) */
+        const RxTex *b = &a->tex[t->edgeOf - 1]; unsigned *bp = RX_Rgba(a, b), *e; int w, h;
+        if (!bp) return NULL;
+        e = RX_EdgeCut(bp, b->w, b->h, t->edgeDir, &w, &h); free(bp); return e; }
+    {
     unsigned *o = (unsigned *)malloc((size_t)t->w * t->h * 4); int i, key = (t->flags & 0x1000) != 0 || t->key;
-    if (t->gen) { if (o) memcpy(o, t->gen, (size_t)t->w * t->h * 4); return o; }
+    if (!o) return NULL;
+    if (t->gen) { memcpy(o, t->gen, (size_t)t->w * t->h * 4); return o; }
+    if (!t->bits) { memset(o, 0, (size_t)t->w * t->h * 4); return o; }
     for (i = 0; i < t->w * t->h; i++) {
         unsigned c = a->pal[t->bits[i]];
         o[i] = (key && t->bits[i] == 0) ? 0 : ((unsigned)(t->alpha ? t->alpha : 255) << 24 | (c & 0xffffff));   /* PALETTEENTRY r, g, b = bytes 0, 1, 2 = RGBA in memory */
     }
     return o;
+    }
 }
 #endif

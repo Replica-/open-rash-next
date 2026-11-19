@@ -4,6 +4,8 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "course_edit.h"
+#include "road_types.h"
+#include "road_ring.h"
 
 static void Log(const char *s) { void (__stdcall *dl)(const char *); HMODULE sh = GetModuleHandleA("rrddraw.dll"); dl = sh ? (void (__stdcall *)(const char *))GetProcAddress(sh, "RR_DbgLog") : 0; if (dl) dl(s); }   /* (the shim's log) */
 static RrcPiece *g_rrc;           /* the loaded course (NULL = none) */
@@ -34,20 +36,22 @@ void rr_CourseEditLoad(int track, int level)
     if (!rr_CourseEditPath(track, path)) return;
     f = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     if (f == INVALID_HANDLE_VALUE) return;
-    if (ReadFile(f, &g_rrcHdr, sizeof g_rrcHdr, &got, NULL) && got == sizeof g_rrcHdr && g_rrcHdr.magic == RRC_MAGIC && (g_rrcHdr.version == 1 || g_rrcHdr.version == RRC_VERSION)
+    if (ReadFile(f, &g_rrcHdr, sizeof g_rrcHdr, &got, NULL) && got == sizeof g_rrcHdr && g_rrcHdr.magic == RRC_MAGIC && (g_rrcHdr.version >= 1 && g_rrcHdr.version <= RRC_VERSION)
         && g_rrcHdr.secSize == RRC_SECSIZE && g_rrcHdr.n > 0 && g_rrcHdr.n < 65536 && g_rrcHdr.track == track && (g_rrcHdr.level == 0 || g_rrcHdr.level == level)) {
-        DWORD xsize = g_rrcHdr.version >= 2 ? (DWORD)g_rrcHdr.n * sizeof(RrcExtra) : 0; unsigned h;
+        DWORD xsize = g_rrcHdr.version >= 2 ? (DWORD)g_rrcHdr.n * RrcExtraSize(g_rrcHdr.version) : 0; unsigned h;   /* (as in the file) */
         size = (DWORD)g_rrcHdr.n * sizeof(RrcPiece);
         g_rrc = (RrcPiece *)HeapAlloc(GetProcessHeap(), 0, size);
-        if (xsize) g_rrcEx = (RrcExtra *)HeapAlloc(GetProcessHeap(), 0, xsize);
+        if (xsize) g_rrcEx = (RrcExtra *)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)g_rrcHdr.n * sizeof(RrcExtra));
         if (g_rrc && ReadFile(f, g_rrc, size, &got, NULL) && got == size && (!xsize || (g_rrcEx && ReadFile(f, g_rrcEx, xsize, &got, NULL) && got == xsize))) {
             h = RrcHash(g_rrc, size); if (xsize) h = RrcHashMore(h, g_rrcEx, xsize);
-            if (h != g_rrcHdr.checksum) { HeapFree(GetProcessHeap(), 0, g_rrc); g_rrc = 0; } }
+            if (h != g_rrcHdr.checksum) { HeapFree(GetProcessHeap(), 0, g_rrc); g_rrc = 0; }
+            else if (xsize) RrcExtraWiden(g_rrcEx, g_rrcHdr.n, RrcExtraSize(g_rrcHdr.version)); }
         else if (g_rrc) { HeapFree(GetProcessHeap(), 0, g_rrc); g_rrc = 0; }
         if (!g_rrc && g_rrcEx) { HeapFree(GetProcessHeap(), 0, g_rrcEx); g_rrcEx = 0; }
     }
     CloseHandle(f);
-    if (g_rrc) { rr_courseEdited = 1; rr_courseEditKey = g_rrcHdr.checksum; }
+    if (g_rrc) { rr_courseEdited = 1; rr_courseEditKey = g_rrcHdr.checksum ^ 0x70000u; }   /* (its extract's name: ^ the extras' layout, version 7 - an extract made
+                                                                                       from the same file before holds the old RrcExtra) */
 }
 
 /* the extras of the piece at road position pos (course_edit.h RrcExtra; NULL = none): the course file's CEXT chunk (road\road_build.c CourseExtract) */
@@ -164,4 +168,39 @@ void rr_CourseEditApply(int *p)
     mark = sec[0x38] == 7 && (unsigned)sec[0x39] - (unsigned)(*(unsigned char *)&rec_playerRecord.g_playerLevel) == 1 ? 0x20 : 0;   /* (the finish marker bit: this race's level's marker
                                                          only, as rr_RoadSectionFill sets it - the file is every level's) */
     sec[0x36] = (unsigned char)((sec[0x36] & ~0x20) | mark);
+}
+
+/* painted water (user, 2026-11-18: "if the player lands in the water its instant game lost") or a hole (2026-11-19: "if the player falls into this they immediately lose"): 1 = lateral position lat at road position pos lies in a cell
+   painted WATER (course3d.h C3_WaterRow: k_c3Ground[C3_GWATER], RRC_BAND | RRC_GEN | 1 on the bands P0 .. P2 / past P2 of a terrain side) - the cells as
+   course3d.h C3_Side lays them (verge's outer edge, the profile points, then on out) */
+int rr_CourseEditWater(unsigned pos, int lat)
+{
+    const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int side, c, sg, b[6], i; unsigned w = RRC_BAND | RRC_GEN | 1u, ho = RRC_BAND | RRC_GEN | 2u;   /* (WATER, HOLE: ground_art.h) */
+    if (!x) return 0;
+    s = (const RoadSection *)RR_RING(pos)[3];
+    if (!s) return 0;
+    side = lat > (s->edgeL + s->edgeR) / 2; sg = side ? 1 : -1;
+    if (!(s->kind == SEC_PROFILE || (s->kind == SEC_OPEN && x->sideKind[0][side] == 2))) return 0;   /* (a terrain side: course3d.h C3_SideKind) */
+    b[0] = side ? s->edgeR : s->edgeL; b[1] = side ? s->outerR : s->outerL;   /* (cell c from b[c] to b[c + 1]: the verge, P0, P1, P2, past P2) */
+    for (i = 0; i < 3; i++) { b[i + 2] = s->profile[(i * 2 + side) * 2]; if ((b[i + 2] - b[i + 1]) * sg < 0) b[i + 2] = b[i + 1]; }
+    b[5] = b[4] + sg * 1000000;
+    for (c = 0; c <= 4; c++) {
+        unsigned v = c == 0 ? x->cell[0][side][0] : c <= 3 ? x->band[0][side][c - 1] : x->cell[0][side][1];
+        if ((v == ho || (v == w && c >= 1)) && (lat - b[c]) * sg > 0 && (b[c + 1] - lat) * sg >= 0) { char m[96]; wsprintfA(m, "%s: the player in it at %u (lateral %d, cell %d)", v == ho ? "hole" : "water", pos >> 8, lat, c); Log(m); return 1; } }
+    return 0;
+}
+
+/* cobbles (user, 2026-11-18: "when the bike rides over cobble stone it makes a cobble road noise"): 1 = lateral position lat at road position pos lies on the road
+   (between its edges) where the lanes on that side of the centre line are painted COBBLE (RrcExtra.road = RRC_BAND | RRC_GEN | 0: ground_art.h k_c3Road[0]) */
+int rr_CourseEditCobble(unsigned pos, int lat)
+{
+    const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int j; unsigned v;
+    if (!x) return 0;
+    s = (const RoadSection *)RR_RING(pos)[3];
+    if (!s || lat < s->edgeL || lat > s->edgeR) return 0;
+    j = (lat + 250 * (int)s->lanesL) / 250;   /* (course3d.h C3_Lanes: the lanes from -250 x lanesL, the centre line at 0) */
+    v = j >= 0 && j < 8 && x->lane[0][j] ? x->lane[0][j] : x->road[0][lat < 0 ? 0 : 1];   /* (the lane's own surface, else its side's) */
+    if (v != (RRC_BAND | RRC_GEN)) return 0;
+    {   static unsigned said; if (pos >> 8 != said + 1 && pos >> 8 != said) { char m[80]; wsprintfA(m, "cobbles: the player on them at %u (lane %d)", pos >> 8, j + 1); Log(m); } said = pos >> 8; }   /* (each time onto them) */
+    return 1;
 }

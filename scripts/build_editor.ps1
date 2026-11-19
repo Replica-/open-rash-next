@@ -5,5 +5,5 @@ param([string]$Out)   # -Out <folder>: build there (a test copy while the one in
 $sdl = Get-RrSdl; $out = if ($Out) { $Out } else { "$Build\editor" }
 Enter-RrVcVars
 New-Item -ItemType Directory -Force $out | Out-Null; Push-Location $out
-cl /nologo /O2 /W3 "/I$sdl\include" "$Src\editor\courseedit.c" /Fe:CourseEdit.exe /link /SUBSYSTEM:WINDOWS "/LIBPATH:$sdl\lib\x86" SDL3.lib user32.lib gdi32.lib comctl32.lib ole32.lib uuid.lib dxguid.lib 2>&1 | Where-Object { $_ -match "error|LNK" }
+cl /nologo /O2 /W3 "/I$sdl\include" "$Src\editor\courseedit.c" /Fe:CourseEdit.exe /link /SUBSYSTEM:WINDOWS "/LIBPATH:$sdl\lib\x86" SDL3.lib user32.lib gdi32.lib comctl32.lib ole32.lib uuid.lib dxguid.lib winhttp.lib shell32.lib 2>&1 | Where-Object { $_ -match "error|LNK" }
 Copy-Item "$sdl\lib\x86\SDL3.dll" $out -Force; Pop-Location; Get-Item "$out\CourseEdit.exe" -ErrorAction SilentlyContinue | Select-Object Name,Length

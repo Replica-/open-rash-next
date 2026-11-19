@@ -112,7 +112,7 @@ strip_loop:
                 mask = 1 << (cv + 0x10);
                 rec = (int *)LaneLookupFloor(p1, p3, (int)q, a4, mask);
                 if (rec == 0) {
-                    g_defaultObject[0xc] = (unsigned)I(I(p1, 0xc), 0x120 + (p3 + dc * 2) * 4);
+                    g_defaultObject[0xc] = (unsigned)I(I(p1, 0xc), 0x120 + (p3 + ((unsigned)dc < 9 ? dc : (int)type) * 2) * 4);
                     DrawPoolNewEdge((int)g_defaultObject, (int)q);
                 } else {
                     if (bVar6) {
@@ -188,7 +188,7 @@ strip_loop:
                     }
                 }
                 rec = (int *)LaneLookupMax(p1, p3, (int)q, dc);
-                rec[0xc] = I(I(p1, 0xc), 0x120 + (p3 + dc * 2) * 4);
+                rec[0xc] = I(I(p1, 0xc), 0x120 + (p3 + ((unsigned)dc < 9 ? dc : (int)type) * 2) * 4);   /* (dc a coordinate - LaneLookupMax: the section's own row) */
                 rec = (int *)DrawPoolNewEdge((int)rec, (int)q);
                 if ((a4 > 2) == (p3 == 1)) *(unsigned *)rec = (*(unsigned *)rec & 0xfffaffffu) | 0x20000;
                 else *(unsigned *)rec = (*(unsigned *)rec & 0xfffcffffu) | 0x40000;

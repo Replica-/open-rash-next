@@ -106,6 +106,9 @@ int __fastcall rr_LaneLookupMax(int obj, int slot, int *q, unsigned lane)
 {
     int row = I32(obj, 0xfc) + 4 + lane * 8;
     int a, b, m, e, f, g, res;
+    if (lane >= 17) return g_defaultObject_as_int;   /* (the table: 0x24 words, an owner and 17 lanes of 2 - StripTableDraw passes a screen coordinate as the lane on its
+                                                         p2 < 0 path, as the original does; an edited course (Course Editor) reaches it with one past the table: read as
+                                                         a record, it ran into the next object - CRASH in PglcLookup. Original courses never get here) */
     if (I32(row, slot * 4) == 0) {
         int h = (int)BankEntry2(*(unsigned char *)(I32(obj, 0xc) + 0x148 + slot), 1, (int)lane);
         I32(row, slot * 4) = h;

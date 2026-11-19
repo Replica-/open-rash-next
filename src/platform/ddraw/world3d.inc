@@ -7,6 +7,7 @@
  * the view's start, camX beside and camY above the road (heights relative to the road at the view's start, like the game's projector).
  * Test switch / setting: RR_WORLD3D=0 turns it off (default on in GPU races on Direct3D 11). */
 #include "../world3d/course3d.h"
+#include "../world3d/ground_art.h"
 #include "../world3d/render3d.h"
 
 #define W3_F   320.0                    /* focal length in projection units (the projector's 320-wide space; x pxPerUnit = frame pixels) */
@@ -185,37 +186,15 @@ static void GfGround(unsigned *p, int gk, int y0, const int *wc, int t, unsigned
    0xB2 window glass, 0x99 shop window, 0xA6 sign lettering, 0x8C neon tube, 0 none); a facade's texels (0,0) / (1,0) = its layout (alpha 0xFE).
    Returns 1 when facades were found (they replace the drawn GENFAC set).  Test switch RR_W3NOCITY=1: the drawn set */
 static char g_mwDir[3][MAX_PATH]; static int g_mwNDir; static void MwDirs(void);   /* (menuwide.inc: the mod's folders) */
-static unsigned *g_cityPx[64 + 32]; static int g_cityN;
-static unsigned *W3LoadPng(const char *path, int w, int h)   /* ABGR texels of a w x h PNG, NULL = none / another size */
-{   SDL_Surface *s = SDL_LoadPNG(path), *c; unsigned *px = NULL; int x, y;
-    if (!s) return NULL;
-    c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888); SDL_DestroySurface(s);
-    if (!c) return NULL;
-    if (c->w == w && c->h == h && (px = (unsigned *)malloc((size_t)w * h * 4)) != NULL)
-        for (y = 0; y < h; y++) { const unsigned *r = (const unsigned *)((const BYTE *)c->pixels + (size_t)y * c->pitch);
-            for (x = 0; x < w; x++) { unsigned q = r[x]; px[y * w + x] = (q & 0xff00ff00u) | ((q >> 16) & 0xffu) | ((q & 0xffu) << 16); } }
-    else if (c->w != w || c->h != h) LOG("world3d: %s is %dx%d, expected %dx%d - not used", path, c->w, c->h, w, h);
-    SDL_DestroySurface(c); return px; }
 static int W3LoadCityArt(void)
-{   char dir[MAX_PATH], p[MAX_PATH]; int d, k, kind;
-    for (k = 0; k < g_cityN; k++) { free(g_cityPx[k]); g_cityPx[k] = NULL; } g_cityN = 0;
+{   char dir[MAX_PATH], p[MAX_PATH]; int d;
     if (getenv("RR_W3NOCITY")) return 0;
     if (g_mwNDir < 0) MwDirs();
     dir[0] = 0;
     for (d = 0; d < g_mwNDir && !dir[0]; d++) { DWORD at; _snprintf(p, sizeof p - 1, "%s\\hd\\city", g_mwDir[d]); p[sizeof p - 1] = 0;
         at = GetFileAttributesA(p); if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY)) strcpy(dir, p); }
     if (!dir[0]) return 0;
-    for (kind = 0; kind < 2; kind++) {   /* the facades, then the signs (each set's textures in a row: gen0 / sign0) */
-        int W = kind ? 256 : 512, Hh = kind ? 768 : 1024;
-        if (kind) g_w3a.sign0 = g_w3a.ntex; else g_w3a.gen0 = g_w3a.ntex;
-        for (k = 0; k < (kind ? 32 : 64) && g_w3a.ntex < 8192 && g_cityN < 96; k++) { unsigned *px; RxTex *x;
-            _snprintf(p, sizeof p - 1, "%s\\%s%02d.png", dir, kind ? "SGN" : "FAC", k); p[sizeof p - 1] = 0;
-            if (!(px = W3LoadPng(p, W, Hh))) continue;
-            g_cityPx[g_cityN++] = px;
-            x = &g_w3a.tex[g_w3a.ntex++]; memset(x, 0, sizeof *x);
-            _snprintf(x->name, sizeof x->name, "%s%02d", kind ? "CITYSG" : "CITYFC", k); x->name[8] = 0; x->w = W; x->h = Hh; x->gen = px; x->gpu = -1;
-            if (kind) { x->key = 1; g_w3a.nsign++; }
-            else { x->facade = 1; x->shopV = (px[1] >> 24) == 0xFE ? (px[1] & 0xff) / 255.0f : 0.8f; g_w3a.ngen++; } } }
+    C3_CityArt(&g_w3a, dir);   /* (ground_art.h: the Course Editor loads the same) */
     LOG("world3d: City set from %s: %d facades, %d signs", dir, g_w3a.ngen, g_w3a.nsign);
     return g_w3a.ngen > 0; }
 /* the rocks' texture (course3d.h C3_Rock, on the dirt: user, "make them actual rocks or models textured rocks"): 128 x 128, wrapping - a grey stone,
@@ -240,6 +219,14 @@ static void W3RockTex(void)
     t = &g_w3a.tex[g_w3a.ntex]; memset(t, 0, sizeof *t);
     strcpy(t->name, "GENROCK"); t->w = 128; t->h = 128; t->gen = g_rockPx; t->gpu = -1;
     g_w3a.rockTex = g_w3a.ntex++; }
+static void W3GroundArt(void)   /* the extra ground pictures (ground_art.h: REDWOOD) from the mod's hd\ground */
+{   char p[MAX_PATH]; int d, n;
+    if (g_mwNDir < 0) MwDirs();
+    for (d = 0; d < g_mwNDir; d++) { DWORD at; _snprintf(p, sizeof p - 1, "%s\\hd\\ground", g_mwDir[d]); p[sizeof p - 1] = 0;
+        at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || !(at & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        _snprintf(p, sizeof p - 1, "%s\\hd", g_mwDir[d]); p[sizeof p - 1] = 0;
+        n = C3_GroundArt(&g_w3a, p); LOG("world3d: %d extra ground pictures from %s\\ground (trees: %d)", n, p, g_w3a.groundTree[0] != 0); return; }
+    C3_GroundArt(&g_w3a, NULL); }
 static void W3GenFacades(int urban)
 {   static const int pal[6][4][3] = {
         { { 150, 70, 54 }, { 122, 56, 44 }, { 176, 112, 72 }, { 104, 74, 64 } },          /* brick: red, dark red, buff, brown */
@@ -333,6 +320,16 @@ static int W3GpuTex(int t)
 {   RxTex *x;
     if (t < 0 || t >= g_w3a.ntex) return -1;
     x = &g_w3a.tex[t];
+    if (x->gpu == -1 && x->edgeOf > 0 && x->edgeOf <= g_w3a.ntex) {   /* a ragged edge (course3d.h C3_Blend): cut from its picture as drawn - the HD one where there is one */
+        RxTex *b = &g_w3a.tex[x->edgeOf - 1]; const DWORD *bh; unsigned *src = NULL, *e; int W = b->w, H = b->h, w, h, j;
+        g_hdTrackHint = g_w3hdTrack; bh = HdTexOn() && !b->gen && b->bits ? HdTexFind(b->name, b->w, b->h, b->bits, b->w) : NULL; g_hdTrackHint = 0;
+        if (bh && (src = (unsigned *)malloc((size_t)16 * b->w * b->h * 4)) != NULL) { W = 4 * b->w; H = 4 * b->h; for (j = 0; j < W * H; j++) { DWORD p = bh[j]; src[j] = (p & 0xFF00FF00u) | ((p >> 16) & 0xFF) | ((p & 0xFF) << 16); } }
+        if (!src) src = RX_Rgba(&g_w3a, b);
+        e = src ? RX_EdgeCut(src, W, H, x->edgeDir, &w, &h) : NULL; free(src);
+        x->gpu = e ? R3_Texture(&g_w3r, e, w, h) : -1; free(e);
+        if (x->gpu < 0) x->gpu = -3;   /* (none: not tried again) */
+        return x->gpu >= 0 ? x->gpu : -1; }
+    if (x->edgeOf) return x->gpu >= 0 ? x->gpu : -1;
     if (x->gpu < 0) { const DWORD *hp; g_hdTrackHint = g_w3hdTrack;   /* (the course's track: hdtex.inc HdTrack) */
         hp = HdTexOn() && !x->gen ? HdTexFind(x->name, x->w, x->h, x->bits, x->w) : NULL;   /* "slightly upscaled" (hdtex.inc): the 4x picture, same palette as the file */
         g_hdTrackHint = 0;
@@ -620,6 +617,8 @@ static void W3GrassCollect(const C3Course *cc, W3GrTri **arr, int *nn, int *capp
         if (l < 1e-3f || fabsf(n[1]) / l < 0.62f) continue;   /* (flat enough to grow on: up to ~50 degrees) */
         if (t < 0 && l * 0.5f < 400) continue;   /* (no tufts on the fallen leaves round the city's tree pits - user, 2026-11-15: course3d.h C3_Leaves, flat green
                                                      untextured diamonds of ~135 units at most; ground is never a flat-colour triangle smaller than one tuft) */
+        if (t >= 0 && t < g_w3a.ntex && g_w3a.tex[t].edgeOf) continue;   /* (a torn blend edge, course3d.h C3_Blend: laid over ground that has its own tufts - its spots the same, each
+                                                                          tuft twice, a little higher and another colour, fighting for the depth: user, 2026-11-19 "the grass tuffs is overlapping") */
         if (dry) green = 1;
         else if (t < 0 || t >= g_w3a.ntex) green = W3IsGreen(A->rgba);
         else {
@@ -1079,7 +1078,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         if (ViewerOn()) { g_w3c.forkPick = 0; g_w3c.soft = 0; }   /* (the Course Editor's viewer: the forks always seen - both carriageways, B on its own path: course3d.h C3_FramesB) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
-        W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex();
+        W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex(); W3GroundArt();
         g_w3hdTrack = b[0] == 0x74 && b[1] >= 0x31 && b[1] <= 0x35 ? b[1] - 0x30 : 0; }
     if (g_w3hdTrack == 1) for (i = 0; i < g_w3c.n; i++) {   /* the City's footpaths 10 % lower (user, 2026-11-15: "slightly too high"): the course's own copy, so the
                                                              mesh, the kerbs, the tree pits, the ground under the objects and the live stretch all agree */
@@ -1247,6 +1246,20 @@ static double W3RoadDistAt(double ybottom)
     return 1e30; }
 /* the frames of the carriageway the view follows (RrWorld3DCam.half: B has its own, C3_FramesB) - the game's camera and projection are relative to it */
 static const C3Frame *W3Fr(void) { return g_w3camB && g_w3c.frameB ? g_w3c.frameB : g_w3c.frame; }   /* (on B: the precomputed B path, course3d.h C3_FramesB) */
+/* a point of the road as C3_PointF, on a smooth curve through the pieces' ends (Catmull-Rom; *hd its heading there) - C3_PointF's straight pieces kink at every end,
+   up to 8 degrees on a sharp bend, and the camera and the player's bike, on the road at two places, kinked at different times: the bike jolted across the picture
+   (user, 2026-11-19: "on extreme turns the shakes are pretty bad, why are we shaking at all?").  Off the drawn road by a few units at most */
+static void W3SmoothPt(const C3Frame *F, double p, double u, double h, float *out, double *hd)
+{   int n = g_w3c.n, k = (int)floor(p), i, kk[4]; double f, x[4], y[4], z[4], f2, f3, a, b, c, d, da, db, dc, dd, X, Y, Z, DX, DZ, th;
+    if (k < 0) k = 0; if (k >= n) k = n - 1; f = p - k;
+    for (i = 0; i < 4; i++) { kk[i] = k - 1 + i; if (kk[i] < 0) kk[i] = 0; if (kk[i] > n) kk[i] = n; x[i] = F[kk[i]].x; y[i] = F[kk[i]].y; z[i] = F[kk[i]].z; }
+    f2 = f * f; f3 = f2 * f;
+    a = -0.5 * f3 + f2 - 0.5 * f; b = 1.5 * f3 - 2.5 * f2 + 1; c = -1.5 * f3 + 2 * f2 + 0.5 * f; d = 0.5 * f3 - 0.5 * f2;
+    da = -1.5 * f2 + 2 * f - 0.5; db = 4.5 * f2 - 5 * f; dc = -4.5 * f2 + 4 * f + 0.5; dd = 1.5 * f2 - f;
+    X = a * x[0] + b * x[1] + c * x[2] + d * x[3]; Y = a * y[0] + b * y[1] + c * y[2] + d * y[3]; Z = a * z[0] + b * z[1] + c * z[2] + d * z[3];
+    DX = da * x[0] + db * x[1] + dc * x[2] + dd * x[3]; DZ = da * z[0] + db * z[1] + dc * z[2] + dd * z[3];
+    th = (DX * DX + DZ * DZ > 1e-6) ? atan2(DX, DZ) : F[k].heading;
+    out[0] = (float)(X + u * cos(th)); out[1] = (float)(Y + h); out[2] = (float)(Z - u * sin(th)); if (hd) *hd = th; }
 static double W3MidB(double q)   /* the middle of carriageway B's surface, in its own lateral coordinates */
 {   int k = (int)floor(q); const RoadSection *b;
     if (k < 0) k = 0; if (k >= g_w3c.n) k = g_w3c.n - 1;
@@ -1274,12 +1287,24 @@ static int W3OrigAt(double D, double *cx, double *ry, double *s)
     *ry = (g_w3cam.seg[i].ry * i0 + (g_w3cam.seg[i + 1].ry * i1 - g_w3cam.seg[i].ry * i0) * t) * *s;
     return *s > 0; }
 
+/* the player's bike across the road: as far from the game's as the smoothed camera is from the game's camera (the camera code below) - the camera smoothed alone,
+   the bike drawn where the game has it, the bike ran ahead of the camera as it slid out in a bend and swung back on the screen as the camera caught up
+   (user, 2026-11-19: "why is the bike zig zagging so dramatically while the camera is following a turn") */
+static double g_w3bikeOff, g_w3bikeDx;   /* (g_w3bikeDx: W3Place) */
+/* the view this frame (the camera code): eye x, z, heading, its lateral and piece position - the player's bike is placed straight ahead of it, across by its lateral
+   only, not round the road's bend (user, 2026-11-20: "the bike is definitely not drifting smoothly can you try disable this first just so i can see whats going on") -
+   test switch RR_W3BIKECURVE=1: on the road's curve one piece ahead */
+static double g_w3view[5];
 /* an object's polygons (RrGpuQuad.objDepth): every vertex from the game's projection at the object's depth (lateral U, height H over the road there)
    to the same point of the true-3D course, so riders and cars stand on the 3D road, hidden by a crest or a building like the world */
 static int W3MapObj(const W3Spr *s, int w, int h, const float *m, double vp, float *ox, float *oy, double *dist)
 {   double cx, ry, sc, q = vp + s->objDepth - 1.0, dmin = 1e30, U[4], H[4], lift = 0; int k;
     if (!W3OrigAt(s->objDepth, &cx, &ry, &sc)) return 0;
     for (k = 0; k < 4; k++) { U[k] = (s->x[k] - cx) / sc; H[k] = (ry - s->y[k]) / sc; }
+    if (s->kind == RRO_PLAYER) { double mu = (U[0] + U[1] + U[2] + U[3]) / 4; if (fabs(s->lat - mu) < 60) for (k = 0; k < 4; k++) U[k] += s->lat - mu; for (k = 0; k < 4; k++) U[k] += g_w3bikeOff; }   /* (near it only: on a split road's B
+                                                       the game's lateral can be from A's centre) */   /* (the player: across the road where the game has it
+                                                       (its lateral) - from the game's whole-pixel projection, its scale rising and falling with each piece, the bike shook a unit or two
+                                                       every frame: user, 2026-11-19 "the player bike is abit awkward it wobbles around") */
     {   /* on top of the 3D terrain: the game's height is over ITS road (flat across); beside the road the 3D hillside can rise above that (pedestrians,
            signs, riders off the road sank into it).  The foot = the lowest corner; where the 3D ground under it (C3_GroundAt: the live copy inside the
            live stretch) is higher than the foot plus a tolerance (the game sinks car pictures 40..80 units into the road), the object is lifted onto it */
@@ -1292,7 +1317,12 @@ static int W3MapObj(const W3Spr *s, int w, int h, const float *m, double vp, flo
             if (g > H[kf] + 80) lift = g - H[kf]; } }
     {   static double lastVp = -1; int logb = s->kind == RRO_PLAYER && getenv("RR_W3LOGBIKE") && vp != lastVp;   /* (test switch RR_W3LOGBIKE=1: the player's lateral as mapped (U) against the game's own (lat), and where it lands on the screen, each frame) */
     for (k = 0; k < 4; k++) { float pt[3]; double X, Y, W;
-        C3_PointF(&g_w3c, W3Fr(), q, U[k], H[k] + lift, pt);
+        static int curve = -1; if (curve < 0) curve = getenv("RR_W3BIKECURVE") != NULL;
+        if (s->kind == RRO_PLAYER && !curve) { double c = cos(g_w3view[2]), sn = sin(g_w3view[2]), a = (q - g_w3view[4]) * W3_L, x = U[k] - g_w3view[3];
+            W3SmoothPt(W3Fr(), q, U[k], H[k] + lift, pt, NULL);   /* (its height: the road's there) */
+            pt[0] = (float)(g_w3view[0] + sn * a + c * x); pt[2] = (float)(g_w3view[1] + c * a - sn * x); }
+        else if (s->kind == RRO_PLAYER) W3SmoothPt(W3Fr(), q, U[k], H[k] + lift, pt, NULL); else C3_PointF(&g_w3c, W3Fr(), q, U[k], H[k] + lift, pt);   /* (the player: on the smooth curve,
+                                                                                                                                                      as the camera - W3SmoothPt) */
         X = pt[0] * m[0] + pt[1] * m[4] + pt[2] * m[8] + m[12];
         Y = pt[0] * m[1] + pt[1] * m[5] + pt[2] * m[9] + m[13];
         W = pt[0] * m[3] + pt[1] * m[7] + pt[2] * m[11] + m[15];
@@ -1422,10 +1452,32 @@ static void W3Place(int w, int h, const float *m, double vp)
     if (g_w3Pcap < g_w3ns) { int nc = g_w3ns * 2; float *np = (float *)realloc(g_w3P, sizeof(float) * 8 * nc); double *nd;
         if (!np) return; g_w3P = np; if (!(nd = (double *)realloc(g_w3D, sizeof(double) * nc))) return; g_w3D = nd; g_w3Pcap = nc; }
     P = g_w3P; D = g_w3D;
+    {   /* the player's bike: across the screen where it is on the 3D road (W3MapObj), at the game's size - the game's own place is relative to ITS road picture,
+           shifted across in whole pixels as it bends: against the 3D road the bike zig-zagged through every bend, up to 22 pixels a frame (user, 2026-11-20:
+           "make it so the bike doesnt get impacted by the camera following the road") - test switch RR_W3BIKEGAME=1: where the game has it */
+        static int game = -1; float mx[4], my[4]; double md;
+        if (game < 0) game = getenv("RR_W3BIKEGAME") != NULL;
+        g_w3bikeDx = 0;
+        int ref = -1, j;   /* measured on the bike's shadow (its middle is the bike's, whatever the rider does): from a picture's own middle, a punch or a kick
+                              (the picture wider on one side) moved the whole bike across by it (user, 2026-11-20: "while punching and kicking the bike should not move with it") */
+        for (j = 0; j < g_w3ns; j++) if (g_w3s[j].kind == RRO_PLAYER && g_w3s[j].objDepth >= 0) { if (W3IsGameShadow(&g_w3s[j])) { ref = j; break; } if (ref < 0) ref = j; }
+        if (!game && !mapOff && ref >= 0) { const W3Spr *s = &g_w3s[ref]; static double lastDx; double gx = (s->x[0] + s->x[1] + s->x[2] + s->x[3]) / 4, wx = 0, wy = 0; int nw = 0, rs = -1;
+            /* the bike's back wheel: its tail lamp's middle (riderlamps.inc, each picture's own - straight above the wheel) where the game draws it - the shadow is
+               the picture's own outline, wider with an arm or a leg out, and the game's picture itself is placed by its box: through a punch or a kick the
+               bike still slid across (user, 2026-11-20: "your point of reference should be the wheel of the bike. it simply cannot move during the animation") */
+            for (j = 0; j < g_w3ns; j++) { const W3Spr *t = &g_w3s[j]; const W3Red *rd; float hx, hy, ux = 0; int e;
+                if (t->kind != RRO_PLAYER || t->objDepth < 0 || W3IsGameShadow(t) || !t->tx || t->tx->rspr < 0 || !(rd = W3RedSpots(t->tx)) || !rd->n) continue;
+                for (e = 0; e < rd->n && e < 2; e++) ux += rd->u[e]; ux /= e;
+                if (W3TexToScreen(t->u, t->v, t->x, t->y, ux, rd->v[0], &hx, &hy)) { wx += hx; wy = hy; nw++; } rs = t->tx->rspr; break; }
+            if (W3MapObj(s, w, h, m, vp, mx, my, &md)) {   /* (the shadow mapped: its middle = the bike's lateral on the 3D road, W3MapObj) */
+                double tx = (mx[0] + mx[1] + mx[2] + mx[3]) / 4;
+                g_w3bikeDx = nw ? tx - wx / nw : lastDx; lastDx = g_w3bikeDx; }   /* (no lamp in this picture: as the frame before) */
+            if (getenv("RR_W3LOGBIKE")) LOG("w3bikedraw vp %.3f x %.2f dx %.2f wheel %d %.2f shadowx %.2f wy %.2f frame %lu rspr %d", vp, nw ? wx / nw + g_w3bikeDx : gx + g_w3bikeDx, g_w3bikeDx, nw, nw ? wx / nw : 0, gx, wy, (unsigned long)g_frame, rs); } }
     for (i = 0; i < g_w3ns; i++) {   /* where each polygon goes (P: x[4], y[4]) and how far away it is (D) */
         const W3Spr *s = &g_w3s[i];
         double d = (s->depth - W3_EYE) * W3_L, yb = -1e30, road, md; float *px = P + 8 * i, *py = px + 4, mx[4], my[4]; int capped = 1;
         for (k = 0; k < 4; k++) { px[k] = s->x[k]; py[k] = s->y[k]; }
+        if (s->kind == RRO_PLAYER) for (k = 0; k < 4; k++) px[k] += (float)g_w3bikeDx;   /* (all its polygons: bike, rider, shadow - above) */
         if (!mapOff && s->objDepth >= 0 && W3MapObj(s, w, h, m, vp, mx, my, &md)) {
             /* near the camera the game's own placement already agrees with the 3D road (its scale is clamped there, so the map would shrink the
                objects): the game's place up to 3 segments, the true-3D one from 6 */
@@ -1640,6 +1692,7 @@ static int W3Lights(R3Frame *f, R3Vert *v, int cap, double p, const float *eye, 
                     if (g_w3Pcap >= g_w3ns && W3TexToScreen(t->u, t->v, g_w3P + 8 * j, g_w3P + 8 * j + 4, rd->u[0], rd->v[0], &hx, &hy)) {   /* where it is drawn (W3Place): */
                         W3Unproj(f, hx, hy, t->dObj > 30 ? t->dObj : 30, tl); drawn = 1; }   /* the tail light's world point as the sprites pass lights it (its depth) */
                     break; }
+                if (s->kind == RRO_PLAYER) U += g_w3bikeOff;   /* (where the bike is drawn: W3MapObj) */
                 r = W3Steer(s->id, q, s->lat, sec);   /* the bike's heading: the cone turns with it */
                 if (getenv("RR_W3LOGL") && s->kind == RRO_PLAYER) { static int nh; if (++nh % atoi(getenv("RR_W3LOGL")) == 0) LOG("w3head q %.3f lat %.1f U %.1f H %.1f r %.1f drawn %d", q, s->lat, U, H, r, drawn); }
                 for (lamp = 0; lamp < (twin ? 2 : 1) && f->nSpots < 6; lamp++) {   /* a super bike: two lamps side by side, their cones overlapping */
@@ -2181,12 +2234,37 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
         g_w3InTunnel = in == 2; }
     p = vp + W3_EYE - 1.0;   /* the view builder draws piece floor(vp)'s start at depth 1 - frac (= piece k at depth k - vp + 1), so depth W3_EYE (distance 0) is piece position vp + W3_EYE - 1 */
     u = g_w3cam.camX;   /* (lateral to the carriageway the view follows: W3Fr) */
-    { float a[3]; C3_PointF(&g_w3c, W3Fr(), vp, 0, 0, a); roadY = a[1]; }
-    C3_PointF(&g_w3c, W3Fr(), p, u, 0, eye); eye[1] = (float)(roadY + g_w3cam.camY);
+    {   /* the game's camera across the road (75 % of the rider's, whole units, at once) followed smoothly - two filters in a row, once a game frame: in the 2D picture
+           its steps only slid the road, in 3D they moved the near world against the far, the view wobbled through every bend as the rider slid out and was steered back
+           (user, 2026-11-19: "when turning is it possible to remove the wobble please") - test switch RR_W3CAMRAW=1: as the game has it.  The player's bike is drawn
+           through the same filters (g_w3bikeOff): they are linear, so the bike against the camera is the game's own (the bike moves on the screen as in the game, a
+           quarter of its slide, less at the road's edge where the game's camera stops) - only smoothly */
+        static double f1, f2, g1, g2, lastVp = -1e9; static unsigned long lastF = (unsigned long)-1; static int raw = -1, gOk; double L = 0; int j, hasL = 0;
+        if (raw < 0) raw = getenv("RR_W3CAMRAW") != NULL;
+        for (j = 0; j < g_w3ns; j++) if (g_w3s[j].kind == RRO_PLAYER) { L = g_w3s[j].lat; hasL = 1; break; }
+        g_w3bikeOff = 0;
+        if (!raw && !g_vwHold) {
+            if (fabs(vp - lastVp) > 4 || fabs(u - f2) > 1500 || (hasL && fabs(L - g2) > 1500)) { f1 = f2 = u; g1 = g2 = L; }   /* (a new race, a reset, the camera on another road: from there) */
+            else if (g_frame != lastF) { f1 += (u - f1) * 0.45; f2 += (f1 - f2) * 0.45;
+                if (hasL && !gOk) g1 = g2 = L; else if (hasL) { g1 += (L - g1) * 0.45; g2 += (g1 - g2) * 0.45; } }   /* (the bike not drawn for a while: from where it is) */
+            lastF = g_frame; lastVp = vp; u = f2; gOk = hasL;
+            if (hasL) g_w3bikeOff = g2 - L; } }
+    { float a[3]; W3SmoothPt(W3Fr(), vp, 0, 0, a, NULL); roadY = a[1]; }
+    W3SmoothPt(W3Fr(), p, u, 0, eye, NULL); eye[1] = (float)(roadY + g_w3cam.camY);   /* (on the smooth curve: no kink at the pieces' ends) */
     {   int kk = (int)floor(vp); double fr = vp - kk, th0, th1, hd; const C3Frame *F = W3Fr();   /* looking along the road's heading at the view's start, level */
         if (kk < 0) kk = 0; if (kk >= g_w3c.n) kk = g_w3c.n - 1;
-        th0 = F[kk].heading; th1 = F[kk + 1].heading; hd = th0 + (th1 - th0) * fr;
-        fwd[0] = (float)sin(hd); fwd[1] = 0; fwd[2] = (float)cos(hd); WxView(hd); }   /* (the sun's bearing from it: weather.inc) */
+        th0 = F[kk].heading; th1 = F[kk + 1].heading;
+        {   double hm = kk > 0 ? F[kk - 1].heading : th0, hp = kk + 2 <= g_w3c.n ? F[kk + 2].heading : th1, m0, m1, f2 = fr * fr, f3 = f2 * fr;   /* (a smooth turn through the pieces' headings
+                                                                       (Catmull-Rom) - straight from one to the next, the turn's rate stepped at every piece: the player's bike, standing on the
+                                                                       road ahead, slid against it - user, 2026-11-19 "the player bike ... wobbles around abit, or looks like its stepping") */
+            while (th1 - th0 > 3.14159265358979) th1 -= 6.28318530717959; while (th1 - th0 < -3.14159265358979) th1 += 6.28318530717959;
+            while (hm - th0 > 3.14159265358979) hm -= 6.28318530717959; while (hm - th0 < -3.14159265358979) hm += 6.28318530717959;
+            while (hp - th1 > 3.14159265358979) hp -= 6.28318530717959; while (hp - th1 < -3.14159265358979) hp += 6.28318530717959;
+            m0 = (th1 - hm) * 0.5; m1 = (hp - th0) * 0.5;
+            hd = (2 * f3 - 3 * f2 + 1) * th0 + (f3 - 2 * f2 + fr) * m0 + (-2 * f3 + 3 * f2) * th1 + (f3 - f2) * m1; }
+        fwd[0] = (float)sin(hd); fwd[1] = 0; fwd[2] = (float)cos(hd); WxView(hd);   /* (the sun's bearing from it: weather.inc) */
+        g_w3view[0] = eye[0]; g_w3view[1] = eye[2]; g_w3view[2] = hd; g_w3view[3] = u; g_w3view[4] = p;   /* (the player's bike straight ahead of it: W3MapObj) */
+        if (getenv("RR_W3LOGCAM")) LOG("w3cam vp %.4f camX %d camY %d hd %.5f eye %.1f %.1f %.1f u %.2f", vp, g_w3cam.camX, g_w3cam.camY, hd, eye[0], eye[1], eye[2], u); }   /* (test switch RR_W3LOGCAM=1: the camera each frame) */
     R3_LookTo(view, eye, fwd, up);
     sx = (float)tw / w; sy = (float)th / h;
     {   double fpx = W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1);   /* focal length in frame pixels */
