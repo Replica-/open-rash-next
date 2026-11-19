@@ -817,7 +817,9 @@ static int PlanStep(const PlanXf *t)   /* pieces between the points: about 40 pi
 static int PlanVerts(const PlanXf *t, int *out, int max)   /* the points: every PlanStep pieces, the ends, the chosen one - sorted */
 {   int st = PlanStep(t), n = 0, k, last = PlanLast();
     for (k = 0; k <= last && n < max; k++) { int i, mv = 0; for (i = 0; i < g_nmv && !mv; i++) mv = g_mv[i].k == k;
-        if (k == 0 || k == last || (k % st == 0 && (g_pEnd < 0 || k < g_c.start || !g_npv)) || k == g_pvSel || mv || (g_pEnd >= 0 && (k == g_c.start || PlanIsAdded(k)))) out[n++] = k; }
+        if (k == 0 || k == last || k % st == 0 || k == g_pvSel || mv || (g_pEnd >= 0 && k == g_c.start)) out[n++] = k; }   /* (evenly along all of it - a course
+                                                                     being built too: only the points added after its start left the road between without any - user, 2026-11-20 "The vertex points have
+                                                                     to be spaced out uniformally across the track") */
     return n; }
 static int PlanOnB(int k) { return g_c.frameB && k > 0 && k < g_c.n && g_c.piece[k].layout == 2 && g_c.piece[k - 1].layout == 2 && !(g_c.bdead && g_c.bdead[k]); }   /* (a point on carriageway B: inside a split) */
 static void PlanRunB(int k, int *ks, int *kb)   /* the split k is in: B's pieces ks .. kb - 1 (kb: where B ends, its join) */
@@ -829,6 +831,7 @@ static void PlanAdd(int k) { int i, *q; if (PlanIsAdded(k) || k <= 0 || k >= g_c
 static void PlanRemove(int k) { int i, j; for (i = j = 0; i < g_npv; i++) if (g_pv[i] != k) g_pv[j++] = g_pv[i]; g_npv = j; }
 static void PlanInv(void) { InvalidateRect(g_plan, 0, FALSE); if (g_planBig) InvalidateRect(g_planBig, 0, FALSE); }
 static void PlanMoves(HDC dc, const PlanXf *t); static int PlanMoveAt(int k, int half);   /* (the moves waiting) */
+static void PlanConformPaint(HDC dc, const PlanXf *t);   /* (a right-drag: PlanConformDrag) */
 
 static void PaintPlan(HWND w, HDC dc, RECT rc)
 {   PlanXf t; int i, nv, *vs; HPEN pens[7], pv; HBRUSH bv, ba; POINT pt;
@@ -857,7 +860,7 @@ static void PaintPlan(HWND w, HDC dc, RECT rc)
         if (PlanOnB(vs[i]) && PlanMoveAt(vs[i], 1) < 0) { const C3Frame *B = &g_c.frameB[vs[i]]; int bx = (int)PX2(&t, B->x), by = (int)PZ2(&t, B->z);   /* (and on B) */
             SelectObject(dc, ba); Rectangle(dc, bx - 4, by - 4, bx + 5, by + 5); } }
     if (g_pvSel >= g_c.n || (g_pvSelH && !PlanOnB(g_pvSel))) g_pvSel = -1;   /* (the course changed under it: undo, another course) */
-    PlanMoves(dc, &t);
+    PlanMoves(dc, &t); PlanConformPaint(dc, &t);
     if (g_pvSel >= 0) { const C3Frame *F = g_pvSelH ? &g_c.frameB[g_pvSel] : &g_c.frame[g_pvSel]; int m = PlanMoveAt(g_pvSel, g_pvSelH);   /* the chosen point */
         int x = (int)PX2(&t, m >= 0 ? g_mv[m].tx : F->x), y = (int)PZ2(&t, m >= 0 ? g_mv[m].tz : F->z);
         HPEN ps = CreatePen(PS_SOLID, 2, RGB(255, 225, 60)); HBRUSH bs = CreateSolidBrush(RGB(255, 255, 255));   /* (yellow: red is a move that does not fit - a moved one hollow, its own colour seen) */
@@ -873,8 +876,8 @@ static void PaintPlan(HWND w, HDC dc, RECT rc)
         DeleteObject(pf); DeleteObject(bf); }
     {   RECT hb = { 0, 0, rc.right, 20 }; char h[260]; FillRect(dc, &hb, (HBRUSH)GetStockObject(BLACK_BRUSH)); SetTextColor(dc, RGB(200, 200, 220));
         if (g_nmv) sprintf(h, "Plan x%.1f   %d move%s waiting: Enter applies (red: too sharp for the game's road)  |  Del: drop the chosen point's move  |  drag a point: move it%s", g_pZoom, g_nmv, g_nmv == 1 ? "" : "s", w == g_plan ? "  |  F7: big" : "");
-        else if (g_pEnd >= 0) sprintf(h, "Plan x%.1f   building: Shift+click lays the road on to there  |  drag a point: move it (Enter applies)  |  right-click a point: start / level finishes  |  wheel: zoom%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
-        else sprintf(h, "Plan x%.1f   click a point: choose (the 3D view goes there)  |  drag a point: move it (Enter applies)  |  wheel: zoom (more points), drag the ground: move, Home: all, Esc: none%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
+        else if (g_pEnd >= 0) sprintf(h, "Plan x%.1f   building: Shift+click lays the road on to there  |  drag a point: move it (Enter applies)  |  right-drag a point: bend the road before it to meet it  |  right-click a point: start / finishes  |  wheel: zoom%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
+        else sprintf(h, "Plan x%.1f   click a point: choose (the 3D view goes there)  |  drag a point: move it (Enter applies)  |  right-drag: bend the road before it to meet it  |  wheel: zoom (more points), drag the ground: move, Home: all, Esc: none%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
         TextOutA(dc, 6, 3, h, (int)strlen(h)); }
     for (i = 0; i < 7; i++) DeleteObject(pens[i]); }
 static int PlanVertAt(const PlanXf *t, int mx, int my, int *half)   /* the point under the pixel (its piece; -1 none), on A or B (*half) */
@@ -1325,22 +1328,29 @@ static void PlanMovesApply(void)   /* Enter: the moves waiting applied, first to
    vertex points and change them as i go along"): New track shows the road to the start only (g_pEnd); Shift+click on the plan lays the road on towards the click, a piece
    at a time (each the game's length, CE_L), each turning at most CE_MAXCURVE (4.4 degrees), and puts a point where it ends */
 static void PlanExtend(double tx, double tz)
-{   int e = g_pEnd, k, m = 0; double x, z, S, d0 = 1e30; Undo *u;
+{   int e = g_pEnd, k, m = 0, *cv; double x, z, S, d0 = 1e30, dist = 1e30, dist0; Undo *u;
     if (e < 1 || e >= g_c.n - 4) { Status("Plan: no road left to lay on (the course's pieces are all used)"); return; }
     if (g_nmv) { Status("Plan: apply the moves waiting first (Enter), then Shift+click to lay the road on"); return; }
-    u = UndoBeginWhole();
+    if (!(cv = (int *)malloc(sizeof(int) * 3001))) return;
     S = g_c.frame[e - 1].heading * CE_L; x = g_c.frame[e].x; z = g_c.frame[e].z;   /* (laid as C3_Frames: each piece turns by its curve, then runs CE_L) */
-    for (k = e; k < g_c.n - 3 && m < 3000; k++) { double dx = tx - x, dz = tz - z, dist = sqrt(dx * dx + dz * dz), want, dh; int c; RoadSection *s = &g_c.piece[k].halfA;
+    dist0 = sqrt((tx - x) * (tx - x) + (tz - z) * (tz - z));
+    for (k = e; k < g_c.n - 3 && m < 3000; k++) { double dx = tx - x, dz = tz - z, want, dh; int c;   /* (worked out first, nothing changed yet) */
+        dist = sqrt(dx * dx + dz * dz);
         if (dist < CE_L * 0.5 || dist > d0 + 1) break;   /* (there - or it has gone past: the turn too sharp to reach it, the road as near as it got) */
+        if (g_c.piece[k].layout == 2) break;   /* (a split road: not laid over) */
         d0 = dist; want = atan2(dx, dz); dh = want - S / CE_L;
         while (dh > 3.14159265358979) dh -= 6.28318530717959; while (dh < -3.14159265358979) dh += 6.28318530717959;
         c = (int)floor(dh * CE_L + 0.5); if (c > CE_MAXCURVE) c = CE_MAXCURVE; if (c < -CE_MAXCURVE) c = -CE_MAXCURVE;
-        if (g_c.piece[k].layout == 2) break;   /* (a split road: not laid over) */
-        s->curve = c; Derive(s, 0xb8); g_c.piece[k].halfB = g_c.piece[k].halfA;
-        S += c; x += CE_L * sin(S / CE_L); z += CE_L * cos(S / CE_L); m++; }
-    for (; k < g_c.n && k < e + m + 400; k++) if (g_c.piece[k].layout != 2 && g_c.piece[k].halfA.curve) { g_c.piece[k].halfA.curve = 0; Derive(&g_c.piece[k].halfA, 0xb8); g_c.piece[k].halfB = g_c.piece[k].halfA; }   /* (on from it: straight) */
-    if (!m) { UndoEnd(u); Status("Plan: the click is too close to the road's end (or behind it) - click further on"); return; }
-    g_pEnd = e + m; PlanAdd(g_pEnd); UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(g_pEnd, 0);
+        cv[m++] = c; S += c; x += CE_L * sin(S / CE_L); z += CE_L * cos(S / CE_L); }
+    dist = sqrt((tx - x) * (tx - x) + (tz - z) * (tz - z));
+    if (!m || (dist > CE_L * 2 && dist > dist0 * 0.5)) {   /* (it could not get there - behind the road's end, or a turn too sharp: nothing laid, no point made - user, 2026-11-20 "When it cant
+                                                               calculate the SHIFT Click point to extend the course it just makes another vertex point") */
+        free(cv); Status("Plan: the road cannot get there from its end (behind it, or a sharper turn than 4.4 degrees a piece) - Shift+click further ahead"); return; }
+    u = UndoBeginWhole();
+    for (k = 0; k < m; k++) { RoadSection *s = &g_c.piece[e + k].halfA; s->curve = cv[k]; Derive(s, 0xb8); g_c.piece[e + k].halfB = *s; }
+    for (k = e + m; k < g_c.n && k < e + m + 400; k++) if (g_c.piece[k].layout != 2 && g_c.piece[k].halfA.curve) { g_c.piece[k].halfA.curve = 0; Derive(&g_c.piece[k].halfA, 0xb8); g_c.piece[k].halfB = g_c.piece[k].halfA; }   /* (on from it: straight) */
+    free(cv);
+    g_pEnd = e + m; UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(g_pEnd, 0);   /* (no point added: the plan's points are evenly spaced, its end one of them) */
     Status("Plan: the road laid on %d pieces to piece %d (each turning at most 4.4 degrees, as the original tracks' sharpest) - Shift+click: on again, drag a point: move it, right-click a point: start / finishes", m, g_pEnd); }
 /* the course set again from pc / sr (n pieces) with the extras xs kept by index - one undo step (UndoBeginWhole before) */
 static void PlanCourseSet(int n, RoadPiece *pc, int *sr, const RrcExtra *xs)
@@ -1429,6 +1439,74 @@ static int PlanStartAt(int k)
     Status("Plan: the race starts at piece %d now (the old piece %d) - %d piece%s %s%s (Ctrl+Z: undo)", g_c.start, k, d < 0 ? -d : d, d == 1 || d == -1 ? "" : "s", d < 0 ? "taken out after the start" : "put in before it",
         g_lvFin[0] >= 0 && g_lvFin[0] <= g_c.start ? " - a finish now lies at the start: set it again (right-click a point)" : "");
     return 1; }
+/* right-drag a point (user, 2026-11-20: "if i hold right click and drag a vertex i want you to conform the previous vertex points before it with minimal adjustments to
+   make it smoothly meet the dragged vertex"): the curves of the pieces a .. k - 1 before point k changed as little as they can be (least squares) for piece k to come
+   to the drop, leaving it the way it did (the road on from k keeps its shape, carried with the point); a the point before k, then further back while the bend that
+   takes is sharper than the game's (CE_MAXCURVE) or cannot reach - not over a split road.  Whole-number curves (rounded as they add up: the turn at k exact) */
+static int g_cfOn, g_cfK, g_cfA, g_cfOk, g_cfN; static double g_cfTx, g_cfTz, g_cfErr; static int *g_cfC; static double *g_cfX, *g_cfZ;   /* (the drag shown: pieces a .. k's curves, where they lie) */
+static int PlanConformTry(int a, int k, double tx, double tz, int *ci, double *px, double *pz, double *err)   /* 1 = done within the limits (ci: a .. k - 1's curves) */
+{   int n = k - a, i, it, pass, ok = 1; double L = g_c.L, S0 = a > 0 ? g_c.frame[a - 1].heading * L : 0, *o = (double *)malloc(sizeof(double) * n * 3), *c, *J, s, x, z, acc, prev;
+    char *fx = (char *)calloc(n + 1, 1);   /* (pieces held at the game's limit: the bend that would take them past it left to the others - a course already turning at
+                                              the limit had every bend refused, user's note 2026-11-20) */
+    if (!o || !fx || n < 2) { free(o); free(fx); return 0; }
+    c = o + n; J = c + n;
+    for (i = 0; i < n; i++) c[i] = o[i] = g_c.piece[a + i].halfA.curve;
+    for (pass = 0; pass < n && ok; pass++) { int nf = 0, more = 0;
+        for (it = 0; it < 40; it++) { double r[3], M[3][3], b[3], lam[3], det, Jx, Jz; int p, q;   /* (Gauss-Newton over the free pieces: c = o + J'lam, J (c - c now) = -r) */
+            s = S0; x = g_c.frame[a].x; z = g_c.frame[a].z;
+            for (i = 0; i < n; i++) { px[i] = x; pz[i] = z; s += c[i]; x += L * sin(s / L); z += L * cos(s / L); } px[n] = x; pz[n] = z;
+            r[0] = x - tx; r[1] = z - tz; r[2] = 0; for (i = 0; i < n; i++) r[2] += c[i] - o[i];
+            if (fabs(r[0]) < 0.2 && fabs(r[1]) < 0.2 && fabs(r[2]) < 1e-6) break;
+            memset(M, 0, sizeof M); b[0] = -r[0]; b[1] = -r[1]; b[2] = -r[2];
+            for (i = 0; i < n; i++) { double Ji[3]; Jx = (pz[n] - pz[i]) / L; Jz = -(px[n] - px[i]) / L; Ji[0] = Jx; Ji[1] = Jz; Ji[2] = 1; J[i] = Jx;   /* (d end / d c[i]: the road from i turned) */
+                if (fx[i]) continue;
+                for (p = 0; p < 3; p++) { b[p] += Ji[p] * (c[i] - o[i]); for (q = 0; q < 3; q++) M[p][q] += Ji[p] * Ji[q]; } }
+            det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+            if (fabs(det) < 1e-12) { ok = 0; break; }
+            for (p = 0; p < 3; p++) { double Mp[3][3]; memcpy(Mp, M, sizeof M); for (q = 0; q < 3; q++) Mp[q][p] = b[q];   /* (Cramer) */
+                lam[p] = (Mp[0][0] * (Mp[1][1] * Mp[2][2] - Mp[1][2] * Mp[2][1]) - Mp[0][1] * (Mp[1][0] * Mp[2][2] - Mp[1][2] * Mp[2][0]) + Mp[0][2] * (Mp[1][0] * Mp[2][1] - Mp[1][1] * Mp[2][0])) / det; }
+            for (i = 0; i < n; i++) if (!fx[i]) { double Jz2 = -(px[n] - px[i]) / L; c[i] = o[i] + J[i] * lam[0] + Jz2 * lam[1] + lam[2]; } }
+        for (i = 0; i < n; i++) if (!fx[i]) { if (c[i] > CE_MAXCURVE + 0.01 || c[i] < -CE_MAXCURVE - 0.01) { c[i] = c[i] > 0 ? CE_MAXCURVE : -CE_MAXCURVE; fx[i] = 1; more = 1; } else nf++; }   /* (past the limit: held there, solved again) */
+        if (!more) break;
+        if (nf < 3) ok = 0; }
+    acc = prev = 0; s = S0; x = g_c.frame[a].x; z = g_c.frame[a].z;
+    for (i = 0; i < n; i++) { double r1; acc += c[i]; r1 = floor(acc + 0.5); ci[i] = (int)(r1 - prev);   /* (rounded as they add up - a piece at the limit passing the rest on) */
+        if (ci[i] > CE_MAXCURVE) ci[i] = CE_MAXCURVE; if (ci[i] < -CE_MAXCURVE) ci[i] = -CE_MAXCURVE; prev += ci[i];
+        px[i] = x; pz[i] = z; s += ci[i]; x += L * sin(s / L); z += L * cos(s / L); } px[n] = x; pz[n] = z;
+    if (fabs(prev - floor(acc + 0.5)) > 0.5) ok = 0;   /* (the turn at k not exact: the road after it would swing) */
+    *err = sqrt((x - tx) * (x - tx) + (z - tz) * (z - tz)); if (*err > 60) ok = 0;
+    free(o); free(fx); return ok; }
+static int PlanConformLow(int k)   /* the first piece the bend can reach back to: after a split road (two pieces clear), not the course's first */
+{   int i; for (i = k - 1; i > 1; i--) if (g_c.piece[i].layout == 2 || g_c.piece[i - 1].layout == 2 || g_c.piece[i - 2].layout == 2) return i + 1; return 1; }
+static void PlanConformDrag(const PlanXf *t, int k, double tx, double tz)   /* the drag to tx, tz: g_cf* (shown; PlanConformApply) */
+{   int lo = PlanConformLow(k), a, kp, kn, st = PlanStep(t), tries = 0; double err = 0;
+    g_cfOn = 1; g_cfK = k; g_cfTx = tx; g_cfTz = tz; g_cfOk = 0;
+    free(g_cfC); free(g_cfX); g_cfC = (int *)malloc(sizeof(int) * (k + 2)); g_cfX = (double *)malloc(sizeof(double) * (k + 2) * 2); g_cfZ = g_cfX ? g_cfX + k + 2 : NULL;
+    if (!g_cfC || !g_cfX || k - lo < 2) { g_cfN = 0; return; }
+    PlanNeighbours(t, k, k, &kp, &kn, 0); a = kp < k - 1 ? kp : k - st; if (a < lo) a = lo;
+    for (;;) { g_cfA = a; g_cfN = k - a; g_cfOk = PlanConformTry(a, k, tx, tz, g_cfC, g_cfX, g_cfZ, &err); g_cfErr = err; tries++;
+        if (getenv("CE_TESTPLANCONFORM")) { int i, mc = 0; for (i = 0; i < g_cfN; i++) if (abs(g_cfC[i]) > mc) mc = abs(g_cfC[i]); LOG("  conform try from %d: ok %d off %.1f sharpest %d", a, g_cfOk, err, mc); }
+        if (g_cfOk || a <= lo) break;
+        a -= (k - a) / 2 > 4 ? (k - a) / 2 : 4; if (a < lo) a = lo; } }   /* (further back, half as far again each time: the bend spread over more road, no more than it needs) */
+static void PlanConformApply(void)
+{   int i, *idx; Undo *u;
+    if (!g_cfOn || !g_cfOk || g_cfN < 2) { Status("Plan: the road cannot come to there within the game's limits (4.4 degrees a piece) - it stays as it was"); g_cfOn = 0; PlanInv(); return; }
+    idx = (int *)malloc(sizeof(int) * g_cfN); if (!idx) return;
+    for (i = 0; i < g_cfN; i++) idx[i] = g_cfA + i;
+    u = UndoBegin(idx, g_cfN);
+    for (i = 0; i < g_cfN; i++) { RoadSection *s = &g_c.piece[g_cfA + i].halfA; s->curve = g_cfC[i]; Derive(s, 0xb8); if (g_c.piece[g_cfA + i].layout != 2) g_c.piece[g_cfA + i].halfB = *s; }
+    UndoEnd(u); free(idx); g_cfOn = 0; g_dirty = 1; Redraw(); PropsFill(); PlanChoose(g_cfK, 0);
+    Status("Plan: point %d moved - pieces %d..%d bent to meet it (%.0f units off), the road on from it carried along (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK - 1, g_cfErr); }
+static void PlanConformPaint(HDC dc, const PlanXf *t)   /* the drag: the bend (cyan; red: not within the limits), the road on from the point carried (grey) */
+{   HPEN pc, pr, pg, old; POINT pt; int i; double ex, ez;
+    if (!g_cfOn || g_cfN < 2 || !g_cfX) return;
+    pc = CreatePen(PS_SOLID, 3, RGB(80, 230, 255)); pr = CreatePen(PS_SOLID, 3, RGB(255, 70, 70)); pg = CreatePen(PS_DOT, 1, RGB(170, 170, 170));
+    old = (HPEN)SelectObject(dc, g_cfOk ? pc : pr);
+    for (i = 0; i <= g_cfN; i++) { int x = (int)PX2(t, g_cfX[i]), y = (int)PZ2(t, g_cfZ[i]); if (!i) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
+    ex = g_cfX[g_cfN] - g_c.frame[g_cfK].x; ez = g_cfZ[g_cfN] - g_c.frame[g_cfK].z; SelectObject(dc, pg);
+    for (i = g_cfK; i <= PlanLast(); i++) { int x = (int)PX2(t, g_c.frame[i].x + ex), y = (int)PZ2(t, g_c.frame[i].z + ez); if (i == g_cfK) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
+    {   int x = (int)PX2(t, g_cfTx), y = (int)PZ2(t, g_cfTz); SelectObject(dc, g_cfOk ? pc : pr); SelectObject(dc, GetStockObject(NULL_BRUSH)); Rectangle(dc, x - 8, y - 8, x + 9, y + 9); }
+    SelectObject(dc, old); DeleteObject(pc); DeleteObject(pr); DeleteObject(pg); }
 static void PlanPointMenu(HWND w, int v, int x, int y)   /* right-click on point v: start / each level's finish there */
 {   HMENU m = CreatePopupMenu(); POINT p = { x, y }; int i, cmd; char lb[48];
     AppendMenuA(m, MF_STRING, 100, "Start here"); AppendMenuA(m, MF_SEPARATOR, 0, NULL);
@@ -1449,7 +1527,12 @@ static void PlanMouse(HWND w, UINT m, WPARAM wp, LPARAM lp)
     if (!g_open || !g_c.frame) return;
     GetClientRect(w, &rc); PlanView(rc, &t); PlanMovesCheck();
     if (m == WM_LBUTTONDOWN && (wp & MK_SHIFT) && g_pEnd >= 0) { PlanExtend(t.cx + (x - t.W * 0.5) / t.sc, t.cz - (y - t.H * 0.5 - 8) / t.sc); return; }   /* (a course being built: on to the click) */
-    if (m == WM_RBUTTONUP) { int vh, v = PlanVertAt(&t, x, y, &vh); if (v >= 0 && !vh) { PlanChoose(v, 0); PlanPointMenu(w, v, x, y); } return; }
+    if (m == WM_RBUTTONDOWN) { int vh, v = PlanVertAt(&t, x, y, &vh);   /* (a point: held - dragged it bends the road before it to meet it, PlanConformDrag; released where it was: its menu) */
+        if (v >= 0 && !vh) { SetFocus(w); SetCapture(w); g_pmX = x; g_pmY = y; g_pmMode = 5; PlanChoose(v, 0); } return; }
+    if (m == WM_RBUTTONUP) { int vh, v;
+        if (GetCapture() == w && (g_pmMode == 5 || g_pmMode == 6)) { int md = g_pmMode; ReleaseCapture(); g_pmMode = 0;
+            if (md == 6) { PlanConformApply(); return; } }
+        v = PlanVertAt(&t, x, y, &vh); if (v >= 0 && !vh) { PlanChoose(v, 0); PlanPointMenu(w, v, x, y); } return; }
     if (m == WM_LBUTTONDOWN) { int vh, v = PlanVertAt(&t, x, y, &vh);
         SetFocus(w); SetCapture(w); g_pmX = x; g_pmY = y; g_pmCx = t.cx; g_pmCz = t.cz;
         if (v >= 0) { PlanChoose(v, vh); g_pmMode = 1; } else g_pmMode = 3;
@@ -1473,6 +1556,13 @@ static void PlanMouse(HWND w, UINT m, WPARAM wp, LPARAM lp)
                     for (it = 0; it < 18; it++) { double md = (lo + hi) * 0.5; mi = PlanMoveAt(k, hf); g_mv[mi].tx = F[k].x + rx * sd * md; g_mv[mi].tz = F[k].z + rz * sd * md; if (PlanMoveBadAt(k, hf)) hi = md; else lo = md; }
                     mi = PlanMoveAt(k, hf); g_mv[mi].tx = F[k].x + rx * sd * lo; g_mv[mi].tz = F[k].z + rz * sd * lo; } }
             PlanInv(); return; }
+        if (g_pmMode == 5 && moved) {   /* (the right-drag started) */
+            if (g_nmv) { g_nmv = 0; Status("Plan: the moves waiting were dropped (a right-drag bends the road itself)"); }   /* (refused, nothing seemed to work: user, 2026-11-20) */
+            if (g_pvSel < 3 || g_pvSel >= g_c.n || g_pvSel - PlanConformLow(g_pvSel) < 2) { Status("Plan: this point cannot be moved this way (no road before it to bend - a split road or the course's start)"); g_pmMode = 0; ReleaseCapture(); return; }
+            g_pmMode = 6; }
+        if (g_pmMode == 6) { PlanConformDrag(&t, g_pvSel, t.cx + (x - t.W * 0.5) / t.sc, t.cz - (y - t.H * 0.5 - 8) / t.sc);
+            Status(g_cfOk ? "Plan: release to bend pieces %d..%d to meet the point (%.0f units off; the road on from it carried along)" : "Plan: too sharp to meet there even from piece %d (the game turns 4.4 degrees a piece at most) - release: no change", g_cfA, g_pvSel - 1, g_cfErr);
+            PlanInv(); return; }
         if (g_pmMode == 3 && moved) g_pmMode = 4;
         if (g_pmMode == 4) { g_pFit = 0; g_pCx = g_pmCx - dx; g_pCz = g_pmCz - dz; PlanInv(); }
         return; }
@@ -1488,7 +1578,7 @@ static void PlanMouse(HWND w, UINT m, WPARAM wp, LPARAM lp)
     if (m == WM_KEYDOWN && wp == VK_HOME) { g_pZoom = 1; g_pFit = 1; PlanInv(); return; }
     if (m == WM_KEYDOWN && wp == VK_RETURN && GetCapture() != w) { PlanMovesApply(); return; }
     if (m == WM_KEYDOWN && wp == VK_DELETE) { int mi = PlanMoveAt(g_pvSel, g_pvSelH); if (mi >= 0) { g_mv[mi] = g_mv[--g_nmv]; Status("Plan: the move dropped (%d waiting)", g_nmv); PlanInv(); } return; }
-    if (m == WM_KEYDOWN && wp == VK_ESCAPE) { PlanChoose(-1, 0); return; } }
+    if (m == WM_KEYDOWN && wp == VK_ESCAPE) { if (g_cfOn) { g_cfOn = 0; g_pmMode = 0; ReleaseCapture(); Status("Plan: the bend dropped"); PlanInv(); return; } PlanChoose(-1, 0); return; } }
 static void PaintProf(HDC dc, RECT rc)
 {   double miny = 1e30, maxy = -1e30; int i, W = rc.right, H = rc.bottom; POINT pt; HPEN pn, ps, pk;
     FillRect(dc, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
@@ -1510,7 +1600,7 @@ static LRESULT CALLBACK PanelProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         BitBlt(dc, 0, 0, rc.right, rc.bottom, mdc, 0, 0, SRCCOPY); DeleteObject(bm); DeleteDC(mdc); EndPaint(w, &ps); return 0; }
     if (m == WM_ERASEBKGND) return 1;
     if (w == g_plan || w == g_planBig) {
-        if (m == WM_LBUTTONDOWN || m == WM_MOUSEMOVE || m == WM_LBUTTONUP || m == WM_MOUSEWHEEL || m == WM_KEYDOWN || m == WM_RBUTTONUP) { PlanMouse(w, m, wp, lp); return 0; }
+        if (m == WM_LBUTTONDOWN || m == WM_MOUSEMOVE || m == WM_LBUTTONUP || m == WM_MOUSEWHEEL || m == WM_KEYDOWN || m == WM_RBUTTONUP || m == WM_RBUTTONDOWN) { PlanMouse(w, m, wp, lp); return 0; }
         if (m == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if (m == WM_CLOSE && w == g_planBig) { ShowWindow(w, SW_HIDE); return 0; }
         if (m == WM_SIZE) { InvalidateRect(w, NULL, FALSE); return 0; } }
@@ -2542,6 +2632,7 @@ static void NoteDraw(void)   /* Note: the overlay, then the note sent */
     g_ovlPanel = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "CENotePanel", "Note for Claude", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE, wr.right - 400, wr.top + 120, 380, 560, g_ovl, NULL, in, NULL);
     for (i = 0; i < 5; i++) OvlCtl("BUTTON", tn[i], BS_AUTORADIOBUTTON | BS_PUSHLIKE | (i == 0 ? WS_GROUP : 0), 8 + i * 72, 8, 68, 28, 110 + i);
     for (i = 0; i < 4; i++) OvlCtl("BUTTON", cn[i], BS_AUTORADIOBUTTON | BS_PUSHLIKE | (i == 0 ? WS_GROUP : 0), 8 + i * 72, 40, 68, 26, 120 + i);
+    g_ovlTool = OVL_BOX;   /* (every note starts with Box - user, 2026-11-20 "when setting an annotation it has to default to box") */
     CheckDlgButton(g_ovlPanel, 110 + g_ovlTool, BST_CHECKED); CheckDlgButton(g_ovlPanel, 120 + g_ovlCol, BST_CHECKED);
     OvlCtl("BUTTON", "Undo", 0, 8, 72, 80, 26, 103); OvlCtl("BUTTON", "Clear drawing", 0, 92, 72, 110, 26, 102);
     g_ovlEd = OvlCtl("EDIT", "", WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_TABSTOP, 8, 106, 356, 140, 100);
@@ -2551,7 +2642,7 @@ static void NoteDraw(void)   /* Note: the overlay, then the note sent */
     g_ovlHist = OvlCtl("LISTBOX", "", WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, 8, 312, 356, 120, 130);
     g_ovlHistTxt = OvlCtl("EDIT", "", WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL, 8, 436, 356, 84, 131);
     OvlHistFill();
-    if (getenv("CE_TESTNOTE")) { int tl; for (tl = 0; tl < 5; tl++) { g_ovlTool = tl; OvlShape(g_ovlDC, 80 + tl * 160, g_ovlH / 3, 200 + tl * 160, g_ovlH / 3 + 100); } g_ovlTool = OVL_PEN;   /* (tests: each tool, the text) */
+    if (getenv("CE_TESTNOTE")) { int tl; for (tl = 0; tl < 5; tl++) { g_ovlTool = tl; OvlShape(g_ovlDC, 80 + tl * 160, g_ovlH / 3, 200 + tl * 160, g_ovlH / 3 + 100); } g_ovlTool = OVL_BOX;   /* (tests: each tool, the text) */
         strncpy(g_noteText, getenv("CE_TESTNOTE"), sizeof g_noteText - 1); if (!getenv("CE_TESTNOTEHOLD")) g_ovlRes = 1; else SetWindowTextA(g_ovlEd, g_noteText); InvalidateRect(g_ovl, NULL, FALSE); }
     EnableWindow(g_main, FALSE); SetForegroundWindow(g_ovlPanel); SetFocus(g_ovlEd);
     while (!g_ovlRes && GetMessageA(&msg, NULL, 0, 0) > 0) {
@@ -3516,6 +3607,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (getenv("CE_TESTBLOCKRUNS") && g_pcur0) { int i, a = 0; for (i = 1; i <= g_n0 && a < g_n0; i++) if (i == g_n0 || g_pcur0[i][0] != g_pcur0[a][0]) { LOG("test block run: originals %d..%d (%d) word %08x", a, i - 1, i - a, g_pcur0[a][0]); a = i; } }   /* (tests: the course data's blocks?) */
     if (getenv("CE_TESTPLANFIN")) { int lv = 0, k = 0; if (sscanf(getenv("CE_TESTPLANFIN"), "%d %d", &lv, &k) == 2) { PlanFinishAt(lv, k); LOG("test plan finish: %s; finishes %d %d %d %d %d start %d", g_status, g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4], g_c.start); } }
     if (getenv("CE_TESTPLANSTART")) { int k = atoi(getenv("CE_TESTPLANSTART")); PlanStartAt(k); LOG("test plan start: %s; n %d end %d finishes %d %d %d %d %d", g_status, g_c.n, g_pEnd, g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4]); }
+    if (getenv("CE_TESTPLANCONFORM")) { const char *gp = getenv("CE_TESTPLANCONFORM"); int k; double rt, fw;   /* (tests) "<piece> <right> <ahead>;...": point k right-dragged that far (world units, across / along its heading) */
+        while (gp && sscanf(gp, "%d %lf %lf", &k, &rt, &fw) == 3) { RECT rc; PlanXf t; double h, tx, tz, h0; int i, mx = 0;
+            GetClientRect(g_plan, &rc); PlanView(rc, &t);
+            if (k > 2 && k < g_c.n) { h = g_c.frame[k].heading; h0 = h; tx = g_c.frame[k].x + cos(h) * rt + sin(h) * fw; tz = g_c.frame[k].z - sin(h) * rt + cos(h) * fw;
+                g_pvSel = k; PlanConformDrag(&t, k, tx, tz); LOG("test plan conform %d (%+.0f, %+.0f): ok %d from piece %d (%d pieces), off %.1f", k, rt, fw, g_cfOk, g_cfA, g_cfN, g_cfErr);
+                if (getenv("CE_TESTPLANHOLD")) { PlanInv(); break; }   /* (held: shown as while dragging - for a screenshot) */
+                PlanConformApply();
+                for (i = 0; i < g_c.n; i++) { int c = g_c.piece[i].halfA.curve; if (c < 0) c = -c; if (c > mx) mx = c; }
+                LOG("test plan conform applied: piece %d at %.0f %.0f (aimed %.0f %.0f), heading %.5f (was %.5f), sharpest curve %d; %s", k, g_c.frame[k].x, g_c.frame[k].z, tx, tz, g_c.frame[k].heading, h0, mx, g_status); }
+            gp = strchr(gp, ';'); if (gp) gp++; } }
     if (getenv("CE_TESTPLANSRC")) { int i; char o[600], *w = o; for (i = 44; i < 100 && i < g_c.n && w - o < 560; i++) w += sprintf(w, " %d:%d", i, g_src[i]); LOG("test plan src:%s", o); }   /* (tests) */
     if (getenv("CE_TESTPLANDRAG")) { int kk = 0, dxp = 0, dyp = 0;   /* (tests) "<piece> <dx> <dy>": the big plan open, the plan point nearest that piece dragged dx, dy pixels (and held: its reach dots) */
         const char *gp = getenv("CE_TESTPLANDRAG"); int first = 1;   /* (several: ";" between - each applied before the next when CE_TESTPLANAPPLY) */

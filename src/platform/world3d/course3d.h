@@ -686,7 +686,7 @@ static void C3_DirtRocks(C3Course *c, int k, double u0, double u1, double h0, do
     }
 }
 /* the trees of an extra ground picture (ground_art.h: REDWOOD - user, 2026-11-18 "massive redwood trees ... really higher and spaced out on the tile")
-   on one quad of it (piece k .. k + 1, across u0 .. u1 at heights h0 .. h1; row k + 1: v, g): about one a 1100 x 1100 square, 4200 .. 7000 high,
+   on one quad of it (piece k .. k + 1, across u0 .. u1 at heights h0 .. h1; row k + 1: v, g): about two a 1100 x 1100 square, 4200 .. 7000 high,
    kept off the quad's sides; each two crossed upright quads of the tree picture (its foot at the bottom middle), both faces, 40 sunk into the
    ground - the same wherever this piece is built */
 static void C3_GroundTrees(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1, int tex)
@@ -695,7 +695,7 @@ static void C3_GroundTrees(C3Course *c, int k, double u0, double u1, double h0, 
     static const float uv[8] = { 0, 1, 1, 1, 1, 0, 0, 0 };
     if (w < 300) return;
     s = (s ^ (s >> 15)) * 2654435761u;
-    n = (int)(w * c->L / (1100.0 * 1100.0) + ((s >> 8) % 1000) / 1000.0); if (n > 6) n = 6;
+    n = (int)(w * c->L / (1100.0 * 1100.0 / 2) + ((s >> 8) % 1000) / 1000.0); if (n > 12) n = 12;   /* (twice as dense - user, 2026-11-20: "double the density of the red wood") */
     for (i = 0; i < n; i++) {
         double f, pp, x, y, ht, hw, t, a0, a1, y0, y1; float a[3], b[3], cc[3], d[3]; int pl;
         s = s * 1664525u + 1013904223u; f = 0.12 + 0.76 * ((s >> 8) / 16777216.0);
@@ -724,6 +724,36 @@ static void C3_GroundHedge(C3Course *c, int k, int i, const C3Row *r0, const C3R
     C3_QuadTint(c, p[0][0], p[1][0], p[1][1], p[0][1], 0xffffffffu, tex, uv, 0xffffffffu);
     {   float ub[8]; ub[0] = uv[2]; ub[1] = 1; ub[2] = uv[0]; ub[3] = 1; ub[4] = uv[0]; ub[5] = 0; ub[6] = uv[2]; ub[7] = 0;   /* (the other face) */
         C3_QuadTint(c, p[1][0], p[0][0], p[0][1], p[1][1], 0xffffffffu, tex, ub, 0xffffffffu); }
+}
+/* a SHRUB cell in the game (ground_art.h; flat in the Course Editor's own view - g_c3Editor): a block of shrubbery C3_HEDGEH high over the cell, the hedge picture
+   (RxAssets.shrubTex) on its four sides (both faces) and a leafy green top a little below the hedge's ragged top; on P2 it runs on C3_SHRUBOUT past it, on a "beyond"
+   cell C3_SHRUBOUT out from P2 (user, 2026-11-20: "it has 4 sides and it should also extend past p2") */
+#define C3_SHRUBOUT 1500.0
+#define C3_GSHRUB 12
+#define C3_GFOREST 13   /* (FOREST: the same, a wall of trees C3_FORESTH high - its picture square, no top: the treetops against the sky) */
+#define C3_FORESTH 4500.0
+static void C3_Shrub(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex, double HT, double aspect, int topOn)
+{
+    int left = i < C3_NP / 2, in = left ? i + 1 : i, out = left ? i : i + 1, beyond = i == 0 || i == C3_NP - 2, p2 = i == 1 || i == C3_NP - 3, rr, e;
+    float P[2][2][2][3], uv[8]; double rep = c->L / (aspect * HT), ui[2], uo[2], hi[2], ho[2];
+    for (rr = 0; rr < 2; rr++) { const C3Row *R = rr ? r1 : r0; double w = R->u[out] - R->u[in], sg = w < 0 ? -1 : 1;
+        ui[rr] = R->u[in]; hi[rr] = R->h[in] - 20; ho[rr] = R->h[out] - 20;
+        uo[rr] = beyond ? R->u[in] + sg * (fabs(w) < C3_SHRUBOUT ? fabs(w) : C3_SHRUBOUT) : p2 ? R->u[out] + sg * C3_SHRUBOUT : R->u[out];
+        if (beyond && fabs(w) > 1) ho[rr] = R->h[in] + (R->h[out] - R->h[in]) * (uo[rr] - R->u[in]) / w - 20;
+        for (e = 0; e < 2; e++) { double u = e ? uo[rr] : ui[rr], h = e ? ho[rr] : hi[rr];
+            C3_Point(c, k + rr, u, h, P[rr][e][0]); C3_Point(c, k + rr, u, h + HT, P[rr][e][1]); } }
+    for (e = 0; e < 2; e++) {   /* the long sides: the road's (e 0) and the far one */
+        uv[0] = (float)fmod(k * rep, 64.0); uv[1] = 1; uv[2] = uv[0] + (float)rep; uv[3] = 1; uv[4] = uv[2]; uv[5] = 0; uv[6] = uv[0]; uv[7] = 0;
+        C3_QuadTint(c, P[0][e][0], P[1][e][0], P[1][e][1], P[0][e][1], 0xffffffffu, tex, uv, 0xffffffffu);
+        C3_QuadTint(c, P[1][e][0], P[0][e][0], P[0][e][1], P[1][e][1], 0xffffffffu, tex, uv, 0xffffffffu); }
+    for (rr = 0; rr < 2; rr++) { double wr = fabs(uo[rr] - ui[rr]) / (aspect * HT);   /* the ends, across (at piece k and k + 1) */
+        uv[0] = 0; uv[1] = 1; uv[2] = (float)wr; uv[3] = 1; uv[4] = (float)wr; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+        C3_QuadTint(c, P[rr][0][0], P[rr][1][0], P[rr][1][1], P[rr][0][1], 0xffffffffu, tex, uv, 0xffffffffu);
+        C3_QuadTint(c, P[rr][1][0], P[rr][0][0], P[rr][0][1], P[rr][1][1], 0xffffffffu, tex, uv, 0xffffffffu); }
+    if (topOn) {   float t[4][3]; int q; const float drop = (float)(HT * 0.12);   /* the top: leafy green */
+        memcpy(t[0], P[0][0][1], sizeof t[0]); memcpy(t[1], P[1][0][1], sizeof t[1]); memcpy(t[2], P[1][1][1], sizeof t[2]); memcpy(t[3], P[0][1][1], sizeof t[3]);
+        for (q = 0; q < 4; q++) t[q][1] -= drop;
+        C3_Quad(c, t[0], t[1], t[2], t[3], 0xff2a4a2eu); C3_Quad(c, t[3], t[2], t[1], t[0], 0xff2a4a2eu); }
 }
 /* a bridge's railing (user, 2026-11-19: "side railings like a bridge would have using the verge maybe to form side walls"): on a verge painted BRIDGE, along its outer
    edge (row point 2): a concrete parapet C3_PARH high, steel posts every quarter piece and a rail on top C3_RAILH high; both faces */
@@ -998,6 +1028,9 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                     C3_GroundTrees(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], ra->groundTree[tex[i] - ra->ground0] - 1);
                 if (ra && (i == 0 || i == C3_NP - 2) && tex[i] >= ra->ground0 && tex[i] < ra->ground0 + ra->nground && tex[i] - ra->ground0 < 4 && ra->groundHedge[tex[i] - ra->ground0])   /* (REDWOOD beyond P2: its hedge) */
                     C3_GroundHedge(c, k, i, r0, r1, ra->groundHedge[tex[i] - ra->ground0] - 1);
+                if (!g_c3Editor && ra && ra->shrubTex && ra->nground > C3_GSHRUB && tex[i] == ra->ground0 + C3_GSHRUB) C3_Shrub(c, k, i, r0, r1, ra->shrubTex - 1, C3_HEDGEH, 2.0, 1);   /* (SHRUB: its block) */
+                if (!g_c3Editor && ra && ra->forestTex && ra->nground > C3_GFOREST && tex[i] == ra->ground0 + C3_GFOREST) { const RxTex *ft = &ra->tex[ra->forestTex - 1];
+                    C3_Shrub(c, k, i, r0, r1, ra->forestTex - 1, C3_FORESTH, ft->h > 0 ? (double)ft->w / ft->h : 1.0, 0); }   /* (FOREST: its wall of trees) */
                 if (dirt) { C3_Mark(c, m0, 0xef);   /* dirt ground (vertex alpha 239: render3d.h - mottled, pebbles, bumps) and rocks on the flatter of it */
                     if (fabs(r0->h[i + 1] - r0->h[i]) < fabs(r0->u[i + 1] - r0->u[i]) * 0.6) C3_DirtRocks(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], m == M_VERGE, ra ? ra->rockTex : -1); } }
         } else C3_Quad(c, a, b, cc, d, (ground && r0->mat[i] != M_CURB && r0->mat[i] != M_WALK) ? ground : C3_Colour(r0->mat[i], kind, k));
