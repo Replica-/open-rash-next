@@ -651,17 +651,99 @@ static void W3GrassIndex(void)
     if (!g_w3ngr || !(g_w3grStart = (int *)malloc(sizeof(int) * (g_w3c.n + 2)))) return;
     qsort(g_w3gr, g_w3ngr, sizeof(W3GrTri), W3GrCmp);
     for (k = 0; k <= g_w3c.n + 1; k++) { while (i < g_w3ngr && g_w3gr[i].piece < k) i++; g_w3grStart[k] = i; } }
+/* each grass triangle's tufts, worked out once as it comes into reach (user, 2026-11-21: "fix the grass please" - the spots of every grid cell under
+   every triangle in reach had been hashed, tested and coloured again every frame, ~9 ms of CPU, 200 -> 70 fps on any grassy course): a tuft's place,
+   threshold, density by the road, base size, shape and colour do not change - only what depends on the camera (distance, view, thinning, the
+   2-pixel least size) is done per frame.  Per set (0 the file's triangles, 1 the live stretch's), per triangle: its spots (n -1 = not made yet);
+   the file's freed once their pieces are out of reach, the live set's when the live stretch is built again, all when a grass setting changes */
+#define W3_GRK 5   /* (spots per grid cell: W3GrSide gives at most 4 tufts a cell) */
+typedef struct W3GrSp { float x, y, z, th, dens, sz, htf; unsigned rgba; int flip; } W3GrSp;
+static W3GrSp **g_grSp[2]; static int *g_grSpN[2], g_grSpCap[2], g_grSpLo = 0, g_grSpHi = 0; static float g_grSpKey = -1;
+static void W3GrSpFree(int set, int i) { if (i < g_grSpCap[set] && g_grSpN[set][i] >= 0) { free(g_grSp[set][i]); g_grSp[set][i] = NULL; g_grSpN[set][i] = -1; } }
+static void W3GrSpFlush(int set) { int i; for (i = 0; i < g_grSpCap[set]; i++) W3GrSpFree(set, i); if (!set) g_grSpLo = g_grSpHi = 0; }
+static int W3GrSpRoom(int set, int n)   /* room for n triangles' entries */
+{   W3GrSp **a; int *c, i;
+    if (n <= g_grSpCap[set]) return 1;
+    if (!(a = (W3GrSp **)realloc(g_grSp[set], sizeof(W3GrSp *) * n))) return 0; g_grSp[set] = a;
+    if (!(c = (int *)realloc(g_grSpN[set], sizeof(int) * n))) return 0; g_grSpN[set] = c;
+    for (i = g_grSpCap[set]; i < n; i++) { a[i] = NULL; c[i] = -1; }
+    g_grSpCap[set] = n; return 1; }
+static float W3GrSide(float lat);   /* below */
+static unsigned W3GrKey(const W3GrTri *T)   /* a triangle by its corners and texture (W3GrassLive: the same ground in the live stretch built again) */
+{   const unsigned *w = (const unsigned *)T->a; unsigned h = 2166136261u; int i; for (i = 0; i < 9; i++) { h ^= w[i]; h *= 16777619u; } h ^= (unsigned)T->tex; h *= 16777619u; return h; }
+static unsigned W3Rgba(float r, float g, float b, float a);   /* below */
+static int W3GrSpots(int set, int i, const W3GrTri *T, float lowF, float share, const W3GrSp **out)   /* triangle i's tufts (made now if not yet); returns how many */
+{   W3GrSp *sp = NULL; int n = 0, cap = 0, ix, iz, ix0, ix1, iz0, iz1, kk;
+    float e1x = T->b[0] - T->a[0], e1z = T->b[2] - T->a[2], e2x = T->c[0] - T->a[0], e2z = T->c[2] - T->a[2], det = e1x * e2z - e2x * e1z, idet, dryF, densMax, latMin;
+    *out = NULL;
+    if (!W3GrSpRoom(set, i + 1)) return 0;
+    if (g_grSpN[set][i] >= 0) { *out = g_grSp[set][i]; return g_grSpN[set][i]; }
+    g_grSpN[set][i] = 0;
+    if (fabsf(det) < 1e-3f) return 0; idet = 1 / det;
+    {   float l0 = (T->a[0] - T->fx) * T->fc - (T->a[2] - T->fz) * T->fs, l1 = (T->b[0] - T->fx) * T->fc - (T->b[2] - T->fz) * T->fs, l2 = (T->c[0] - T->fx) * T->fc - (T->c[2] - T->fz) * T->fs;
+        latMin = (l0 > 0) == (l1 > 0) && (l1 > 0) == (l2 > 0) ? fminf(fabsf(l0), fminf(fabsf(l1), fabsf(l2))) : 0; }   /* (its corner nearest the road: the most it holds) */
+    dryF = T->dry ? (T->lat < 1100 || !g_vid.ground ? 0 : 0.15f) : 1;   /* (dirt: sparse dry scrub, none on the verge; Ground detail off: none) */
+    densMax = W3GrSide(latMin) * dryF * lowF * share;
+    if (!T->dry && latMin < fmaxf(fabsf(T->eL), fabsf(T->eR)) + g_grStripW && densMax < g_grStrip * lowF) densMax = g_grStrip * lowF;   /* (it reaches the strip by the road) */
+    if (densMax <= 0) return 0;
+    ix0 = (int)floorf(fminf(T->a[0], fminf(T->b[0], T->c[0])) / W3_GRCELL); ix1 = (int)floorf(fmaxf(T->a[0], fmaxf(T->b[0], T->c[0])) / W3_GRCELL);
+    iz0 = (int)floorf(fminf(T->a[2], fminf(T->b[2], T->c[2])) / W3_GRCELL); iz1 = (int)floorf(fmaxf(T->a[2], fmaxf(T->b[2], T->c[2])) / W3_GRCELL);
+    for (iz = iz0; iz <= iz1; iz++) for (ix = ix0; ix <= ix1; ix++) {
+        unsigned hc = (unsigned)ix * 73856093u ^ (unsigned)iz * 19349663u;
+        for (kk = 0; kk < W3_GRK; kk++) {
+            unsigned h = hc ^ (unsigned)(kk + 1) * 2246822519u, col; float s1, s2, b1, b2, qx, qz, p[3], r, g, b, th, dens, sh;
+            h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16;
+            th = kk + ((h >> 22) & 1023) / 1024.0f;   /* (its threshold: drawn while the cell's tufts at its place are above it; rising with kk) */
+            if (th >= densMax) break;   /* (this cell's other spots are higher still) */
+            s1 = (h & 0x7ff) / 2048.0f; s2 = ((h >> 11) & 0x7ff) / 2048.0f;
+            p[0] = (ix + s1) * W3_GRCELL; p[2] = (iz + s2) * W3_GRCELL;
+            qx = p[0] - T->a[0]; qz = p[2] - T->a[2]; b1 = (qx * e2z - e2x * qz) * idet; b2 = (e1x * qz - qx * e1z) * idet;
+            if (b1 < 0 || b2 < 0 || b1 + b2 > 1) continue;   /* (another triangle's spot) */
+            p[1] = T->a[1] + (T->b[1] - T->a[1]) * b1 + (T->c[1] - T->a[1]) * b2;
+            {   float ls = (p[0] - T->fx) * T->fc - (p[2] - T->fz) * T->fs, lat = fabsf(ls), de = fminf(fabsf(ls - T->eL), fabsf(ls - T->eR));
+                dens = W3GrSide(lat) * dryF * lowF * share;   /* (thinner the further it is from the road) */
+                if (!T->dry && de < g_grStripW && lat > fminf(fabsf(T->eL), fabsf(T->eR))) {   /* (the strip: thickest at the road's edge, fading out across its width -
+                                                                                                  user, "keep the strip width but make it fall off alot earlier so it doesnt look so abrupt") */
+                    float sd = g_grStrip * lowF * (de < 0.1f * g_grStripW ? 1.0f : expf(-(de - 0.1f * g_grStripW) / (0.18f * g_grStripW))); if (sd > dens) dens = sd; } }   /* (the strip just outside the road's edges: thick) */
+            if (th >= dens) continue;   /* (never drawn: the per-frame thinning only lowers it) */
+            sh = 0.85f + ((h >> 3) % 30) / 100.0f;
+            if (T->tex >= 0) {   /* the (blurred: W3GrBlur) ground texel under the tuft, times the ground's shade - one look-up, the same at every distance */
+                const RxTex *x = &g_w3a.tex[T->tex]; float uu = T->ua + (T->ub - T->ua) * b1 + (T->uc - T->ua) * b2, vv = T->va + (T->vb - T->va) * b1 + (T->vc - T->va) * b2; int tx, ty;
+                uu -= floorf(uu); vv -= floorf(vv); tx = (int)(uu * x->w); ty = (int)(vv * x->h); if (tx >= x->w) tx = x->w - 1; if (ty >= x->h) ty = x->h - 1; if (tx < 0) tx = 0; if (ty < 0) ty = 0;
+                col = g_w3grPx[T->tex][ty * x->w + tx]; if (!(col >> 24)) col = 0xff468c3cu;   /* (a see-through patch: a plain green) */
+                r = (col & 255) / 255.0f * (T->rgba & 255) / 255.0f; g = ((col >> 8) & 255) / 255.0f * ((T->rgba >> 8) & 255) / 255.0f; b = ((col >> 16) & 255) / 255.0f * ((T->rgba >> 16) & 255) / 255.0f; }
+            else { r = (T->rgba & 255) / 255.0f; g = ((T->rgba >> 8) & 255) / 255.0f; b = ((T->rgba >> 16) & 255) / 255.0f; }
+            if (n == cap) { W3GrSp *ns = (W3GrSp *)realloc(sp, sizeof(W3GrSp) * (cap = cap ? cap * 2 : 16)); if (!ns) { cap = n; continue; } sp = ns; }
+            {   W3GrSp *o = &sp[n++]; o->x = p[0]; o->y = p[1]; o->z = p[2]; o->th = th; o->dens = dens;
+                o->sz = (20.0f + (h >> 7) % 16) * g_grSize; o->htf = 0.55f + ((h >> 11) % 30) / 100.0f; o->flip = h & 1;
+                o->rgba = W3Rgba(r * 1.12f * sh, g * 1.12f * sh, b * 1.12f * sh, 237.0f / 255.0f); } } }   /* (the blade picture's mid grey brought back to the ground's brightness; vertex alpha 237: render3d.h - drawn behind the rails in front of them) */
+    g_grSp[set][i] = sp; g_grSpN[set][i] = n; *out = sp; return n; }
 static void W3GrassInit(void)
 {   int i, cap = 0;
     free(g_w3gr); g_w3gr = NULL; g_w3ngr = 0; g_w3ngrL = 0;
     for (i = 0; i < g_w3grNpx; i++) free(g_w3grPx[i]); free(g_w3grPx); g_w3grPx = NULL; g_w3grNpx = 0; free(g_w3texGreen); g_w3texGreen = NULL;
     if (getenv("RR_W3NOGRASS")) return;
     if (g_w3a.ntex > 0 && (g_w3texGreen = (unsigned char *)calloc(g_w3a.ntex, 1)) != NULL) { memset(g_w3texGreen, 2, g_w3a.ntex); if ((g_w3grPx = (unsigned **)calloc(g_w3a.ntex, sizeof(unsigned *))) != NULL) g_w3grNpx = g_w3a.ntex; }
+    W3GrSpFlush(0); W3GrSpFlush(1);   /* (the tufts worked out: another course's) */
     W3GrassCollect(&g_w3c, &g_w3gr, &g_w3ngr, &cap);
     W3GrassIndex();   /* (by road piece: each frame only the pieces in view are looked at) */
     LOG("world3d: grass on %d ground triangles", g_w3ngr); }
 static void W3GrassLive(void)   /* the live stretch was built again (W3Live): its ground triangles */
-{   g_w3ngrL = 0; if (g_w3ngr && g_w3l.v) W3GrassCollect(&g_w3l, &g_w3grL, &g_w3ngrL, &g_w3grLcap);
+{   int nOld = g_w3ngrL, i, j; unsigned *hk = NULL; W3GrSp **op = NULL; int *on = NULL;   /* (the tufts worked out handed on to the same triangles in the new stretch) */
+    if (nOld > 0 && g_grSpCap[1] >= nOld && (hk = (unsigned *)malloc(sizeof(unsigned) * nOld)) != NULL && (op = (W3GrSp **)malloc(sizeof(W3GrSp *) * nOld)) != NULL && (on = (int *)malloc(sizeof(int) * nOld)) != NULL)
+        for (i = 0; i < nOld; i++) { hk[i] = W3GrKey(&g_w3grL[i]); op[i] = g_grSp[1][i]; on[i] = g_grSpN[1][i]; g_grSp[1][i] = NULL; g_grSpN[1][i] = -1; }
+    else W3GrSpFlush(1);
+    g_w3ngrL = 0; if (g_w3ngr && g_w3l.v) W3GrassCollect(&g_w3l, &g_w3grL, &g_w3ngrL, &g_w3grLcap);
+    if (on) {   /* (by key in a small open table; what is not found is made again when in reach, what is left over freed) */
+        int tn = 1; int *tab; while (tn < nOld * 2) tn <<= 1;
+        if ((tab = (int *)malloc(sizeof(int) * tn)) != NULL && W3GrSpRoom(1, g_w3ngrL > 0 ? g_w3ngrL : 1)) {
+            for (j = 0; j < tn; j++) tab[j] = -1;
+            for (i = 0; i < nOld; i++) if (on[i] >= 0) { j = hk[i] & (tn - 1); while (tab[j] >= 0) j = (j + 1) & (tn - 1); tab[j] = i; }
+            for (i = 0; i < g_w3ngrL; i++) { unsigned k = W3GrKey(&g_w3grL[i]); j = k & (tn - 1);
+                while (tab[j] >= 0) { int o = tab[j]; if (hk[o] == k && on[o] >= 0) { g_grSp[1][i] = op[o]; g_grSpN[1][i] = on[o]; on[o] = -1; break; } j = (j + 1) & (tn - 1); } } }
+        for (i = 0; i < nOld; i++) if (on[i] >= 0) free(op[i]);
+        free(tab); }
+    free(hk); free(op); free(on);
     if (getenv("RR_W3LOGGR")) { static int n; if (n++ < 6) LOG("w3grass live %d..%d: %d triangles (static %d), live mesh %d vertices", g_w3lo, g_w3hi, g_w3ngrL, g_w3ngr, g_w3l.nv); } }   /* (test switch RR_W3LOGGR=1) */
 /* this frame's tufts (returns the vertices written): on a fixed world grid (W3_GRCELL cells, W3_GRK spots each, hashed places and thresholds; the
    triangles only say which spots are on grass and how high the ground is there - the same tufts whichever triangles cover it).  A cell holds W3GrSide
@@ -671,7 +753,6 @@ static void W3GrassLive(void)   /* the live stretch was built again (W3Live): it
    of distance, nearest first (0, 600, 1300, 2400, 4000, the rest), so the cap never cuts the tufts at the camera's feet; the live stretch's triangles
    stand in for the file's there.  Only what the camera can see: a triangle wholly outside the view is skipped, and so is a tuft outside it (W3InView)
    - neither counts towards the cap (user, 2026-11-15: "exclude tuffs that the player cant see") */
-#define W3_GRK 5   /* (spots per grid cell: W3GrSide gives at most 4 tufts a cell) */
 /* (the strip along the road's edges on green ground - user, "a thin strip of tuff along sides of the road": g_grStrip tufts a cell, 3 then "3 times less
    dense"; g_grStripW wide outside each edge, 300 then "by double"; g_grShare: the part of the spots drawn elsewhere, where the cap had settled it) */
 static float W3GrSide(float lat)   /* how thick the grass is by its distance from the road's centre line: on the sides of the road, falling off steeply further out
@@ -690,14 +771,30 @@ static int W3Grass(R3Vert *o, int cap, const float *eye)
     float D = (float)(W3FxDist() * g_grReach * (0.5f + 0.5f * lowF)); static const float band[W3_GRNB + 1] = { -1e9f, 600, 1300, 2400, 4000, 7000, 12000, 20000, 35000, 1e9f };   /* (filled nearest first: the cap never starves the ground at the camera's feet) */
     int grMax = (int)(g_grCap * lowF); if (grMax > W3_GRMAX) grMax = W3_GRMAX; if (!g_vid.grass) return 0;   /* (True 3D detail > Grass: off / low - 40 % of the tufts / high) */
     int bandN[W3_GRNB][2], nCand = 0, nTri = 0; memset(bandN, 0, sizeof bandN);
-    for (pass = 0; pass < W3_GRNB; pass++) for (set = 0; set < 2; set++) { int t0 = tufts;
-    const W3GrTri *arr = set ? g_w3grL : g_w3gr; int na = set ? (g_w3lo >= 0 ? g_w3ngrL : 0) : g_w3ngr, i0 = 0;
-    if (!set && g_w3grStart) { int kc = (g_w3cam.viewPos - g_w3Piece0) >> 8, lo = kc - 8, hi = kc + (int)(D / W3_L) + 4;   /* (the file's triangles of the pieces in view only: 85000 in the City, a few thousand of them near) */
-        if (lo < 0) lo = 0; if (hi > g_w3c.n) hi = g_w3c.n; if (hi < lo) hi = lo; i0 = g_w3grStart[lo]; na = g_w3grStart[hi]; }
-    for (i = i0; i < na && tufts < grMax && n + 6 <= cap; i++) {
-      {   const W3GrTri *T = &arr[i]; float cx = (T->a[0] + T->b[0] + T->c[0]) / 3 - eye[0], cz = (T->a[2] + T->b[2] + T->c[2]) / 3 - eye[2], rr = sqrtf(T->area), dc = sqrtf(cx * cx + cz * cz) - rr, dryF, densMax;
-        if (dc > D || dc >= band[pass + 1] || dc + 2 * rr < band[pass]) continue;   /* (it reaches into this band; each tuft checks its own distance) */
-        if (!set && g_w3lo >= 0 && T->piece >= g_w3lo && T->piece <= g_w3hi) continue;   /* (the live stretch's own ground instead) */
+    {   float key = lowF * 1.7f + share * 3.1f + g_grStrip * 7.3f + g_grStripW * 0.0011f + g_grSize * 13.1f + g_grFull * 0.0017f + g_grFall * 0.0019f + (float)g_vid.ground * 17.3f;
+        if (key != g_grSpKey) { W3GrSpFlush(0); W3GrSpFlush(1); g_grSpKey = key; } }   /* (a grass setting changed: the tufts worked out again) */
+    if (g_w3grStart) { int kc = (g_w3cam.viewPos - g_w3Piece0) >> 8, lo = kc - 8, hi = kc + (int)(D / W3_L) + 4, a, b, k;   /* (the file's triangles in reach - as below; the ones that left it freed) */
+        if (lo < 0) lo = 0; if (hi > g_w3c.n) hi = g_w3c.n; if (hi < lo) hi = lo; a = g_w3grStart[lo]; b = g_w3grStart[hi];
+        for (k = g_grSpLo; k < g_grSpHi; k++) if (k < a || k >= b) W3GrSpFree(0, k);
+        g_grSpLo = a; g_grSpHi = b; }
+    {   /* the triangles in reach, once a frame, put in their distance band (where their nearest part is), nearest band first: so the cap leaves out
+           the furthest - they had been walked once per band, 9 times a frame (~4 ms with the live stretch's 20000) */
+        static int *cIdx, *cBand, *cOrd, cCap; int nc = 0, cnt[W3_GRNB + 1], k, b;
+        for (set = 0; set < 2; set++) {
+            const W3GrTri *arr = set ? g_w3grL : g_w3gr; int na = set ? (g_w3lo >= 0 ? g_w3ngrL : 0) : g_w3ngr, i0 = 0;
+            if (!set && g_w3grStart) { int kc = (g_w3cam.viewPos - g_w3Piece0) >> 8, lo = kc - 8, hi = kc + (int)(D / W3_L) + 4;   /* (the file's triangles of the pieces in view only: 85000 in the City, a few thousand of them near) */
+                if (lo < 0) lo = 0; if (hi > g_w3c.n) hi = g_w3c.n; if (hi < lo) hi = lo; i0 = g_w3grStart[lo]; na = g_w3grStart[hi]; }
+            if (cCap < nc + (na - i0)) { int nn = (nc + na - i0) * 2 + 64; int *x1 = (int *)realloc(cIdx, sizeof(int) * nn), *x2, *x3; if (x1) cIdx = x1; x2 = (int *)realloc(cBand, sizeof(int) * nn); if (x2) cBand = x2; x3 = (int *)realloc(cOrd, sizeof(int) * nn); if (x3) cOrd = x3; if (!x1 || !x2 || !x3) return 0; cCap = nn; }
+            for (i = i0; i < na; i++) { const W3GrTri *T = &arr[i]; float cx = (T->a[0] + T->b[0] + T->c[0]) / 3 - eye[0], cz = (T->a[2] + T->b[2] + T->c[2]) / 3 - eye[2], dc = sqrtf(cx * cx + cz * cz) - sqrtf(T->area);
+                if (dc > D) continue;
+                if (!set && g_w3lo >= 0 && T->piece >= g_w3lo && T->piece <= g_w3hi) continue;   /* (the live stretch's own ground instead) */
+                for (b = 0; b < W3_GRNB - 1 && dc >= band[b + 1]; b++) ;
+                cIdx[nc] = (set << 30) | i; cBand[nc] = b; nc++; } }
+        memset(cnt, 0, sizeof cnt); for (k = 0; k < nc; k++) cnt[cBand[k] + 1]++;
+        for (b = 0; b < W3_GRNB; b++) cnt[b + 1] += cnt[b];
+        for (k = 0; k < nc; k++) cOrd[cnt[cBand[k]]++] = k;   /* (nearest band first, in the order found within a band) */
+    for (k = 0; k < nc && tufts < grMax && n + 6 <= cap; k++) { int t0 = tufts, ci = cOrd[k]; const W3GrTri *arr; set = cIdx[ci] >> 30; i = cIdx[ci] & 0x3fffffff; pass = cBand[ci]; arr = set ? g_w3grL : g_w3gr;
+      {   const W3GrTri *T = &arr[i]; float dryF, densMax;
         {   float l0 = (T->a[0] - T->fx) * T->fc - (T->a[2] - T->fz) * T->fs, l1 = (T->b[0] - T->fx) * T->fc - (T->b[2] - T->fz) * T->fs, l2 = (T->c[0] - T->fx) * T->fc - (T->c[2] - T->fz) * T->fs;
             latMin = (l0 > 0) == (l1 > 0) && (l1 > 0) == (l2 > 0) ? fminf(fabsf(l0), fminf(fabsf(l1), fabsf(l2))) : 0; }   /* (its corner nearest the road: the most it holds; each tuft its own share below) */
         dryF = T->dry ? (T->lat < 1100 || !g_vid.ground ? 0 : 0.15f) : 1;   /* (dirt: sparse dry scrub, none on the verge; Ground detail off: none) */
@@ -709,58 +806,30 @@ static int W3Grass(R3Vert *o, int cap, const float *eye)
             for (q = 0; q < 3; q++) { e2 = (V3[q][0] - mx) * (V3[q][0] - mx) + (V3[q][1] - my) * (V3[q][1] - my) + (V3[q][2] - mz) * (V3[q][2] - mz); if (e2 > rad) rad = e2; }
             if (!W3InView(mx, my, mz, sqrtf(rad) + 150)) continue; }
         nTri++;
-        {   /* the tufts: candidate spots on a fixed world grid - W3_GRCELL square cells, W3_GRK spots each at hashed places with hashed thresholds - those
-               inside this triangle, at its ground's height there.  A spot belongs to the ground, not to a triangle: the live stretch's and the file's
-               triangles, a big one split or whole, all give the same tufts (user, 2026-11-15: "the polygons are changing somehow between far and close" -
-               they were seeded by their triangle, so a stretch's tufts all moved when it went from the file's triangles to the live stretch's) */
-            float e1x = T->b[0] - T->a[0], e1z = T->b[2] - T->a[2], e2x = T->c[0] - T->a[0], e2z = T->c[2] - T->a[2], det = e1x * e2z - e2x * e1z, idet;
-            int ix, iz, ix0, ix1, iz0, iz1;
-            if (fabsf(det) < 1e-3f) continue; idet = 1 / det;
-            ix0 = (int)floorf(fminf(T->a[0], fminf(T->b[0], T->c[0])) / W3_GRCELL); ix1 = (int)floorf(fmaxf(T->a[0], fmaxf(T->b[0], T->c[0])) / W3_GRCELL);
-            iz0 = (int)floorf(fminf(T->a[2], fminf(T->b[2], T->c[2])) / W3_GRCELL); iz1 = (int)floorf(fmaxf(T->a[2], fmaxf(T->b[2], T->c[2])) / W3_GRCELL);
-            for (iz = iz0; iz <= iz1 && tufts < grMax && n + 6 <= cap; iz++) for (ix = ix0; ix <= ix1 && tufts < grMax && n + 6 <= cap; ix++) {
-              unsigned hc = (unsigned)ix * 73856093u ^ (unsigned)iz * 19349663u; int kk;
-              for (kk = 0; kk < W3_GRK && tufts < grMax && n + 6 <= cap; kk++) {
-                unsigned h = hc ^ (unsigned)(kk + 1) * 2246822519u, j, col; float s1, s2, b1, b2, qx, qz, p[3], d, sz, ht, sh, r, g, b, th, dens;
-                h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16;
-                th = kk + ((h >> 22) & 1023) / 1024.0f;   /* (its threshold: drawn while the cell's tufts at its place are above it; rising with kk) */
-                if (th >= densMax) break;   /* (this cell's other spots are higher still; rThin only lowers it) */
-                nCand++;
-                s1 = (h & 0x7ff) / 2048.0f; s2 = ((h >> 11) & 0x7ff) / 2048.0f;
-                p[0] = (ix + s1) * W3_GRCELL; p[2] = (iz + s2) * W3_GRCELL;
-                qx = p[0] - T->a[0]; qz = p[2] - T->a[2]; b1 = (qx * e2z - e2x * qz) * idet; b2 = (e1x * qz - qx * e1z) * idet;
-                if (b1 < 0 || b2 < 0 || b1 + b2 > 1) continue;   /* (another triangle's spot) */
-                p[1] = T->a[1] + (T->b[1] - T->a[1]) * b1 + (T->c[1] - T->a[1]) * b2;
-                d = sqrtf((p[0] - eye[0]) * (p[0] - eye[0]) + (p[2] - eye[2]) * (p[2] - eye[2]));
+        {   /* the tufts: spots on a fixed world grid - W3_GRCELL square cells, W3_GRK spots each at hashed places with hashed thresholds - those inside this
+               triangle, at its ground's height there (W3GrSpots: worked out once).  A spot belongs to the ground, not to a triangle: the live stretch's and the
+               file's triangles, a big one split or whole, all give the same tufts (user, 2026-11-15: "the polygons are changing somehow between far and close") */
+            const W3GrSp *S; int ns = W3GrSpots(set, i, T, lowF, share, &S), q;
+            for (q = 0; q < ns && tufts < grMax && n + 6 <= cap; q++) { const W3GrSp *P = &S[q]; float d, dens, sz, ht; int j;
+                d = sqrtf((P->x - eye[0]) * (P->x - eye[0]) + (P->z - eye[2]) * (P->z - eye[2]));
                 if (d > D) continue;
-                if (d < band[pass] || d >= band[pass + 1]) continue;
-                if (!W3InView(p[0], p[1] + 40, p[2], 110)) { nCull++; continue; }   /* (a tuft is up to ~105 wide, ~90 high) */
-                {   float ls = (p[0] - T->fx) * T->fc - (p[2] - T->fz) * T->fs, lat = fabsf(ls), de = fminf(fabsf(ls - T->eL), fabsf(ls - T->eR));
-                    dens = W3GrSide(lat) * dryF * lowF * share;   /* (thinner the further it is from the road) */
-                    if (!T->dry && de < g_grStripW && lat > fminf(fabsf(T->eL), fabsf(T->eR))) {   /* (the strip: thickest at the road's edge, fading out across its width -
-                                                                                                      user, "keep the strip width but make it fall off alot earlier so it doesnt look so abrupt") */
-                        float sd = g_grStrip * lowF * (de < 0.1f * g_grStripW ? 1.0f : expf(-(de - 0.1f * g_grStripW) / (0.18f * g_grStripW))); if (sd > dens) dens = sd; } }   /* (the strip just outside the road's edges: thick) */
+                nCand++;
+                if (!W3InView(P->x, P->y + 40, P->z, 110)) { nCull++; continue; }   /* (a tuft is up to ~105 wide, ~90 high) */
+                dens = P->dens;
                 if (d > rThin) dens *= rThin / d;   /* (over the cap: the far ones thinner) */
                 if (d > D * 0.7f) dens *= (D - d) / (D * 0.3f);   /* (towards the reach's end fewer and fewer - the density drops off, the tufts keep their size) */
-                if (th >= dens) continue;
+                if (P->th >= dens) continue;
                 /* (every tuft full size: no growing in or out - user, 2026-11-15: "the grow effect is very distracting ... the density should drop off only") */
-                sz = (20.0f + (h >> 7) % 16) * g_grSize; if (sz < d / g_w3fpxT * g_grMinPx) sz = d / g_w3fpxT * g_grMinPx;   /* (one size at every distance - user, "just make them stay size" - but never under ~2 pixels across: a smaller cut-out flickers in and out of the pixels) */
-                ht = sz * (0.55f + ((h >> 11) % 30) / 100.0f); sh = 0.85f + ((h >> 3) % 30) / 100.0f;
+                sz = P->sz; if (sz < d / g_w3fpxT * g_grMinPx) sz = d / g_w3fpxT * g_grMinPx;   /* (one size at every distance - user, "just make them stay size" - but never under ~2 pixels across: a smaller cut-out flickers in and out of the pixels) */
+                ht = sz * P->htf;
                 if (sz < 0.5f) continue;
                 if (T->dry) { sz *= 0.65f; ht *= 0.8f; }   /* (dry scrub on the dirt: low, sparse) */
-                if (T->tex >= 0) {   /* the (blurred: W3GrBlur) ground texel under the tuft, times the ground's shade - one look-up, the same at every distance */
-                    const RxTex *x = &g_w3a.tex[T->tex]; float uu = T->ua + (T->ub - T->ua) * b1 + (T->uc - T->ua) * b2, vv = T->va + (T->vb - T->va) * b1 + (T->vc - T->va) * b2; int tx, ty;
-                    uu -= floorf(uu); vv -= floorf(vv); tx = (int)(uu * x->w); ty = (int)(vv * x->h); if (tx >= x->w) tx = x->w - 1; if (ty >= x->h) ty = x->h - 1; if (tx < 0) tx = 0; if (ty < 0) ty = 0;
-                    col = g_w3grPx[T->tex][ty * x->w + tx]; if (!(col >> 24)) col = 0xff468c3cu;   /* (a see-through patch: a plain green) */
-                    r = (col & 255) / 255.0f * (T->rgba & 255) / 255.0f; g = ((col >> 8) & 255) / 255.0f * ((T->rgba >> 8) & 255) / 255.0f; b = ((col >> 16) & 255) / 255.0f * ((T->rgba >> 16) & 255) / 255.0f; }
-                else { r = (T->rgba & 255) / 255.0f; g = ((T->rgba >> 8) & 255) / 255.0f; b = ((T->rgba >> 16) & 255) / 255.0f; }
-                {   unsigned rgba = W3Rgba(r * 1.12f * sh, g * 1.12f * sh, b * 1.12f * sh, 237.0f / 255.0f);   /* (the blade picture's mid grey brought back to the ground's brightness; vertex alpha 237: render3d.h - drawn behind the rails in front of them) */
-                    for (j = 0; j < 6; j++) { int c4 = o6[j]; R3Vert *v = &o[n++];
-                        v->x = p[0]; v->y = p[1] - 1; v->z = p[2]; v->rgba = rgba; v->tex = 0;
-                        v->ox = (c4 == 0 || c4 == 3) ? -sz : sz; v->oy = c4 < 2 ? 0.01f : ht;
-                        v->u = (c4 == 0 || c4 == 3) ? ((h & 1) ? 1.0f : 0.0f) : ((h & 1) ? 0.0f : 1.0f); v->v = c4 < 2 ? 1.0f : 0.0f; } }
+                for (j = 0; j < 6; j++) { int c4 = o6[j]; R3Vert *v = &o[n++];
+                    v->x = P->x; v->y = P->y - 1; v->z = P->z; v->rgba = P->rgba; v->tex = 0;
+                    v->ox = (c4 == 0 || c4 == 3) ? -sz : sz; v->oy = c4 < 2 ? 0.01f : ht;
+                    v->u = (c4 == 0 || c4 == 3) ? (P->flip ? 1.0f : 0.0f) : (P->flip ? 0.0f : 1.0f); v->v = c4 < 2 ? 1.0f : 0.0f; }
                 if (d > maxD) maxD = d;
-                tufts++; } } } } } bandN[pass][set] += tufts - t0; }
+                tufts++; } } } bandN[pass][set] += tufts - t0; } }
     if (tufts >= grMax) { rThin = (rThin > D ? D : rThin) * 0.95f; if (rThin < 3000) rThin = 3000; }
     else if (tufts < grMax * 0.8f && rThin < 1e9f) { rThin *= 1.03f; if (rThin > D * 1.5f) rThin = 1e9f; }
     if (getenv("RR_W3LOGGR")) { static int nf; if (++nf % 200 == 0) LOG("w3grass frame: %d tufts (%d triangles in view, %d tried, %d out of view), furthest %.0f of %.0f, share drawn %.3f; bands file/live %d/%d %d/%d %d/%d %d/%d %d/%d", tufts, nTri, nCand, nCull, maxD, D, share, bandN[0][0], bandN[0][1], bandN[1][0], bandN[1][1], bandN[2][0], bandN[2][1], bandN[3][0], bandN[3][1], bandN[4][0], bandN[4][1]); }
