@@ -1451,8 +1451,9 @@ static int PlanStartAt(int k)
    then i can start drawing off it. and i should be able to join it back up again later"): right-click a point - "Fork from here" (the point shown magenta: g_forkFrom), then
    on a point further on "Join here": pieces from .. join - 1 become a split road too (layout 2: carriageway B), B a copy of A swinging out to the side and back in its
    middle (both roads alike for CE_SAME pieces at each end, as the game's splits).  B's points (blue) are dragged as any other's.  Saved: RrcPiece.spare[1] bit 0 on its
-   pieces, B in their b halves; the game cuts the course block it lies in at the race start (road\course_edit.c CeForkRange) - so both ends in one course block, not at
-   its first piece, not over a split there already or the race's start */
+   pieces, B in their b halves; the game cuts the course blocks it lies in at the race start (road\course_edit.c CeForkSpan: up to CE_FORKBLK of them - user,
+   2026-11-20 "go for it": forks across course blocks) - so not from a course block's first piece, not over a split there already or the race's start */
+#define CE_FORKBLK 16
 #define CE_SAME 0x51
 static int PlanNewFork(int k) { return k >= 0 && k < g_c.n && g_orig && g_c.piece[k].layout == 2 && g_orig[k].layout != 2; }
 static void PlanForkFields(void)   /* B's place beside A on the forks made here (splitX / splitSlope, as the game keeps them: course3d.h C3_FramesB) - from the curves; and B's
@@ -1472,7 +1473,8 @@ static int PlanForkRange(int ks, int ke)   /* pieces ks .. ke - 1 forked */
 {   int bs, be, i, n = ke - ks, q; Undo *u;
     if (ke < ks) { i = ks; ks = ke; ke = i; n = ke - ks; }
     if (!PlanBlockRange(ks, &bs, &be)) { Status("Plan: no course data here to fork"); return 0; }
-    if (ke > be) { Status("Plan: a fork has to lie in one course block of the game's - this one runs %d..%d (join at %d at most)", bs, be - 1, be); return 0; }
+    {   int nb = 1, b2 = be, e2; while (b2 < ke && PlanBlockRange(b2, &e2, &b2)) nb++;   /* (the course blocks it runs over) */
+        if (b2 < ke || nb > CE_FORKBLK) { Status("Plan: a fork can run over %d course blocks of the game's at most - this one runs over more (or past the course data)", CE_FORKBLK); return 0; } }
     if (ks <= bs) { Status("Plan: a fork cannot leave at a course block's first piece (%d) - start it a piece or more after", bs); return 0; }
     if (n < 2 * CE_SAME + 20) { Status("Plan: a fork takes %d pieces or more (both roads alike for %d at each end) - this one is %d", 2 * CE_SAME + 20, CE_SAME, n); return 0; }
     for (i = ks - 1; i <= ke; i++) if (i >= 0 && i < g_c.n && g_c.piece[i].layout == 2) { Status("Plan: there is a split road there (or next to it) already"); return 0; }
@@ -1487,7 +1489,7 @@ static int PlanForkRange(int ks, int ke)   /* pieces ks .. ke - 1 forked */
     return 1; }
 static void PlanForkFrom(int k)
 {   int bs, be; g_forkFrom = k;
-    if (PlanBlockRange(k, &bs, &be)) Status("Plan: a fork from piece %d (magenta) - now right-click the point where it joins the road again: Join here (in this course block: by piece %d, %d pieces on at least)", k, be, 2 * CE_SAME + 20);
+    if (PlanBlockRange(k, &bs, &be)) Status("Plan: a fork from piece %d (magenta) - now right-click the point where it joins the road again: Join here (%d pieces on at least)", k, 2 * CE_SAME + 20);
     PlanInv(); }
 static int PlanUnforkAt(int k)
 {   int ks, ke, i; Undo *u;

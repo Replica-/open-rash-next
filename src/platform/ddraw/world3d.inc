@@ -1147,6 +1147,11 @@ static int W3OffScore(int o, int kr, int i0, int cnt, int b)   /* pieces matched
 static int W3Refind(int *off, int kr, int i0, int b)   /* keep (no mismatch, a few pieces agree) or re-find (12 agree) the offset of road b; 0 = no match */
 {   int d, o;
     if (W3OffScore(*off, kr, i0, 24, b) >= 2) return 1;
+    if (b) { int i, c = 0; for (i = i0; i < i0 + 24 && i < RRW_LIVE; i++) { const RoadPiece *lp = (const RoadPiece *)g_w3cam.ring[i]; int k = kr + i + *off;   /* (B's last pieces in view:
+            fewer than 12 to compare - kept, not looked for; looked for, the only 12 that matched lay back in B (an editor's fork: B straight, as A, near its ends), the camera
+            thrown back there over and over, the rider never past the join) */
+            if (lp && k >= 0 && k < g_w3c.n && W3LiveMatch(lp, &g_w3c.piece[k], k, b) >= 0) c++; }
+        if (c < 12) return 1; }
     for (d = 1; d <= 64; d++) for (o = *off - d; o <= *off + d; o += 2 * d)
         if (W3OffScore(o, kr, i0, 24, b) >= 12) { LOG("world3d: road %c of the game is %d pieces off the file at piece %d (was %d)", 'A' + b, o, kr + i0 + o, *off); *off = o; return 1; }
     return 0; }
