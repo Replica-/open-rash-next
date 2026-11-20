@@ -228,8 +228,8 @@ static int SaveRrcTo(const char *path)
         r[i].used = (mapped && ((i > 0 && g_src[i] == g_src[i - 1]) || g_c.piece[i].halfA.kindArg[0] == 7) ? 1 : 0) | (memcmp(   /* (pieces put in / taken out: the finish markers
                                                          given too - the course data's kind stream misses one in a block with a piece put in) */(unsigned char *)&g_c.piece[i].halfA + RRC_FROM, (unsigned char *)&g_orig[i].halfA + RRC_FROM, RRC_SECSIZE - RRC_FROM) ? 1 : 0)
                   | (g_c.piece[i].layout == 2 && memcmp((unsigned char *)&g_c.piece[i].halfB + RRC_FROM, (unsigned char *)&g_orig[i].halfB + RRC_FROM, RRC_SECSIZE - RRC_FROM) ? 2 : 0);
-        if (PlanNewFork(i)) { r[i].spare[1] = 1; r[i].used &= ~2u; }   /* (a fork made here: the game makes its block a split road - road\course_edit.c CeForkEdited - with B's
-                                                                   curves from the b half; the rest of B the game's own, its place beside A not overwritten with A's copy) */
+        if (PlanNewFork(i)) { r[i].spare[1] = 1; r[i].used |= 2; }   /* (a fork made here: the game makes its block a split road - road\course_edit.c CeForkEdited - B as painted
+                                                                   here, the fields the game works out for a carriageway of its own kept: rr_CourseEditApply) */
         memcpy(r[i].a, &g_c.piece[i].halfA, RRC_SECSIZE); memcpy(r[i].b, &g_c.piece[i].halfB, RRC_SECSIZE); }
     memset(&h, 0, sizeof h); h.magic = RRC_MAGIC; h.version = RRC_VERSION; h.track = g_track; h.level = 0; h.n = g_c.n; h.piece0 = g_piece0; h.secSize = RRC_SECSIZE; h.spare[0] = mapped; h.spare[1] = g_pEnd + 1;   /* (spare[1]: a course being built - its end + 1, the plan's points kept in spare[2..]) */
     {   RrcExtra *x = (RrcExtra *)calloc(g_c.n, sizeof(RrcExtra));   /* (version 2: the extras after the records - painted terrain bands, the forest) */
@@ -1455,8 +1455,11 @@ static int PlanStartAt(int k)
    its first piece, not over a split there already or the race's start */
 #define CE_SAME 0x51
 static int PlanNewFork(int k) { return k >= 0 && k < g_c.n && g_orig && g_c.piece[k].layout == 2 && g_orig[k].layout != 2; }
-static void PlanForkFields(void)   /* B's place beside A on the forks made here (splitX / splitSlope, as the game keeps them: course3d.h C3_FramesB) - from the curves */
+static void PlanForkFields(void)   /* B's place beside A on the forks made here (splitX / splitSlope, as the game keeps them: course3d.h C3_FramesB) - from the curves; and B's
+                                     sprite sets A's (RxAssets.bind: the course had no B there, none bound - nothing could be painted on it; the game's B reads A's tables) */
 {   int k; for (k = 0; k < g_c.n; k++) if (PlanNewFork(k)) { RoadPiece *pc = &g_c.piece[k]; int first = !PlanNewFork(k - 1);
+        if (g_ra.bind && k < g_ra.npiece) memcpy(g_ra.bind[k][1], g_ra.bind[k][0], sizeof g_ra.bind[k][0]);
+        if (g_ra.pcur && k < g_ra.npiece) { g_ra.pcur[k][3] = g_ra.pcur[k][0]; g_ra.pcur[k][4] = g_ra.pcur[k][1]; g_ra.pcur[k][5] = g_ra.pcur[k][2]; }   /* (and its course data's place: A's) */
         pc->splitSlope = (first ? 0 : g_c.piece[k - 1].splitSlope) + pc->halfB.curve - pc->halfA.curve;
         pc->splitX = first ? 0 : g_c.piece[k - 1].splitX + g_c.piece[k - 1].splitSlope; } }
 static int PlanBlockRange(int k, int *ks, int *ke)   /* the course block piece k is in: pieces ks .. ke - 1 (the game's own course data: g_pcur0's first word) */
@@ -3720,7 +3723,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     HBarToggle();   /* (Heights and Widths: always shown) */
     if (getenv("CE_TESTTOOL")) { BlockSet(atoi(getenv("CE_TESTTOOL"))); }   /* (tests: a tool on - 5 Raise, 6 Lower, 7 Level) */
     if (getenv("CE_TESTNOGRID")) { g_grid = 0; SendMessageA(g_gridChk, BM_SETCHECK, BST_UNCHECKED, 0); }   /* (tests: no grid) */
-    if (getenv("CE_TESTGB")) { const char *gp = getenv("CE_TESTGB"); while (gp && *gp) { int cat = 2, item = 0, k = 0, side = 0, cell = 0, cnt = 1, i, lane = -1; char spec[120]; const char *sc = strchr(gp, ';');   /* (several: ";" between) */
+    if (getenv("CE_TESTGB")) { const char *gp = getenv("CE_TESTGB"); if (getenv("CE_TESTHALF")) g_half = 1;   /* (tests: CE_TESTHALF=1 - painted on carriageway B) */
+        while (gp && *gp) { int cat = 2, item = 0, k = 0, side = 0, cell = 0, cnt = 1, i, lane = -1; char spec[120]; const char *sc = strchr(gp, ';');   /* (several: ";" between) */
         sprintf(spec, "%.*s", sc ? (int)(sc - gp) : 100, gp); gp = sc ? sc + 1 : NULL;   /* (tests) "<category> <block item> <piece> <side> <cell> [pieces [lane]]": that block painted there */
         if (sscanf(spec, "%d %d %d %d %d %d %d", &cat, &item, &k, &side, &cell, &cnt, &lane) >= 5) { char nm[40] = ""; LVITEMA it;
             {   int L = cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1;   /* (category 0 Road, 1 Curbs, 2 Ground, 3 Buildings, 4 Footpaths) */
@@ -3731,12 +3735,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                     if (item < 0) LOG("test gb: no block \"%s\" among %d in list %d", getenv("CE_TESTGBNAME"), nb, L); }
                 BlockChoose(L, item, 0);
                 memset(&it, 0, sizeof it); it.mask = LVIF_TEXT; it.iItem = item; it.pszText = nm; it.cchTextMax = 40; ListView_GetItem(g_blk[L], &it); }
+            if (getenv("CE_TESTHALF")) g_half = 1;   /* (again: choosing the block put it back) */
             TerrBegin(); g_pickLane = lane; for (i = 0; i < cnt && k + i < g_c.n; i++) PicPaintAt(k + i, side + 1, cell); g_pickLane = -1; TerrEnd();
             { int f = -1, f2 = -1, ok; double fh = 0; ok = C3_BandFacade(&g_ra, &g_c.piece[k].halfA, k, 0, side, &f, &fh); C3_FacPick(&g_ra, k, 0, side, &f2);
               LOG("test gb: band facade %d tex %d (%s) height %.0f; picked %d; fac %x set %d bld %d code %x", ok, f, f >= 0 ? g_ra.tex[f].name : "-", fh, f2, g_ra.ext[k].fac[0][side], g_ra.ext[k].facSet[0][side], g_ra.ext[k].bld[0][side], g_ra.ext[k].bldCode[0][side]); }
             LOG("test gb: category %d block %d (%s) on pieces %d..%d side %d cell %d: kind %d, sides %d / %d, buildings from %d, cell value %x; %s", cat, item, nm, k, k + cnt - 1, side, cell,
-                g_c.piece[k].halfA.kind, C3_SideKind(&g_ra, &g_c.piece[k].halfA, k, 0, 0), C3_SideKind(&g_ra, &g_c.piece[k].halfA, k, 0, 1), g_ra.ext[k].bld[0][side],
-                cell >= 0 && cell <= 6 ? *CellVal(&g_ra.ext[k], 0, side, cell, &(unsigned short *){0}) : 0, g_status);
+                Sec(k, g_half)->kind, C3_SideKind(&g_ra, Sec(k, g_half), k, g_half && g_c.piece[k].layout == 2, 0), C3_SideKind(&g_ra, Sec(k, g_half), k, g_half && g_c.piece[k].layout == 2, 1), g_ra.ext[k].bld[g_half && g_c.piece[k].layout == 2][side],
+                cell >= 0 && cell <= 6 ? *CellVal(&g_ra.ext[k], g_half && g_c.piece[k].layout == 2, side, cell, &(unsigned short *){0}) : 0, g_status);   /* (the half painted: CE_TESTHALF) */
             if (getenv("CE_TESTSAVEAS") && !gp) LOG("test gb: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); } } }   /* (tests: the course with it, for the game) */
 
     if (getenv("CE_TESTCAM")) sscanf(getenv("CE_TESTCAM"), "%f %f %f", &g_yaw, &g_pitch, &g_dist);   /* (tests: "yaw pitch distance" of the 3D camera) */

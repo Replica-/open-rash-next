@@ -245,7 +245,6 @@ void rr_CourseEditMap(int *course)
     int *q = course, p = 0, g = 0, r = 0, split = 0, b0, ok = 1, i, lo, hi;
     if (course != g_mapCourse) { g_nmap = g_nfin = 0; g_nfku = 0; }   /* (another course: its blocks are not ours to put back) */
     else CeForkUndo();   /* (the same course set up again: its forks undone first, then its map - MapUndo) */
-    if (GetEnvironmentVariableA("RR_FORKMAKE", 0, 0)) { char m[80]; wsprintfA(m, "course set up: %08x (before: %08x), %d fork(s) to undo", (unsigned)course, (unsigned)g_mapCourse, g_nfku); Log(m); }
     MapUndo(); g_mapCourse = course;
     rr_ceForks = 0; CeForkMake(course);   /* (test switch RR_FORKMAKE: a new fork) */
     if (GetEnvironmentVariableA("RR_CHAINLOG", 0, 0) && course) {   /* (test switch RR_CHAINLOG=1: the course's chain of blocks - each node's first words, a block's header) */
@@ -305,7 +304,12 @@ void rr_CourseEditApply(int *p)
     if (!(g_rrc[k].used & (1u << half))) return;
     src = half ? g_rrc[k].b : g_rrc[k].a;
     frame[0] = *(int *)(sec + 0x44); frame[1] = *(int *)(sec + 0x54);   /* (the sprites' draw-time caches stay the game's) */
-    memcpy(sec + RRC_FROM, src + RRC_FROM, RRC_SECSIZE - RRC_FROM);
+    {   RoadSection keep; int nf = half && (g_rrc[k].spare[1] & 1);   /* (a fork made in the editor: its B painted as the editor has it, the fields the game works out for a
+                                                                    carriageway of its own kept - half (2: B; the file's copy of A said 7, a single road: the riders stayed on A),
+                                                                    the ground heights, the wall projection term, the walls) */
+        if (nf) memcpy(&keep, sec, sizeof keep);
+        memcpy(sec + RRC_FROM, src + RRC_FROM, RRC_SECSIZE - RRC_FROM);
+        if (nf) { RoadSection *d = (RoadSection *)sec; d->half = keep.half; memcpy(d->rowH, keep.rowH, sizeof d->rowH); d->depthC0 = keep.depthC0; memcpy(d->wall, keep.wall, sizeof d->wall); } }
     *(int *)(sec + 0x44) = frame[0]; *(int *)(sec + 0x54) = frame[1];
     mark = sec[0x38] == 7 && (unsigned)sec[0x39] - (unsigned)(*(unsigned char *)&rec_playerRecord.g_playerLevel) == 1 ? 0x20 : 0;   /* (the finish marker bit: this race's level's marker
                                                          only, as rr_RoadSectionFill sets it - the file is every level's) */

@@ -1106,6 +1106,8 @@ static int C3_FarGround(RxAssets *ra, int k, int h, unsigned code, int row)   /*
         int j = k + d * r, rw = row; RxSet *st; unsigned t;
         if (j < 0 || j >= ra->next) continue;
         st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3); t = st ? RX_Lookup(st, 1, code, &rw, 1) : 0;
+        if (!t && h) { rw = row; st = RX_SetFor(ra, j, 0, (int)(code >> 6) & 3); t = st ? RX_Lookup(st, 1, code, &rw, 1) : 0; }   /* (carriageway B: A's sets too - past a fork made
+                                                                                       in the Course Editor there is no B, nothing was found and nothing could be painted on it) */
         if (t) return RX_TexIn(ra, st, t);
     }
     return -1;
