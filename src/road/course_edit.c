@@ -115,6 +115,14 @@ void rr_CourseEditMap(int *course)
 {
     int *q = course, p = 0, g = 0, r = 0, split = 0, b0, ok = 1, i, lo, hi;
     if (course != g_mapCourse) g_nmap = g_nfin = 0;   /* (another course: its blocks are not ours to put back) */
+    if (GetEnvironmentVariableA("RR_CHAINLOG", 0, 0) && course) {   /* (test switch RR_CHAINLOG=1: the course's chain of blocks - each node's first words, a block's header) */
+        int *c2 = course, g3 = 0, *seen[64], ns = 0, k3; char b[300];
+        while (c2 && g3++ < 200) { for (k3 = 0; k3 < ns && seen[k3] != c2; k3++) ; if (k3 < ns) break; if (ns < 64) seen[ns++] = c2;
+            wsprintfA(b, "chain %08x: %d %x %08x %08x %08x %x %x %x", (unsigned)c2, c2[0], c2[1], c2[2], c2[3], c2[4], c2[5], c2[6], c2[7]); Log(b);
+            if (c2[0] == 0) { int *h = (int *)c2[4]; wsprintfA(b, "   header %08x: %x %x %x %x %x %x %x %x %x %x %x %x", (unsigned)h, h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11]); Log(b); c2 = (int *)c2[2]; }
+            else if (c2[0] == 1) { Log("   (split: on along A)"); c2 = (int *)c2[2]; }
+            else if (c2[0] == 2) c2 = (int *)c2[4];
+            else break; } }
     MapUndo(); g_mapCourse = course;
     if (!g_rrc || !g_rrcHdr.spare[0] || !q || q[0] != 0) return;
     b0 = g_rrcHdr.piece0 >> 8;   /* (record i: piece b0 + i of the course; spare[0] - 1: its original, numbered the same way) */
@@ -203,4 +211,16 @@ int rr_CourseEditCobble(unsigned pos, int lat)
     if (v != (RRC_BAND | RRC_GEN)) return 0;
     {   static unsigned said; if (pos >> 8 != said + 1 && pos >> 8 != said) { char m[80]; wsprintfA(m, "cobbles: the player on them at %u (lane %d)", pos >> 8, j + 1); Log(m); } said = pos >> 8; }   /* (each time onto them) */
     return 1;
+}
+/* a speed bump (user, 2026-11-20: speed bumps you feel): 1 = lateral position lat at road position pos lies on a lane painted SPDBUMP (RrcExtra.road / lane =
+   RRC_BAND | RRC_GEN | 3: ground_art.h k_c3Road[3]) within its hump - the middle of the piece, as course3d.h C3_Lanes draws it (C3_BUMPW: 90 of the piece's ~662) */
+int rr_CourseEditBump(unsigned pos, int lat)
+{
+    const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int j, f = (int)(pos & 255); unsigned v;
+    if (!x || f < 110 || f > 146) return 0;
+    s = (const RoadSection *)RR_RING(pos)[3];
+    if (!s || lat < s->edgeL || lat > s->edgeR) return 0;
+    j = (lat + 250 * (int)s->lanesL) / 250;
+    v = j >= 0 && j < 8 && x->lane[0][j] ? x->lane[0][j] : x->road[0][lat < 0 ? 0 : 1];
+    return v == (RRC_BAND | RRC_GEN | 3u);
 }

@@ -53,6 +53,24 @@ void __fastcall rr_PlayerControlTick(int self)
             if (I32(rec, 0x38) < n) I32(rec, 0x3c) = I32(rec, 0x38);
         }
     }
+    /* (the trams and the speed bumps before the demo / race-state return: the riders the computer drives in the tests (Demo Mode) meet them too) */
+    if (rec_sndPlayerEngine.g_raceState == 1) {   /* a tram (the Course Editor's TRAM lanes; the ddraw shim's world3d.inc moves and draws them): solid - riding into one crashes the player (as into a
+           car; user, 2026-11-20 "do the 3 above" - the tram made solid) */
+        static int (__stdcall *tramAt)(unsigned, int); static int looked;
+        if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); tramAt = sh ? (int (__stdcall *)(unsigned, int))GetProcAddress(sh, "RR_TramAt") : 0; looked = 1; }
+        if (tramAt && I32(ctl, 0x2f4) == 0 && tramAt((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+            int fly[3] = { (int)0xffffff00, 0, 0x700 }, bike[3] = { 0, 0, 0x400 }; RRF_RiderApplyHit(ctl, (int)fly, (int)bike, 2); }   /* (thrown off as RiderCollide does - not its damage: that wrecks the bike and ends the race) */
+    }
+    if (rec_sndPlayerEngine.g_raceState == 1) {   /* a speed bump (rr_CourseEditBump): once a crossing - a fifth of the speed off (at speed), a thump, the True 3D camera jolted (the shim's RR_Bump) */
+        int rr_CourseEditBump(unsigned pos, int lat); static unsigned last; static void (__stdcall *cob)(float); static void (__stdcall *bump)(float); static int looked;
+        unsigned pc = (unsigned)I32(self, 0x44) >> 8;
+        if (I32(ctl, 0x2f4) == 0 && pc != last && rr_CourseEditBump((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) { int sp = I32(ctl, 0xec); last = pc;
+            if (sp > 3000) I32(ctl, 0xec) = sp * 4 / 5;
+            if (!cob) { HMODULE m = GetModuleHandleA("rrdsound.dll"); cob = m ? (void (__stdcall *)(float))GetProcAddress(m, "RR_Cobble") : 0; }
+            if (cob) cob(1.0f);
+            if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); bump = sh ? (void (__stdcall *)(float))GetProcAddress(sh, "RR_Bump") : 0; looked = 1; }
+            if (bump) bump(sp / 16000.0f > 1 ? 1.0f : sp / 16000.0f); }
+    }
     if (g_demoMode != 0 || rec_sndPlayerEngine.g_raceState != 1) {
         RRF_RiderCrashTick(self);
         if ((U8(ctl, 0xc0) & 0x10) && I32(ctl, 0xec) < 0x12c) RRF_RaceStateSet(0x7f, 0xb4);

@@ -1457,6 +1457,7 @@ static int W3Cars(R3Vert *v, int cap, R3Batch *b, int nbMax, double vp)
 #define W3_TRAMVX (16 * 8 * 30 * 3)   /* (room for the trams in sight: 16 x 8 slices x 30 vertices, x 3) */
 typedef struct W3TramRun { int k0, k1, j, dir; } W3TramRun;
 static W3TramRun g_w3tr[64]; static int g_w3ntr = -1; static const void *g_w3trExt; static int g_w3trN;
+static struct { double mid, u; } g_w3tm[256]; static int g_w3ntm;   /* (every tram this frame: its middle (piece position) and lateral - RR_TramAt) */
 static int W3TramTex(void)   /* the atlas: side (v 0 .. 0.5), front (u 0 .. 0.25, v 0.5 .. 1), roof grey (u 0.25 .. 1, v 0.5 .. 1) */
 {   static int tex = -1, gen = -1; unsigned *a, *sd = NULL, *fr = NULL; int x, y, d;
     if (tex >= 0 && gen == g_w3texGen) return tex;
@@ -1491,9 +1492,12 @@ static int W3Trams(R3Vert *v, int cap, double vp)   /* this frame's trams into v
 {   Car3DOut o; int r, t, tex; static unsigned char near_[64][16]; double pl = vp + 1.0, L = g_w3c.L, TL = W3_TRAML / L;
     if (g_w3ntr < 0 || g_w3trExt != g_w3a.ext || g_w3trN != g_w3c.n) W3TramScan();
     if (!g_w3ntr || (tex = W3TramTex()) < 0) return 0;
-    o.v = v; o.n = 0; o.cap = cap; o.xf = W3CarXf;
+    o.v = v; o.n = 0; o.cap = cap; o.xf = W3CarXf; g_w3ntm = 0;
     for (r = 0; r < g_w3ntr; r++) { const W3TramRun *R = &g_w3tr[r]; int len = R->k1 - R->k0 + 1, nt = len / W3_TRAMGAP + 1;
-        for (t = 0; t < nt && t < 16; t++) { double ph = fmod(t * (double)len / nt + g_frame * W3_TRAMV, (double)len), q = R->dir > 0 ? R->k0 + ph : R->k1 + 1 - ph, mid = q - R->dir * TL * 0.5, d = fabs(mid - pl);
+        if (len < TL + 2) continue;   /* (a run shorter than a tram: none) */
+        for (t = 0; t < nt && t < 16; t++) {   /* (each tram wholly on its run - from it entering at the start to it leaving at the end; at the race start half a gap in:
+                                                  not on the start line - user's test, 2026-11-20: one crashed the player on the grid) */
+            double span = len - TL, ph = fmod(t * span / nt + span / nt * 0.5 + g_frame * W3_TRAMV, span), q = R->dir > 0 ? R->k0 + TL + ph : R->k1 + 1 - TL - ph, mid = q - R->dir * TL * 0.5, d = fabs(mid - pl);
             W3CarPose pose; int s, NS = 8; static const float uvr[3][4] = { { 0, 0, 1, 0.5f }, { 0, 0.5f, 0.25f, 1 }, { 0.25f, 0.5f, 1, 1 } };
             if (d < W3_TRAMDING && !near_[r][t]) { static void (__stdcall *ding)(float, float); near_[r][t] = 1;   /* the bell, once as it comes near */
                 if (!ding) { HMODULE m = GetModuleHandleA("rrdsound.dll"); ding = m ? (void (__stdcall *)(float, float))GetProcAddress(m, "RR_Ding") : 0; }
@@ -1501,6 +1505,7 @@ static int W3Trams(R3Vert *v, int cap, double vp)   /* this frame's trams into v
                 if (ding && !g_vwHold) { double lat = 0; int i; for (i = 0; i < g_w3ns; i++) if (g_w3s[i].kind == RRO_PLAYER) { lat = g_w3s[i].lat; break; }
                     ding((float)(1.0 - d / (W3_TRAMDING * 1.6)), (float)(0.5 + (W3LaneMid((int)mid, R->j) - lat) / 1200.0)); } }
             else if (d > W3_TRAMDING * 2.5) near_[r][t] = 0;
+            if (g_w3ntm < 256) { g_w3tm[g_w3ntm].mid = mid; g_w3tm[g_w3ntm].u = W3LaneMid((int)mid, R->j); g_w3ntm++; }   /* (for RR_TramAt) */
             if (mid < vp - 4 || mid > vp + 140) continue;   /* (out of sight) */
             {   double um = W3LaneMid((int)mid, R->j), lat = 0, cp = vp + W3_EYE - 1.0; int i;   /* (not solid - the riders go through: while the camera or the player's bike is
                                                                                                     inside it, not drawn, rather than the screen filled with it) */
@@ -1518,6 +1523,16 @@ static int W3Trams(R3Vert *v, int cap, double vp)   /* this frame's trams into v
                     float f0[2] = { uvr[1][0], uvr[1][3] }, f1[2] = { uvr[1][2], uvr[1][3] }, f2[2] = { uvr[1][2], uvr[1][1] }, f3[2] = { uvr[1][0], uvr[1][1] };
                     if (s == 0) Car3D_Quad(&o, P1, P0, P3, P2, f0, f1, f2, f3, nz); else Car3D_Quad(&o, P0, P1, P2, P3, f0, f1, f2, f3, nz); } } } }
     return o.n; }
+/* a speed bump crossed (race\player_control.c, rr_CourseEditBump): RR_Bump(strength 0..1) - the camera jolted up and down, dying away in ~14 game frames */
+static float g_w3bumpS; static unsigned long g_w3bumpF;
+__declspec(dllexport) void __stdcall RR_Bump(float s) { g_w3bumpS = 0.3f + 0.7f * (s < 0 ? 0 : s > 1 ? 1 : s); g_w3bumpF = (unsigned long)g_frame; LOG("world3d: a speed bump crossed (%.2f)", s); }
+/* the trams are solid (user, 2026-11-20): RR_TramAt(road position, lateral) = 1 when that point is inside a tram as last drawn - the game's player control
+   (race\player_control.c) crashes the player there */
+__declspec(dllexport) int __stdcall RR_TramAt(unsigned pos, int lat)
+{   double q = ((double)pos - g_w3Piece0) / 256.0; int i;
+    if (!g_w3On) return 0;
+    for (i = 0; i < g_w3ntm; i++) if (fabs(q - g_w3tm[i].mid) < W3_TRAML / g_w3c.L * 0.5 && fabs(lat - g_w3tm[i].u) < W3_TRAMW * 0.5 + 30) { LOG("world3d: the player rode into a tram at %.2f", q); return 1; }
+    return 0; }
 #define W3_HALOV (6 * 4 * 256)   /* the sprites pass: room for the road users' light halos after the sprites' own vertices */
 /* where each sprite polygon is drawn this frame (P: x[4], y[4] frame pixels) and how far away (D; W3Spr.dObj per object) - made before the world pass,
    so the lights (W3Lights: the headlights' cones) start where the bikes are drawn */
@@ -2326,7 +2341,8 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
             lastF = g_frame; lastVp = vp; u = f2; gOk = hasL;
             if (hasL) g_w3bikeOff = g2 - L; } }
     { float a[3]; W3SmoothPt(W3Fr(), vp, 0, 0, a, NULL); roadY = a[1]; }
-    W3SmoothPt(W3Fr(), p, u, 0, eye, NULL); eye[1] = (float)(roadY + g_w3cam.camY);   /* (on the smooth curve: no kink at the pieces' ends) */
+    W3SmoothPt(W3Fr(), p, u, 0, eye, NULL); eye[1] = (float)(roadY + g_w3cam.camY);
+    if (g_w3bumpS > 0) { double t = (double)((unsigned long)g_frame - g_w3bumpF); if (t < 14) eye[1] += (float)(34 * g_w3bumpS * sin(t / 14 * 6.2831853 * 1.5) * exp(-t / 6)); else g_w3bumpS = 0; }   /* (a speed bump: RR_Bump) */   /* (on the smooth curve: no kink at the pieces' ends) */
     {   int kk = (int)floor(vp); double fr = vp - kk, th0, th1, hd; const C3Frame *F = W3Fr();   /* looking along the road's heading at the view's start, level */
         if (kk < 0) kk = 0; if (kk >= g_w3c.n) kk = g_w3c.n - 1;
         th0 = F[kk].heading; th1 = F[kk + 1].heading;

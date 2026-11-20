@@ -64,3 +64,5 @@ RR_PlayerCfg=_RR_PlayerCfg@8
 RR_LoadProgress=_RR_LoadProgress@16
 RR_Traffic=_RR_Traffic@0
 RR_Police=_RR_Police@0
+RR_TramAt=_RR_TramAt@8
+RR_Bump=_RR_Bump@4
