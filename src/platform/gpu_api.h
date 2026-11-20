@@ -102,6 +102,7 @@ typedef struct RrWorld3DCam {
     int ringBack;                           /* road position (24.8) of the road ring's back piece (g_roadRingBack) */
     const void *ring[RRW_LIVE];             /* the ring's piece records from the back (road_types.h RoadPiece; read only): the decoration the course file cannot
                                                have (wall corners, terrain heights: generated from time-animated records, so they depend on when a piece was made) */
+    int raceTime;                           /* the game's race clock (g_raceTime, ticks): what moves by itself in the world (the trams) runs on it, not on frames drawn */
 } RrWorld3DCam;
 
 #endif

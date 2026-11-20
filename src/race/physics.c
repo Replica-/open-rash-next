@@ -538,6 +538,18 @@ void __fastcall rr_RiderApplyImpulse(int o)
             *(int *)(o + 0x20) = *(int *)(iVar3 + 0x1ec);
         }
     }
+    if (*(int *)(o + 0xc4) == 0x10 && (int)step != 0) {   /* a traffic car (kind 0x10 here) behind a tram in its lane (the shim's trams - world3d.inc RR_TramAhead): its move kept short of the tram's rear,
+                                                          its speed with it - it waits and moves off as the tram does (user, 2026-11-21: "it has to wait behind it while it moves") */
+        static int (__stdcall *ahead)(unsigned, int, int *, int *); static int looked; int rear = 0, dir = 0;
+        if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); ahead = sh ? (int (__stdcall *)(unsigned, int, int *, int *))GetProcAddress(sh, "RR_TramAhead") : 0; looked = 1; }
+        int got = ahead ? ahead((unsigned)*(int *)(o + 0x1c), *(int *)(o + 0x28) >> 8, &rear, &dir) : -1;
+        if (got > 0 && ((int)step > 0) == (dir > 0)) {   /* (going the tram's way: its lane's) */
+            int room = (rear - dir * (*(int *)(o + 0x178) + 0x50) - *(int *)(o + 0x1c)) * dir;   /* (how far it may go: its nose a car's gap short of the rear) */
+            if (room < (int)step * dir) { int ns = room > 0 ? room * dir : 0;
+                {   static int lg = -1; if (lg < 0) lg = GetEnvironmentVariableA("RR_TRAMLOG", 0, 0) > 0;   /* (test switch RR_TRAMLOG=1: each car held back, in the shim's log) */
+                    if (lg) { void (__stdcall *dl)(const char *) = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog"); char m[120];
+                        if (dl) { wsprintfA(m, "tram follow: car %08x at %d.%03d lane x %d, the tram's rear %d.%03d, step %d -> %d", (unsigned)o, *(int *)(o + 0x1c) >> 8, (*(int *)(o + 0x1c) & 255) * 1000 / 256, *(int *)(o + 0x28) >> 8, rear >> 8, (rear & 255) * 1000 / 256, (int)step, ns); dl(m); } } }
+                *(int *)(o + 0xec) = (int)((__int64)*(int *)(o + 0xec) * ns / (int)step); step = (unsigned)ns; } } }
     RiderScrollStep(o, (int)step, 1);
     *(int *)(o + 0x28) = *(int *)(o + 0x28) + *(int *)(o + 0x18) * *(int *)(o + 0x10c);
 }

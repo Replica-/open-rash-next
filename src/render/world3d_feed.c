@@ -136,7 +136,7 @@ void rr_World3DFrame(void)
     c.frameW = rec_Controls.g_projWidth * c.pxPerUnit; c.frameH = 240 * c.pxPerUnit; c.centreX = (rec_Controls.g_projWidth & ~1) / 2 * c.pxPerUnit; c.horizonY = 0x5a * c.pxPerUnit;
     c.half = (*(char *)&rec_ShadoC.g_viewOnRoadB) != 0;
     c.nSeg = g_nseg; memcpy(c.seg, g_seg, sizeof g_seg);
-    c.ringBack = (int)g_roadRingBack;
+    c.ringBack = (int)g_roadRingBack; c.raceTime = rec_featureAccum1.g_raceTime;
     {   int i; for (i = 0; i < RRW_LIVE; i++) c.ring[i] = RR_RING(g_roadRingBack + (unsigned)i * 0x100); }
     g_w3Frame(&c);
     {   static int on = -1; static unsigned n; char e[8];   /* test switch RR_W3LOGW=1: the live ring's wall words (+0x14c..+0x160) of the 16 pieces from the view, every 150 frames */

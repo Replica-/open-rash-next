@@ -277,7 +277,7 @@ static int C3_SideEd(const RxAssets *ra, const RoadSection *s, int k, int h, int
     int e = C3_SideBld(ra, s, k, h, side) | (C3_SideWalk(ra, s, k, h, side) ? 8 : 0);
     if (ra && ra->ext && k >= 0 && k < ra->next && (ra->ext[k].lift[h & 1][side & 1][0] | ra->ext[k].lift[h & 1][side & 1][1])) e |= 32;   /* (heights lifted: RrcExtra.lift) */
     if (ra && ra->ext && k >= 0 && k < ra->next && C3_SideKind(ra, s, k, h, side) == SEC_PROFILE && (ra->ext[k].edge[h & 1][side & 1] & RRC_BAND)) e |= 16;   /* (an original course: no extras) */
-    if (!g_c3Editor) e |= C3_SideCells(ra, s, k, h, side, 2) << 6;   /* (the game: its holes - a hole ends square at its piece's end, a wall closing it: user, 2026-11-19
+    if (!g_c3Editor) e |= (C3_SideCells(ra, s, k, h, side, 2) | C3_SideCells(ra, s, k, h, side, 14)) << 6;   /* (the game: its holes - a hole ends square at its piece's end, a wall closing it: user, 2026-11-19
                                                                               "should just go all the way down on 52"; bits 6.. read by nothing else) */
     return e;
 }
@@ -371,7 +371,8 @@ static int C3_NotPitTex(const RxAssets *ra, const int *tex, int i)   /* (a hole'
     for (d = 1; d < C3_NP; d++) { j = left ? i - d : i + d; if (j < 0 || j >= C3_NP - 1 || (j < C3_NP / 2) != left) break; if (tex[j] >= 0 && !C3_IsPitTex(ra, tex[j])) return tex[j]; }
     return -1;
 }
-static int C3_IsPitTex(const RxAssets *ra, int t) { return C3_IsWaterTex(ra, t) || (ra && ra->nground > 2 && t == ra->ground0 + 2); }   /* (water or a hole - C3_GHOLE: the ground round it torn over its edge, never it over the ground) */
+static int C3_IsHoleTex(const RxAssets *ra, int t) { return ra && ((ra->nground > 2 && t == ra->ground0 + 2) || (ra->nground > 14 && t == ra->ground0 + 14)); }   /* (CLIFF HOLE / DIRT HOLE: C3_GHOLE, C3_GDHOLE) */
+static int C3_IsPitTex(const RxAssets *ra, int t) { return C3_IsWaterTex(ra, t) || C3_IsHoleTex(ra, t); }   /* (water or a hole - C3_GHOLE: the ground round it torn over its edge, never it over the ground) */
 static int C3_SideCells(const RxAssets *ra, const RoadSection *s, int k, int h, int side, int g)   /* bits 0..4: the cells (verge, P0..P2, past P2) of piece k's side painted
                                                                                                   extra ground picture g (ground_art.h) */
 {
@@ -388,17 +389,21 @@ static int C3_SideWater(const RxAssets *ra, const RoadSection *s, int k, int h, 
    ground picture HOLE (k_c3Ground[C3_GHOLE]) painted on a terrain side's cell - in the game (not the Course Editor's own view: g_c3Editor) the cell's corners sunk to
    C3_HOLEH (the cells beside it slope down into it); the player in it loses (road\course_edit.c rr_CourseEditWater) */
 #define C3_GHOLE 2
+#define C3_GDHOLE 14   /* (DIRT HOLE: a hole as C3_GHOLE, its walls dirt - RxAssets.dholeTex) */
 #define C3_GBRIDGE 3
 #define C3_GDUNES 4    /* (DUNES: sand cells rolled into dunes in the game - C3_Dunes; flat in the editor) */
 #define C3_GCLIFF 5    /* (CLIFF: cells raised into a cliff in the game - C3_CliffRow; flat in the editor) */   /* (BRIDGE: a deck painted on the verge - concrete, its railing on the outer edge: C3_Railing) */
 #define C3_HOLEH (-2000.0)
+static int C3_HoleWall(const RxAssets *ra, int hole)   /* a hole's wall picture: DIRT HOLE's dirt (if there), else CLIFF's rock */
+{   if (ra && ra->dholeTex && ra->nground > C3_GDHOLE && hole == ra->ground0 + C3_GDHOLE) return ra->dholeTex - 1;
+    return ra->ground0 + C3_GCLIFF; }
 #define C3_ROCKPER 900.0   /* (a hole's rock wall: units per copy of the CLIFF picture, both ways - its sides and ends alike) */
 #define C3_HLIP 220.0   /* (a hole's wall: this far across at most - steep, not sheer: a lip) */
 #define C3_HOLEWD 1500.0   /* (the water in a hole: this far below the ground - 500 above its floor - unless set: RrcExtra.holeWater) */   /* (doubled: user, 2026-11-19) */
 static void C3_HoleRow(const RxAssets *ra, const RoadSection *sec, int k, int h, int side, C3Row *row)
 {
     int m, c, i;
-    if (g_c3Editor || !(m = C3_SideCells(ra, sec, k, h, side, C3_GHOLE))) return;
+    if (g_c3Editor || !(m = C3_SideCells(ra, sec, k, h, side, C3_GHOLE) | C3_SideCells(ra, sec, k, h, side, C3_GDHOLE))) return;
     {   int fc = 0, wv = ra->ext[k].holeWater[h & 1][side & 1]; while (fc < 4 && !(m & (1 << fc))) fc++;   /* (the water: below the ground inside the first hole cell) */
         row->hm[side] = (unsigned char)(wv < 0 ? 0 : m); row->hl[side] = row->h[side ? 8 + fc + 1 : 6 - (fc + 1)] - (wv > 0 ? wv : C3_HOLEWD); }
     /* each run of hole cells c0 .. c1: its points sunk; its walls where it meets ground (user, 2026-11-19: "a sheer edge" for a BRIDGE, then "it naturally drops down not
@@ -974,11 +979,11 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
     int i, kind0 = kind, tl[C3_NP - 1], rk[C3_NP - 1] = { 0 };
     memcpy(tl, tex, sizeof tl);   /* a hole's sides (user, 2026-11-19: "this texture here should be inherited from the neighbour"): a HOLE strip not lying wholly at the
                                      bottom - its end climbing out, the ground beside it - its neighbour's picture across (outwards, else inwards); only the floor black */
-    for (i = 0; i < C3_NP - 1; i++) if (!g_c3Editor && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE
+    for (i = 0; i < C3_NP - 1; i++) if (!g_c3Editor && C3_IsHoleTex(ra, tex[i])
             && (r0->h[i] > C3_HOLEH + 1 || r0->h[i + 1] > C3_HOLEH + 1 || r1->h[i] > C3_HOLEH + 1 || r1->h[i + 1] > C3_HOLEH + 1)) {
         int o = i < C3_NP / 2 ? i - 1 : i + 1;
         if (o >= 0 && o < C3_NP - 1 && tex[o] >= 0 && !C3_IsPitTex(ra, tex[o])) tl[i] = tex[o]; else { int t = C3_NotPitTex(ra, tex, i); if (t >= 0) tl[i] = t; }   /* (between holes: the nearest ground) */
-        if (tl[i] >= 0 && !C3_IsBridgeTex(ra, tl[i]) && !C3_TexBaked(ra, tl[i]) && ra->nground > C3_GCLIFF) { tl[i] = ra->ground0 + C3_GCLIFF; rk[i] = 1; } }   /* (user, 2026-11-19: rock - "replace this
+        if (tl[i] >= 0 && !C3_IsBridgeTex(ra, tl[i]) && !C3_TexBaked(ra, tl[i]) && ra->nground > C3_GCLIFF) { tl[i] = C3_HoleWall(ra, tex[i]); rk[i] = 1; } }   /* (user, 2026-11-19: rock - "replace this
                                                         texture is a suitable cliff texture ... only replace the texture where the texture can be blended": a bridge's face keeps its deck) */
     tex = tl;
     for (i = 0; i < C3_NP - 1; i++) {
@@ -989,7 +994,7 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
         if (tex && tex[i] == -2) continue;   /* (nothing there) */
         C3_Point(c, k, r0->u[i], r0->h[i], a); C3_Point(c, k, r0->u[i + 1], r0->h[i + 1], b);
         C3_Point(c, k + 1, r1->u[i + 1], r1->h[i + 1], cc); C3_Point(c, k + 1, r1->u[i], r1->h[i], d);
-        if (!g_c3Editor && tex && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE) { C3_Quad(c, a, b, cc, d, 0xff050505u); continue; }   /* (a hole's floor in the game: black - its sides took
+        if (!g_c3Editor && tex && C3_IsHoleTex(ra, tex[i])) { C3_Quad(c, a, b, cc, d, 0xff050505u); continue; }   /* (a hole's floor in the game: black - its sides took
                                                                                                                          their neighbour's picture above; any branch: the slopes' too) */
         if (tex && tex[i] >= 0) {
             /* u runs from the road outwards on both sides (the game mirrors the left side's strips: SANDL's white line lies on the road edge) */
@@ -1028,7 +1033,7 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                 continue; }
             {   int m0 = c->nv, m = r0->mat[i], dirt = (m == M_TERRAIN || m == M_FAR || m == M_SLOPE || m == M_VERGE) && kind != SEC_OPEN && C3_TexDirt(ra, tex[i]);
                 if (C3_IsWaterTex(ra, tex[i])) { C3_QuadTint(c, a, b, cc, d, 0xfd8a5a2au, tex[i], uv, 0xfdffffffu); continue; }
-                if (!g_c3Editor && ra && ra->nground > C3_GHOLE && tex[i] == ra->ground0 + C3_GHOLE) { C3_QuadTint(c, a, b, cc, d, 0xff000000u, tex[i], uv, 0xff000000u); continue; }
+                if (!g_c3Editor && C3_IsHoleTex(ra, tex[i])) { C3_QuadTint(c, a, b, cc, d, 0xff000000u, tex[i], uv, 0xff000000u); continue; }
                 if (!g_c3Editor && ra && ra->nground > C3_GDUNES && tex[i] == ra->ground0 + C3_GDUNES) { C3_Dunes(c, k, i, r0, r1, tex[i], uv, ra); continue; }   /* (dunes in the game) */   /* (a hole's floor in the game: black, not its stripes) */   /* (painted water: the sea's shading, as it lies) */
                 C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex[i], uv, i == c->darkStrip ? 0xff8a8a8au : 0xffffffffu);
                 if (!g_c3Editor && ra && ra->nground > C3_GCLIFF && tex[i] == ra->ground0 + C3_GCLIFF && (fabs(r0->h[i + 1] - r0->h[i]) > fabs(r0->u[i + 1] - r0->u[i]) * 0.8 || fabs(r1->h[i + 1] - r1->h[i]) > fabs(r1->u[i + 1] - r1->u[i]) * 0.8))
@@ -1089,7 +1094,7 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
         if (side) { uv[0] = 0; uv[1] = C3_ALONG; uv[2] = (float)q; uv[3] = C3_ALONG; uv[4] = (float)q; uv[5] = 0; uv[6] = 0; uv[7] = 0; }
         else { uv[0] = (float)q; uv[1] = C3_ALONG; uv[2] = 0; uv[3] = C3_ALONG; uv[4] = 0; uv[5] = 0; uv[6] = (float)q; uv[7] = 0; }
         col = t >= 0 ? 0xffffffffu : (ground ? ground : C3_Colour(r0->mat[side ? C3_NP - 2 : 0], kind, k));
-        if (!g_c3Editor && ra && ra->nground > C3_GHOLE && t == ra->ground0 + C3_GHOLE) { t = -1; col = 0xff050505u; }   /* (beyond a hole: the abyss, black - not its stripes) */
+        if (!g_c3Editor && C3_IsHoleTex(ra, t)) { t = -1; col = 0xff050505u; }   /* (beyond a hole: the abyss, black - not its stripes) */
         C3_QuadT(c, a, b, cc, d, col, t, uv);
         for (j = c->nv - 6; j < c->nv; j++) c->v[j].tex += (float)C3_BG;   /* (also flat colour: -1 + C3_BG) */
     }
@@ -2068,12 +2073,13 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                     C3_Point(c, k + 1, r1.u[j], r1.h[j], a); C3_Point(c, k + 1, r1.u[jn], r1.h[jn], bb);
                     C3_Point(c, k + 1, bu[b][brk[b] ? jn - 8 : jn], bh[b][brk[b] ? jn - 8 : jn], cc); C3_Point(c, k + 1, bu[b][brk[b] ? j - 8 : j], bh[b][brk[b] ? j - 8 : j], d);
                     {   int sg = brk[b] ? j : jn, t = sg >= 0 && sg < C3_NP - 1 ? tex[sg] : -1, tn = sg >= 0 && sg < C3_NP - 1 && hasTn ? texN[sg] : -1;   /* (the ground of the band it closes: no flat-coloured seam) */
+                        int hw = C3_IsHoleTex(ra, t) ? t : C3_IsHoleTex(ra, tn) ? tn : -1;   /* (the hole it closes: its wall's picture) */
                         if ((t >= 0 && C3_IsPitTex(ra, t)) || (tn >= 0 && C3_IsPitTex(ra, tn))) {   /* a hole's end wall (user, 2026-11-19: "between 53, 52 ... a better cliff face texture ...
                                                                     on both sides of the hole"): the ground beyond the hole's end (this piece or the next one), rock if that can blend */
                             if (t < 0 || C3_IsPitTex(ra, t)) t = tn >= 0 && !C3_IsPitTex(ra, tn) ? tn : C3_NotPitTex(ra, tex, sg);
-                            if (t >= 0 && !C3_IsBridgeTex(ra, t) && !C3_TexBaked(ra, t) && ra->nground > C3_GCLIFF) t = ra->ground0 + C3_GCLIFF; }
+                            if (t >= 0 && !C3_IsBridgeTex(ra, t) && !C3_TexBaked(ra, t) && ra->nground > C3_GCLIFF) t = C3_HoleWall(ra, hw); }
                         if (t >= 0) { float uv[8] = { 0, 1, 1, 1, 1, 0, 0, 0 }, ub[8];
-                            if (ra->nground > C3_GCLIFF && t == ra->ground0 + C3_GCLIFF) { uv[1] = (float)(C3_Dist(a, d) / C3_ROCKPER); uv[2] = (float)(C3_Dist(a, bb) / C3_ROCKPER);
+                            if ((ra->nground > C3_GCLIFF && t == ra->ground0 + C3_GCLIFF) || (ra->dholeTex && t == ra->dholeTex - 1)) { uv[1] = (float)(C3_Dist(a, d) / C3_ROCKPER); uv[2] = (float)(C3_Dist(a, bb) / C3_ROCKPER);
                                 uv[3] = (float)(C3_Dist(bb, cc) / C3_ROCKPER); uv[4] = (float)(C3_Dist(d, cc) / C3_ROCKPER); }   /* (rock: the world's scale) */
                             ub[0] = uv[0]; ub[1] = uv[1]; ub[2] = uv[6]; ub[3] = uv[7]; ub[4] = uv[4]; ub[5] = uv[5]; ub[6] = uv[2]; ub[7] = uv[3];
                             C3_QuadTint(c, a, bb, cc, d, 0xffffffffu, t, uv, 0xffffffffu); C3_QuadTint(c, a, d, cc, bb, 0xffffffffu, t, ub, 0xffffffffu); }   /* (the back face: the same

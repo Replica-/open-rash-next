@@ -352,7 +352,7 @@ void rr_CourseEditApply(int *p)
    course3d.h C3_Side lays them (verge's outer edge, the profile points, then on out) */
 int rr_CourseEditWater(unsigned pos, int lat)
 {
-    const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int side, c, sg, b[6], i; unsigned w = RRC_BAND | RRC_GEN | 1u, ho = RRC_BAND | RRC_GEN | 2u;   /* (WATER, HOLE: ground_art.h) */
+    const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int side, c, sg, b[6], i; unsigned w = RRC_BAND | RRC_GEN | 1u, ho = RRC_BAND | RRC_GEN | 2u, hd = RRC_BAND | RRC_GEN | 14u;   /* (WATER, HOLE, DHOLE: ground_art.h) */
     if (!x) return 0;
     s = (const RoadSection *)RR_RING(pos)[3];
     if (!s) return 0;
@@ -363,7 +363,7 @@ int rr_CourseEditWater(unsigned pos, int lat)
     b[5] = b[4] + sg * 1000000;
     for (c = 0; c <= 4; c++) {
         unsigned v = c == 0 ? x->cell[0][side][0] : c <= 3 ? x->band[0][side][c - 1] : x->cell[0][side][1];
-        if ((v == ho || (v == w && c >= 1)) && (lat - b[c]) * sg > 0 && (b[c + 1] - lat) * sg >= 0) { char m[96]; wsprintfA(m, "%s: the player in it at %u (lateral %d, cell %d)", v == ho ? "hole" : "water", pos >> 8, lat, c); Log(m); return 1; } }
+        if ((v == ho || v == hd || (v == w && c >= 1)) && (lat - b[c]) * sg > 0 && (b[c + 1] - lat) * sg >= 0) { char m[96]; wsprintfA(m, "%s: the player in it at %u (lateral %d, cell %d)", v == ho || v == hd ? "hole" : "water", pos >> 8, lat, c); Log(m); return 1; } }
     return 0;
 }
 

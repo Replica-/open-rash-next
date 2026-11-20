@@ -50,6 +50,7 @@ typedef struct RxAssets {
     int road0, nroad;                          /* the extra road surfaces (ground_art.h k_c3Road: COBBLE ...): painted as RRC_BAND | RRC_GEN | n in RrcExtra.road (course3d.h C3_Lanes) */
     int groundHedge[4];                        /* each one's hedge (tex index + 1; 0 none): along the inner edge of a "beyond" cell painted with it (course3d.h C3_GroundHedge) */
     int forestTex;                             /* FOREST's blocks: its wall of trees (FOREST_HEDGE.png, tex index + 1; 0 none - course3d.h C3_Shrub) */
+    int dholeTex;                              /* DIRT HOLE's walls: a dirt cliff face (DHOLE_HEDGE.png, tex index + 1; 0 none: CLIFF's rock - course3d.h C3_HoleWall) */
     int shrubTex;                              /* SHRUB's blocks (ground_art.h): the hedge picture on their sides (tex index + 1; 0 none - course3d.h C3_Shrub) */
     RrcExtra *ext; int next;                   /* per piece: an edited course's extras (CEXT: painted terrain bands, course3d.h C3_ProfileTex; NULL = none) - its own memory */
 } RxAssets;

@@ -3229,7 +3229,7 @@ static void HoleWaterLabel(void)
 static void HoleWaterSet(void)
 {   int on = SendMessageA(g_hwChk, BM_GETCHECK, 0, 0) == BST_CHECKED, d = (int)SendMessageA(g_hwBar, TBM_GETPOS, 0, 0) * 100, lo = g_bmK, hi = g_bmK, k, n = 0;
     short v = (short)(on ? (d == C3_HOLEWD ? 0 : d) : -1);
-#define HW_HOLE(kk) ((kk) >= 0 && (kk) < g_c.n && (kk) < g_ra.next && C3_SideCells(&g_ra, g_bmH ? &g_c.piece[kk].halfB : &g_c.piece[kk].halfA, kk, g_bmH, g_bmSide, C3_GHOLE))
+#define HW_HOLE(kk) ((kk) >= 0 && (kk) < g_c.n && (kk) < g_ra.next && C3_SideCells(&g_ra, g_bmH ? &g_c.piece[kk].halfB : &g_c.piece[kk].halfA, kk, g_bmH, g_bmSide, C3_GHOLE) | C3_SideCells(&g_ra, g_bmH ? &g_c.piece[kk].halfB : &g_c.piece[kk].halfA, kk, g_bmH, g_bmSide, C3_GDHOLE))
     if (g_bmK < 0 || !g_ra.ext || !HW_HOLE(g_bmK)) return;
     while (HW_HOLE(lo - 1)) lo--;
     while (HW_HOLE(hi + 1)) hi++;
@@ -3305,7 +3305,7 @@ static void BandMenu(int x, int y)   /* the right-click at frame pixel x, y (the
     sprintf(t, "Piece %d, %s %s - click a picture to paint it", k, part == 1 ? "left" : "right", g_cellName[band]); SetWindowTextA(g_bandWin, t);
     v = CellVal(&g_ra.ext[k], hh, part - 1, band, &vs);
     BandInfo(k, hh, part - 1, band, *v);
-    g_hwOn = band <= 4 && *v == (RRC_BAND | RRC_GEN | C3_GHOLE);   /* (a hole: its water - RrcExtra.holeWater) */
+    g_hwOn = band <= 4 && (*v == (RRC_BAND | RRC_GEN | C3_GHOLE) || *v == (RRC_BAND | RRC_GEN | C3_GDHOLE));   /* (a hole: its water - RrcExtra.holeWater) */
     if (g_hwOn) { short hw = g_ra.ext[k].holeWater[hh][part - 1]; SendMessageA(g_hwChk, BM_SETCHECK, hw < 0 ? BST_UNCHECKED : BST_CHECKED, 0);
         SendMessageA(g_hwBar, TBM_SETPOS, TRUE, (hw > 0 ? hw : (int)C3_HOLEWD) / 100); HoleWaterLabel(); }
     BandLayout();   /* (sized first: the pictures laid out across its width, not in one column) */
