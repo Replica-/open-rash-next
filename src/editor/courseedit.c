@@ -3673,13 +3673,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         const char *gp = getenv("CE_TESTPLANDRAG"); int first = 1;   /* (several: ";" between - each applied before the next when CE_TESTPLANAPPLY) */
         while (gp && sscanf(gp, "%d %d %d", &kk, &dxp, &dyp) == 3) { RECT rc; PlanXf t; int j, vh, v = -1, px = 0, py = 0;
             gp = strchr(gp, ';'); if (gp) gp++;
-            if (getenv("CE_TESTPLANZOOM") && kk >= 0 && kk < g_c.n) { g_pZoom = atof(getenv("CE_TESTPLANZOOM")); g_pFit = 0; g_pCx = g_c.frame[kk].x; g_pCz = g_c.frame[kk].z; }   /* (tests: zoomed in there) */
+            if (getenv("CE_TESTPLANZOOM") && abs(kk) < g_c.n) { int kz = abs(kk); g_pZoom = atof(getenv("CE_TESTPLANZOOM")); g_pFit = 0; g_pCx = g_c.frame[kz].x; g_pCz = g_c.frame[kz].z; }   /* (tests: zoomed in there) */
             if (first) PlanBigToggle(); first = 0; GetClientRect(g_planBig, &rc); PlanView(rc, &t);
-            for (j = 0; j < 400 && v < 0; j++) { int q = kk + (j & 1 ? -(j / 2) : j / 2); if (q < 1 || q >= g_c.n) continue; px = (int)PX2(&t, g_c.frame[q].x); py = (int)PZ2(&t, g_c.frame[q].z); v = PlanVertAt(&t, px, py, &vh); }
+            {   int onB = kk < 0 && g_c.frameB; const C3Frame *FF = onB ? g_c.frameB : g_c.frame; if (kk < 0) kk = -kk;   /* (a negative piece: carriageway B's point there) */
+                for (j = 0; j < 400 && v < 0; j++) { int q = kk + (j & 1 ? -(j / 2) : j / 2); if (q < 1 || q >= g_c.n || (onB && !PlanOnB(q))) continue; px = (int)PX2(&t, FF[q].x); py = (int)PZ2(&t, FF[q].z); v = PlanVertAt(&t, px, py, &vh); if (onB && v >= 0 && !vh) v = -1; } }
             if (v >= 0) { PlanMouse(g_planBig, WM_LBUTTONDOWN, 0, MAKELPARAM(px, py)); PlanMouse(g_planBig, WM_MOUSEMOVE, 0, MAKELPARAM(px + dxp, py + dyp)); ReleaseCapture(); }
             LOG("test plandrag: point %d at %d,%d dragged by %d,%d (%.0f units) - mode %d, %d move(s), moved %.0f units, %s", v, px, py, dxp, dyp, dxp / t.sc, g_pmMode, g_nmv,
                 g_nmv ? sqrt((g_mv[0].tx - g_c.frame[g_mv[0].k].x) * (g_mv[0].tx - g_c.frame[g_mv[0].k].x) + (g_mv[0].tz - g_c.frame[g_mv[0].k].z) * (g_mv[0].tz - g_c.frame[g_mv[0].k].z)) : 0.0, g_nmv && PlanMoveBadAt(g_mv[0].k, g_mv[0].half) ? "too sharp" : "fits");
-            if (getenv("CE_TESTPLANAPPLY") && (gp || !getenv("CE_TESTPLANHOLD"))) { g_pmMode = 0; PlanMovesApply(); LOG("test plandrag apply: %s", g_status); } } }   /* (tests: then Enter - CE_TESTPLANHOLD: the last one held) */
+            if (getenv("CE_TESTPLANAPPLY") && (gp || !getenv("CE_TESTPLANHOLD"))) { int nf = 0, q2; g_pmMode = 0; PlanMovesApply(); for (q2 = 0; q2 < g_c.n; q2++) nf += PlanNewFork(q2);
+                LOG("test plandrag apply: %s - %d forked pieces", g_status, nf); } } }   /* (tests: then Enter - CE_TESTPLANHOLD: the last one held) */
     if (getenv("CE_TESTLC")) { int sd, ka, kb, c0, c1, k, c, v; char o[400], *w = o;   /* (tests) "<side> <first piece> <last piece> <first cell> <last cell>": a Level stroke
                                                                                       pressed on the first cell, dragged over the rest - every vertex's height logged */
         if (sscanf(getenv("CE_TESTLC"), "%d %d %d %d %d", &sd, &ka, &kb, &c0, &c1) == 5) {
