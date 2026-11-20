@@ -40,8 +40,9 @@ static char *ExtractorEnv(const char *path, int track, int level, const char *cf
     o += wsprintfA(o, "RR_AUTORACE=%d", track) + 1;
     o += wsprintfA(o, "RR_LEVEL=%d", level + 1) + 1;
     o += wsprintfA(o, "RR_CONFIG=%s", cfg) + 1;
-    {   static const char *const keep[2] = { "RR_COURSEEDIT", "RR_COURSEEDITFILE" }; char v[MAX_PATH]; int i;   /* (the edited course this race uses - or none: road\course_edit.c) */
-        for (i = 0; i < 2; i++) if (GetEnvironmentVariableA(keep[i], v, sizeof v) > 0) o += wsprintfA(o, "%s=%s", keep[i], v) + 1; }
+    {   static const char *const keep[3] = { "RR_COURSEEDIT", "RR_COURSEEDITFILE", "RR_FORKMAKE" }; char v[MAX_PATH]; int i;   /* (the edited course this race uses - or none: road\course_edit.c;
+                                                                                                                              the test fork, RR_FORKMAKE) */
+        for (i = 0; i < 3; i++) if (GetEnvironmentVariableA(keep[i], v, sizeof v) > 0) o += wsprintfA(o, "%s=%s", keep[i], v) + 1; }
     lstrcpyA(o, "RR_HEADLESS=1"); o += 14;
     lstrcpyA(o, "RR_AUDIO=off"); o += 13;
     lstrcpyA(o, "RR_DETERMINISTIC=1"); o += 19;

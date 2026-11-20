@@ -210,7 +210,8 @@ static int LoadRrc(void)   /* the saved edits over the original pieces: how many
         if (rd && (h.spare[0] != 1 || h.piece0 == g_piece0))
             for (i = 0; i < h.n; i++) { int k = (h.piece0 + i * 0x100 - g_piece0) >> 8; if (k < 0 || k >= g_c.n) continue;
                 if (r[i].used & 1) memcpy((unsigned char *)&g_c.piece[k].halfA + RRC_FROM, r[i].a + RRC_FROM, RRC_SECSIZE - RRC_FROM);
-                if (r[i].used & 2) memcpy((unsigned char *)&g_c.piece[k].halfB + RRC_FROM, r[i].b + RRC_FROM, RRC_SECSIZE - RRC_FROM);
+                if (r[i].spare[1] & 1) g_c.piece[k].layout = 2;   /* (a fork made here: PlanForkAt) */
+                if ((r[i].used & 2) || (r[i].spare[1] & 1)) memcpy((unsigned char *)&g_c.piece[k].halfB + RRC_FROM, r[i].b + RRC_FROM, RRC_SECSIZE - RRC_FROM);
                 if (x && g_ra.ext && k < g_ra.next) g_ra.ext[k] = x[i];
                 n++; }
         if (rd && h.spare[1] > 0 && h.spare[1] <= g_c.n + 1) { g_pEnd = h.spare[1] - 1; }   /* (a course being built: its end) */
@@ -226,6 +227,8 @@ static int SaveRrcTo(const char *path)
         r[i].used = (mapped && ((i > 0 && g_src[i] == g_src[i - 1]) || g_c.piece[i].halfA.kindArg[0] == 7) ? 1 : 0) | (memcmp(   /* (pieces put in / taken out: the finish markers
                                                          given too - the course data's kind stream misses one in a block with a piece put in) */(unsigned char *)&g_c.piece[i].halfA + RRC_FROM, (unsigned char *)&g_orig[i].halfA + RRC_FROM, RRC_SECSIZE - RRC_FROM) ? 1 : 0)
                   | (g_c.piece[i].layout == 2 && memcmp((unsigned char *)&g_c.piece[i].halfB + RRC_FROM, (unsigned char *)&g_orig[i].halfB + RRC_FROM, RRC_SECSIZE - RRC_FROM) ? 2 : 0);
+        if (PlanNewFork(i)) { r[i].spare[1] = 1; r[i].used &= ~2u; }   /* (a fork made here: the game makes its block a split road - road\course_edit.c CeForkEdited - with B's
+                                                                   curves from the b half; the rest of B the game's own, its place beside A not overwritten with A's copy) */
         memcpy(r[i].a, &g_c.piece[i].halfA, RRC_SECSIZE); memcpy(r[i].b, &g_c.piece[i].halfB, RRC_SECSIZE); }
     memset(&h, 0, sizeof h); h.magic = RRC_MAGIC; h.version = RRC_VERSION; h.track = g_track; h.level = 0; h.n = g_c.n; h.piece0 = g_piece0; h.secSize = RRC_SECSIZE; h.spare[0] = mapped; h.spare[1] = g_pEnd + 1;   /* (spare[1]: a course being built - its end + 1, the plan's points kept in spare[2..]) */
     {   RrcExtra *x = (RrcExtra *)calloc(g_c.n, sizeof(RrcExtra));   /* (version 2: the extras after the records - painted terrain bands, the forest) */
@@ -376,11 +379,12 @@ static void Status(const char *fmt, ...)
 static void Title(void) { char t[200]; sprintf(t, "Open Rash Course Editor - track %d (every level)%s", g_track, g_dirty ? " *" : ""); SetWindowTextA(g_main, t); }
 
 static void PlanInv(void);   /* (the plan, small and big: drawn again) */
+static int PlanNewFork(int k); static void PlanForkFields(void);   /* (the forks made in the editor: below) */
 static void ForestFill(int k);   /* (the Terrain toolbar, below: a forest piece's object row from its terrain points) */
 static void Redraw(void)   /* everything that shows the course */
 {   if (g_list) { ListView_SetItemCountEx(g_list, g_open ? g_c.n : 0, LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL); InvalidateRect(g_list, NULL, FALSE); }
     if (g_open) { int k; for (k = 0; g_ra.ext && k < g_c.n && k < g_ra.next; k++) if (g_ra.ext[k].forest[0] | g_ra.ext[k].forest[1]) ForestFill(k);   /* (the trees follow the terrain points) */
-        C3_Frames(&g_c); C3_FramesB(&g_c); }
+        PlanForkFields(); C3_Frames(&g_c); C3_FramesB(&g_c); }
     PlanInv(); InvalidateRect(g_prof, NULL, FALSE); g_meshDirty = 1; Title(); }
 
 static void PickFill(void);   /* (below: the open picker follows the choice) */
@@ -1439,6 +1443,47 @@ static int PlanStartAt(int k)
     Status("Plan: the race starts at piece %d now (the old piece %d) - %d piece%s %s%s (Ctrl+Z: undo)", g_c.start, k, d < 0 ? -d : d, d == 1 || d == -1 ? "" : "s", d < 0 ? "taken out after the start" : "put in before it",
         g_lvFin[0] >= 0 && g_lvFin[0] <= g_c.start ? " - a finish now lies at the start: set it again (right-click a point)" : "");
     return 1; }
+/* a fork (user, 2026-11-20: "forking the road ... place an offshoot off the road and allows the player and ai take it ... the vertex will appear in a different colour so
+   then i can start drawing off it"): the game's road is a chain of course blocks and a split road is one opening / closing pair round two of them (road\course_edit.c
+   CeForkBlock), so "Fork here" makes the whole course block under the point a split: its pieces carriageway B as well (layout 2), B a copy of A swinging out to the side
+   and back in its middle (both roads alike for CE_SAME pieces at each end, as the game's splits), joining A again at the block's end.  B's points (blue) are dragged as
+   any other's.  Saved: RrcPiece.spare[1] bit 0 on its pieces, B in their b halves; the game makes the split at the race start.  Not over a split there already, not the
+   course's first block (the game holds it by its first node) */
+#define CE_SAME 0x51
+static int PlanNewFork(int k) { return k >= 0 && k < g_c.n && g_orig && g_c.piece[k].layout == 2 && g_orig[k].layout != 2; }
+static void PlanForkFields(void)   /* B's place beside A on the forks made here (splitX / splitSlope, as the game keeps them: course3d.h C3_FramesB) - from the curves */
+{   int k; for (k = 0; k < g_c.n; k++) if (PlanNewFork(k)) { RoadPiece *pc = &g_c.piece[k]; int first = !PlanNewFork(k - 1);
+        pc->splitSlope = (first ? 0 : g_c.piece[k - 1].splitSlope) + pc->halfB.curve - pc->halfA.curve;
+        pc->splitX = first ? 0 : g_c.piece[k - 1].splitX + g_c.piece[k - 1].splitSlope; } }
+static int PlanBlockRange(int k, int *ks, int *ke)   /* the course block piece k is in: pieces ks .. ke - 1 (the game's own course data: g_pcur0's first word) */
+{   unsigned id; if (!g_pcur0 || !g_src || k < 0 || k >= g_c.n || g_src[k] < 0 || g_src[k] >= g_n0) return 0;
+    id = g_pcur0[g_src[k]][0]; *ks = k; *ke = k + 1;
+    while (*ks > 0 && g_src[*ks - 1] >= 0 && g_pcur0[g_src[*ks - 1]][0] == id) (*ks)--;
+    while (*ke < g_c.n && g_src[*ke] >= 0 && g_pcur0[g_src[*ke]][0] == id) (*ke)++;
+    return 1; }
+static int PlanForkAt(int k)
+{   int ks, ke, i, n, q; Undo *u;
+    if (!PlanBlockRange(k, &ks, &ke)) { Status("Plan: no course data here to fork"); return 0; }
+    n = ke - ks;
+    if (ks == 0) { Status("Plan: the course's first block (pieces 0..%d) cannot fork - choose a point further on", ke - 1); return 0; }
+    for (i = ks - 1; i <= ke; i++) if (i >= 0 && i < g_c.n && g_c.piece[i].layout == 2) { Status("Plan: there is a split road here (or next to it) already"); return 0; }
+    if (n < 2 * CE_SAME + 20) { Status("Plan: this course block (pieces %d..%d) is too short to fork - %d pieces, a fork takes %d or more", ks, ke - 1, n, 2 * CE_SAME + 20); return 0; }
+    u = UndoBeginWhole();
+    q = (n - 2 * CE_SAME) / 4; if (q > 45) q = 45;
+    for (i = ks; i < ke; i++) { RoadPiece *pc = &g_c.piece[i]; int j = i - ks - CE_SAME - (n - 2 * CE_SAME - 4 * q) / 2;
+        pc->layout = 2; pc->halfB = pc->halfA;
+        if (j >= 0 && j < 4 * q) { pc->halfB.curve += (j < q || j >= 3 * q) ? 1 : -1; Derive(&pc->halfB, 0xb8); } }   /* (B: out to the right and back - drag its points to shape it) */
+    UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(ks + n / 2, 1);
+    Status("Plan: pieces %d..%d forked - B (blue points) leaves A at %d and joins it at %d; drag B's points to shape it (the first and last %d pieces stay beside A, as the game's forks).  In True 3D every rider can take either road", ks, ke - 1, ks + CE_SAME, ke - CE_SAME, CE_SAME);
+    return 1; }
+static int PlanUnforkAt(int k)
+{   int ks, ke, i; Undo *u;
+    if (!PlanNewFork(k)) { Status("Plan: no fork made here"); return 0; }
+    for (ks = k; ks > 0 && PlanNewFork(ks - 1); ks--) ; for (ke = k; ke < g_c.n && PlanNewFork(ke); ke++) ;
+    u = UndoBeginWhole();
+    for (i = ks; i < ke; i++) { g_c.piece[i].layout = g_orig[i].layout; g_c.piece[i].halfB = g_orig[i].halfB; g_c.piece[i].splitX = g_orig[i].splitX; g_c.piece[i].splitSlope = g_orig[i].splitSlope; }
+    UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(k, 0);
+    Status("Plan: the fork over pieces %d..%d removed (Ctrl+Z: back)", ks, ke - 1); return 1; }
 /* right-drag a point (user, 2026-11-20: "if i hold right click and drag a vertex i want you to conform the previous vertex points before it with minimal adjustments to
    make it smoothly meet the dragged vertex"): the curves of the pieces a .. k - 1 before point k changed as little as they can be (least squares) for piece k to come
    to the drop, leaving it the way it did (the road on from k keeps its shape, carried with the point); a the point before k, then further back while the bend that
@@ -1510,9 +1555,12 @@ static void PlanConformPaint(HDC dc, const PlanXf *t)   /* the drag: the bend (c
 static void PlanPointMenu(HWND w, int v, int x, int y)   /* right-click on point v: start / each level's finish there */
 {   HMENU m = CreatePopupMenu(); POINT p = { x, y }; int i, cmd; char lb[48];
     AppendMenuA(m, MF_STRING, 100, "Start here"); AppendMenuA(m, MF_SEPARATOR, 0, NULL);
+    {   int ks, ke; if (PlanNewFork(v)) AppendMenuA(m, MF_STRING, 110, "Remove the fork here");
+        else if (PlanBlockRange(v, &ks, &ke)) { sprintf(lb, "Fork here (course block, pieces %d..%d)", ks, ke - 1); AppendMenuA(m, MF_STRING, 111, lb); }
+        AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
     for (i = 0; i < 5; i++) { sprintf(lb, "Level %d finish here%s", i + 1, g_lvFin0[i] < 0 ? " (none on this track)" : ""); AppendMenuA(m, MF_STRING | (g_lvFin0[i] < 0 ? MF_GRAYED : 0), 101 + i, lb); }
     ClientToScreen(w, &p); cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, w, NULL); DestroyMenu(m);
-    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); }
+    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); else if (cmd == 110) PlanUnforkAt(v); else if (cmd == 111) PlanForkAt(v); }
 
 /* the plan's mouse: a press on a point chooses it (the 3D view goes there), dragging it moves it (a move waiting: Enter applies); a drag on the ground moves
    the view, a click there: none chosen */
@@ -3617,6 +3665,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                 for (i = 0; i < g_c.n; i++) { int c = g_c.piece[i].halfA.curve; if (c < 0) c = -c; if (c > mx) mx = c; }
                 LOG("test plan conform applied: piece %d at %.0f %.0f (aimed %.0f %.0f), heading %.5f (was %.5f), sharpest curve %d; %s", k, g_c.frame[k].x, g_c.frame[k].z, tx, tz, g_c.frame[k].heading, h0, mx, g_status); }
             gp = strchr(gp, ';'); if (gp) gp++; } }
+    if (getenv("CE_TESTFORK")) { int k = atoi(getenv("CE_TESTFORK")), ok = PlanForkAt(k), i, nb = 0; for (i = 0; i < g_c.n; i++) nb += PlanNewFork(i);   /* (tests) "<piece>": Fork here */
+        LOG("test fork at %d: %d, %d pieces forked; %s", k, ok, nb, g_status);
+        if (getenv("CE_TESTSAVEAS")) LOG("test fork: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); }
     if (getenv("CE_TESTPLANSRC")) { int i; char o[600], *w = o; for (i = 44; i < 100 && i < g_c.n && w - o < 560; i++) w += sprintf(w, " %d:%d", i, g_src[i]); LOG("test plan src:%s", o); }   /* (tests) */
     if (getenv("CE_TESTPLANDRAG")) { int kk = 0, dxp = 0, dyp = 0;   /* (tests) "<piece> <dx> <dy>": the big plan open, the plan point nearest that piece dragged dx, dy pixels (and held: its reach dots) */
         const char *gp = getenv("CE_TESTPLANDRAG"); int first = 1;   /* (several: ";" between - each applied before the next when CE_TESTPLANAPPLY) */

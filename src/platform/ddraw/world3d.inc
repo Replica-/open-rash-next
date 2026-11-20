@@ -34,6 +34,8 @@ static int g_w3On, g_w3Init; static int g_w3Piece0;
 /* the game asks which carriageway every rider must take at a split (race/physics.c): 1 = A, 0 = their own choice (the original) */
 static int g_crActive;   /* a custom race is being run (customrace.inc): every rider takes A, the race is Pseudo 3D (its bends come from the editor) */
 __declspec(dllexport) int __stdcall RR_ForkPick(void) { return g_crActive ? 1 : (g_w3On ? g_w3fork : 0); }
+static int g_w3forkWant;   /* (the course has the Course Editor's forks: True 3D with forks on - road\course_edit.c CeForksTell, before RR_World3DLoad) */
+__declspec(dllexport) void __stdcall RR_SetForks(int on) { g_w3forkWant = on; }
 /* the game asks at the race start (road\road_build.c, before it builds the road): True 3D with forks off -> it builds ONE road, the course's splits never
    exist (its course file too: world3d\t<track>_l<level>_1r.rrx).  Test switch RR_NOFORK=0: the course as it is (the forks-on experiment) */
 __declspec(dllexport) int __stdcall RR_World3DWanted(void);
@@ -1055,7 +1057,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         const RoadSection *a = &g_w3c.piece[i].halfA;
         if (a->curve != live->curve[i] || a->hill != live->hill[i] || a->edgeL != live->edgeL[i] || a->edgeR != live->edgeR[i]) bad = 1 + i;
     }
-    if (bad) { LOG("world3d: %s does not match this race's road (%d) - not used", path, bad); W3Free(); return 0; }
+    if (bad) { LOG("world3d: %s does not match this race's road (%d: piece 0 at %d, the race's at %d; %d / %d pieces) - not used", path, bad, g_w3Piece0, live->piece0, g_w3c.n, live->n); W3Free(); return 0; }
     if (!g_w3Init) {
         ID3D11Device *dev = (ID3D11Device *)SDL_GetPointerProperty(SDL_GetRendererProperties(g_ren), SDL_PROP_RENDERER_D3D11_DEVICE_POINTER, NULL);
         if (!R3_Init(&g_w3r, dev)) { LOG("world3d: renderer: %s", g_w3r.err); W3Free(); return 0; }
@@ -1073,7 +1075,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     {   /* True 3D has no forks: every split road is its left road A only (Pseudo 3D keeps the game's forks).  Test switch RR_NOFORK=0: the
            game's forks in the 3D world, the other carriageway built round the camera like the original's view (course3d.h C3_SoftFrames; best with RR_W3DIST=33) */
         const char *e = getenv("RR_NOFORK");
-        g_w3fork = (e && *e) ? *e != '0' : 1;
+        g_w3fork = (e && *e) ? *e != '0' : !g_w3forkWant;   /* (the editor's forks: on) */
         g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork; g_w3c.noGround = !g_vid.ground;   /* (True 3D detail > Ground detail: rocks, fallen leaves) */
         if (ViewerOn()) { g_w3c.forkPick = 0; g_w3c.soft = 0; }   /* (the Course Editor's viewer: the forks always seen - both carriageways, B on its own path: course3d.h C3_FramesB) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
@@ -1562,7 +1564,9 @@ static void W3Place(int w, int h, const float *m, double vp)
                 if (W3TexToScreen(t->u, t->v, t->x, t->y, ux, rd->v[0], &hx, &hy)) { wx += hx; wy = hy; nw++; } rs = t->tx->rspr; break; }
             if (W3MapObj(s, w, h, m, vp, mx, my, &md)) {   /* (the shadow mapped: its middle = the bike's lateral on the 3D road, W3MapObj) */
                 double tx = (mx[0] + mx[1] + mx[2] + mx[3]) / 4;
-                g_w3bikeDx = nw ? tx - wx / nw : lastDx; lastDx = g_w3bikeDx; }   /* (no lamp in this picture: as the frame before) */
+                g_w3bikeDx = nw ? tx - wx / nw : lastDx; lastDx = g_w3bikeDx;   /* (no lamp in this picture: as the frame before) */
+                {   double cx, ry, sc; if (W3OrigAt(s->objDepth, &cx, &ry, &sc) && fabs(s->lat - (gx - cx) / sc) >= 60) g_w3bikeDx = lastDx = 0; } }   /* (on a split road's B the game's
+                                                         lateral is from A's centre, not where its picture is: the bike was put off the screen - there the game's own place) */
             if (getenv("RR_W3LOGBIKE")) LOG("w3bikedraw vp %.3f x %.2f dx %.2f wheel %d %.2f shadowx %.2f wy %.2f frame %lu rspr %d", vp, nw ? wx / nw + g_w3bikeDx : gx + g_w3bikeDx, g_w3bikeDx, nw, nw ? wx / nw : 0, gx, wy, (unsigned long)g_frame, rs); } }
     for (i = 0; i < g_w3ns; i++) {   /* where each polygon goes (P: x[4], y[4]) and how far away it is (D) */
         const W3Spr *s = &g_w3s[i];
@@ -2356,7 +2360,7 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
             hd = (2 * f3 - 3 * f2 + 1) * th0 + (f3 - 2 * f2 + fr) * m0 + (-2 * f3 + 3 * f2) * th1 + (f3 - f2) * m1; }
         fwd[0] = (float)sin(hd); fwd[1] = 0; fwd[2] = (float)cos(hd); WxView(hd);   /* (the sun's bearing from it: weather.inc) */
         g_w3view[0] = eye[0]; g_w3view[1] = eye[2]; g_w3view[2] = hd; g_w3view[3] = u; g_w3view[4] = p;   /* (the player's bike straight ahead of it: W3MapObj) */
-        if (getenv("RR_W3LOGCAM")) LOG("w3cam vp %.4f camX %d camY %d hd %.5f eye %.1f %.1f %.1f u %.2f", vp, g_w3cam.camX, g_w3cam.camY, hd, eye[0], eye[1], eye[2], u); }   /* (test switch RR_W3LOGCAM=1: the camera each frame) */
+        if (getenv("RR_W3LOGCAM")) LOG("w3cam vp %.4f camX %d camY %d hd %.5f eye %.1f %.1f %.1f u %.2f half %d B %d", vp, g_w3cam.camX, g_w3cam.camY, hd, eye[0], eye[1], eye[2], u, g_w3cam.half, g_w3camB); }   /* (test switch RR_W3LOGCAM=1: the camera each frame) */
     R3_LookTo(view, eye, fwd, up);
     sx = (float)tw / w; sy = (float)th / h;
     {   double fpx = W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1);   /* focal length in frame pixels */

@@ -67,6 +67,7 @@ const RrcExtra *rr_CourseEditExtra(unsigned pos)
 typedef struct CeMap { int *blk; int vlen, slen, fin0, fin1; int *src; } CeMap;
 static CeMap g_map[256]; static int g_nmap; static int *g_mapCourse;
 static int *g_finRec[64], g_finWas[64], g_finNow[64], g_nfin;   /* the levels' finishes (type 6 entries of a block's table) moved with their pieces: as they were / now */
+int rr_ceForks;                   /* the edited course's forks made this race (CeForkEdited: the shim turns True 3D's forks on for them - RR_SetForks) */
 int rr_ceMaps;                    /* blocks with a map (0: the course data is stepped as it is - render\anim_cursor.c) */
 
 static const CeMap *MapOf(int blk) { int i; for (i = 0; i < g_nmap; i++) if ((int)g_map[i].blk == blk) return &g_map[i]; return 0; }
@@ -111,10 +112,87 @@ static void MapFinishes(const CeMap *m)
 /* the race set-up (RoadRingBuild, before the game prepares the course): the edited course's pieces put in / taken out into the course `course` (its
    first block - the course is a chain of blocks { 0, ?, next, prev, header, length }, a split { 1, ?, A's first, B's first } / { 2, ?, A's last,
    B's last, the block after }: ui\custom_race.c).  A course whose map does not fit its blocks is raced without the edits. */
+/* a new fork (user, 2026-11-20: "forking the road ... allows the player and ai take it"): normal block q of the main road made a split road - A = the block as it
+   is, B = a copy of it (its own header, road rows and scenery tables) between a split's opening and closing nodes { 1 / 2, 6, A, B, the block before / after,
+   0x3c00, 0x10000, 0 } (as the game's own: test switch RR_CHAINLOG); B's curve per piece from curveB (NULL: A's).  Both roads alike for the SPLIT_SAME pieces at
+   each end (ui\custom_race.c - TreePrepare copies them).  The course is loaded fresh for every race: nothing to put back.  1 = made */
+#define CE_SPLIT_SAME 0x51
+static int CeForkBlock(int *q, const signed char *curveB)
+{
+    int *s1, *s2, *b, *hb, *ha, len, i; unsigned char *rb;
+    if (!q || q[0] != 0 || !q[3] || !q[2]) return 0;
+    len = q[5]; ha = (int *)q[4];
+    if (len < 2 * CE_SPLIT_SAME + 8 || !ha || !ha[1]) return 0;
+    s1 = (int *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 32); s2 = (int *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 32); b = (int *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 32);
+    hb = (int *)HeapAlloc(GetProcessHeap(), 0, 0x34); rb = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, 0x10 + 2 * len);
+    if (!s1 || !s2 || !b || !hb || !rb) return 0;
+    memcpy(hb, ha, 0x34); memcpy(rb, (void *)ha[1], 0x10 + 2 * len); hb[1] = (int)rb;
+    {   /* B's own copies of the block's other tables (header words 2 .. 7: the scenery, its draw-time sprite-slot caches - shared with A, a slot one road freed was
+           left stale in the other's: ScenerySpriteDraw > StripCellPick read a null entry).  They lie one after another (as the rows: 0x10 + 2 x length up to word 2),
+           each as long as the gap to the next one (word 7: to word 9) */
+        int t, u; for (t = 2; t <= 7; t++) { unsigned a0 = (unsigned)ha[t], a1 = 0xffffffffu, sz; void *cp;
+            if (!a0) continue;
+            for (u = 1; u <= 9; u++) if (u != t && (unsigned)ha[u] > a0 && (unsigned)ha[u] < a1) a1 = (unsigned)ha[u];
+            sz = a1 - a0; if (a1 == 0xffffffffu || sz > 0x100000) continue;
+            if ((cp = HeapAlloc(GetProcessHeap(), 0, sz)) != NULL) { memcpy(cp, (void *)a0, sz); hb[t] = (int)cp; } } }
+    if (curveB) for (i = CE_SPLIT_SAME; i < len - CE_SPLIT_SAME; i++) rb[0x10 + 2 * i] = (unsigned char)curveB[i];
+    s1[0] = 1; s1[1] = 6; s1[2] = (int)q; s1[3] = (int)b; s1[4] = q[3]; s1[5] = 0x3c00; s1[6] = 0x10000;
+    s2[0] = 2; s2[1] = 6; s2[2] = (int)q; s2[3] = (int)b; s2[4] = q[2]; s2[5] = 0x3c00; s2[6] = 0x10000;
+    b[0] = 0; b[1] = 6; b[2] = (int)s2; b[3] = (int)s1; b[4] = (int)hb; b[5] = len;
+    {   int *prev = (int *)q[3], *next = (int *)q[2];   /* (the block before / after: their links to the split nodes now) */
+        if (prev[0] == 0) prev[2] = (int)s1; else if (prev[0] == 2) prev[4] = (int)s1;
+        if (next[0] == 0) next[3] = (int)s2; else if (next[0] == 1) next[4] = (int)s2;
+        q[2] = (int)s2; q[3] = (int)s1; }
+    return 1;
+}
+/* test switch RR_FORKMAKE="<block> <bend> <quarter>": the main road's normal block number <block> (0 = the first) forked - B bent by +bend for <quarter> pieces, -bend
+   for twice that, +bend again in the middle of the block: out to the side and back (bend 1, quarter 45: ~2000 units out) */
+static void CeForkMake(int *course)
+{
+    char e[64]; int blk = -1, bend = 1, quarter = 45, i = 0, g = 0, *q = course, len; signed char *cv;
+    if (!GetEnvironmentVariableA("RR_FORKMAKE", e, sizeof e) || !q) return;
+    {   int v[3] = { -1, 1, 45 }, nv = 0, neg = 0, cur = 0, in = 0; const char *c;   /* (three whole numbers - no sscanf here: the game is linked without stdio's) */
+        for (c = e; ; c++) { if (*c == '-') neg = 1; else if (*c >= '0' && *c <= '9') { cur = cur * 10 + (*c - '0'); in = 1; } else { if (in && nv < 3) v[nv++] = neg ? -cur : cur; cur = 0; in = 0; neg = 0; if (!*c) break; } }
+        blk = v[0]; bend = v[1]; quarter = v[2]; if (blk < 0 || quarter < 1) return; }
+    while (q && g++ < 4096) {   /* the main road's normal blocks (the splits passed along A) */
+        if (q[0] == 0) { if (i++ == blk) break; q = (int *)q[2]; }
+        else if (q[0] == 1) q = (int *)q[2]; else if (q[0] == 2) q = (int *)q[4]; else { q = 0; break; } }
+    if (!q || q[0] != 0) { Log("fork make: no such block"); return; }
+    len = q[5];
+    if (len < 2 * CE_SPLIT_SAME + 4 * quarter || !(cv = (signed char *)HeapAlloc(GetProcessHeap(), 0, len))) { Log("fork make: the block is too short"); return; }
+    for (i = 0; i < len; i++) cv[i] = (signed char)((unsigned char *)((int *)q[4])[1])[0x10 + 2 * i];
+    for (i = 0; i < 4 * quarter; i++) { int k = CE_SPLIT_SAME + (len - 2 * CE_SPLIT_SAME - 4 * quarter) / 2 + i, c = cv[k] + (i < quarter || i >= 3 * quarter ? bend : -bend); cv[k] = (signed char)(c > 127 ? 127 : c < -127 ? -127 : c); }
+    {   char m[120]; wsprintfA(m, "fork make: block %d (%d pieces) %s - B bent by %d over %d pieces", blk, len, CeForkBlock(q, cv) ? (rr_ceForks++, "made a split road") : "NOT forked", bend, 4 * quarter); Log(m); }
+    HeapFree(GetProcessHeap(), 0, cv);
+}
+/* the edited course's own forks (the Course Editor's "Fork here": RrcPiece.spare[1] bit 0 on the pieces of a block made a split road, B's road in their b halves):
+   each main-road block whose middle record is marked, forked with B's curves from the records - after the map (the blocks' lengths as edited) */
+static void CeForkEdited(int *course)
+{
+    int *q = course, p = 0, g = 0, b0 = g_rrcHdr.piece0 >> 8, made = 0;
+    while (q && g++ < 4096) {
+        if (q[0] == 0) { int len = q[5], *next = (int *)q[2], mid = p + len / 2 - b0;
+            if (mid >= 0 && mid < g_rrcHdr.n && (g_rrc[mid].spare[1] & 1)) { signed char *cv = (signed char *)HeapAlloc(GetProcessHeap(), 0, len); int i;
+                if (cv) { for (i = 0; i < len; i++) { int r2 = p + i - b0; cv[i] = (signed char)((r2 >= 0 && r2 < g_rrcHdr.n) ? ((const RoadSection *)g_rrc[r2].b)->curve : 0); }
+                    if (CeForkBlock(q, cv)) { char m[96]; made++; wsprintfA(m, "course edit: a fork made over pieces %d..%d", p, p + len - 1); Log(m); }
+                    HeapFree(GetProcessHeap(), 0, cv); } }
+            p += len; q = next; }
+        else if (q[0] == 1) { int *a = (int *)q[2], *e2 = a; while (e2 && e2[0] == 0 && g++ < 4096) { p += e2[5]; e2 = (int *)e2[2]; } q = e2 && e2[0] == 2 ? (int *)e2[4] : 0; }   /* (a split: along A to its join) */
+        else if (q[0] == 2) q = (int *)q[4];
+        else break; }
+    rr_ceForks = made;
+}
+/* the shim told whether this race has the editor's forks (rr_ceForks): True 3D then has forks on - every rider free to take either road (world3d.inc RR_SetForks) */
+static void CeForksTell(void)
+{   static void (__stdcall *f)(int); static int looked;
+    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (void (__stdcall *)(int))GetProcAddress(sh, "RR_SetForks") : 0; looked = 1; }
+    if (f) f(rr_ceForks > 0); }
+
 void rr_CourseEditMap(int *course)
 {
     int *q = course, p = 0, g = 0, r = 0, split = 0, b0, ok = 1, i, lo, hi;
     if (course != g_mapCourse) g_nmap = g_nfin = 0;   /* (another course: its blocks are not ours to put back) */
+    rr_ceForks = 0; CeForkMake(course); CeForksTell();   /* (test switch RR_FORKMAKE: a new fork) */
     if (GetEnvironmentVariableA("RR_CHAINLOG", 0, 0) && course) {   /* (test switch RR_CHAINLOG=1: the course's chain of blocks - each node's first words, a block's header) */
         int *c2 = course, g3 = 0, *seen[64], ns = 0, k3; char b[300];
         while (c2 && g3++ < 200) { for (k3 = 0; k3 < ns && seen[k3] != c2; k3++) ; if (k3 < ns) break; if (ns < 64) seen[ns++] = c2;
@@ -124,6 +202,7 @@ void rr_CourseEditMap(int *course)
             else if (c2[0] == 2) c2 = (int *)c2[4];
             else break; } }
     MapUndo(); g_mapCourse = course;
+    if (g_rrc && !g_rrcHdr.spare[0] && q && q[0] == 0) { CeForkEdited(course); CeForksTell(); return; }   /* (no pieces put in / taken out: only the forks, if any) */
     if (!g_rrc || !g_rrcHdr.spare[0] || !q || q[0] != 0) return;
     b0 = g_rrcHdr.piece0 >> 8;   /* (record i: piece b0 + i of the course; spare[0] - 1: its original, numbered the same way) */
     while (r < g_rrcHdr.n && b0 + r < 0) r++;
@@ -156,6 +235,7 @@ void rr_CourseEditMap(int *course)
     for (i = 0; i < g_nmap; i++) { g_map[i].blk[5] = g_map[i].vlen; if (g_map[i].fin1) *(int *)(g_map[i].blk[4] + 0x2c) = g_map[i].fin1; MapFinishes(&g_map[i]); }
     for (i = 0; i < g_nfin; i++) *g_finRec[i] = g_finNow[i];   /* (TreePrepare puts this level's into the block header next) */
     rr_ceMaps = g_nmap;
+    CeForkEdited(course); CeForksTell();   /* (the editor's forks) */
     if (g_nmap) { char b[96]; wsprintfA(b, "course edit: %d course block(s) with pieces put in / taken out", g_nmap); Log(b); }
 }
 
