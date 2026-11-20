@@ -740,14 +740,15 @@ static void C3_GroundHedge(C3Course *c, int k, int i, const C3Row *r0, const C3R
 #define C3_GSHRUB 12
 #define C3_GFOREST 13   /* (FOREST: the same, a wall of trees C3_FORESTH high - its picture square, no top: the treetops against the sky) */
 #define C3_FORESTH 4500.0
-static void C3_Shrub(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex, double HT, double aspect, int topOn)
+#define C3_FORESTOUT 8000.0   /* (FOREST past P2: far further than a hedge - user, 2026-11-21 note: "make the forest wall texture extend beyond p2") */
+static void C3_Shrub(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex, double HT, double aspect, int topOn, double reach)   /* reach: how far past P2 */
 {
     int left = i < C3_NP / 2, in = left ? i + 1 : i, out = left ? i : i + 1, beyond = i == 0 || i == C3_NP - 2, p2 = i == 1 || i == C3_NP - 3, rr, e;
     float P[2][2][2][3], uv[8]; double rep = c->L / (aspect * HT), ui[2], uo[2], hi[2], ho[2];
     for (rr = 0; rr < 2; rr++) { const C3Row *R = rr ? r1 : r0; double w = R->u[out] - R->u[in], sg = w < 0 ? -1 : 1;
         ui[rr] = R->u[in]; hi[rr] = R->h[in] - 20; ho[rr] = R->h[out] - 20;
-        uo[rr] = beyond ? R->u[in] + sg * (fabs(w) < C3_SHRUBOUT ? fabs(w) : C3_SHRUBOUT) : p2 ? R->u[out] + sg * C3_SHRUBOUT : R->u[out];
-        if (beyond && fabs(w) > 1) ho[rr] = R->h[in] + (R->h[out] - R->h[in]) * (uo[rr] - R->u[in]) / w - 20;
+        uo[rr] = beyond ? R->u[in] + sg * (fabs(w) < reach && reach <= C3_SHRUBOUT ? fabs(w) : reach) : p2 ? R->u[out] + sg * reach : R->u[out];   /* (FOREST beyond P2: its whole reach, past the strip too) */
+        if (beyond && fabs(w) > 1) ho[rr] = fabs(uo[rr] - R->u[in]) <= fabs(w) ? R->h[in] + (R->h[out] - R->h[in]) * (uo[rr] - R->u[in]) / w - 20 : R->h[out] - 20;
         for (e = 0; e < 2; e++) { double u = e ? uo[rr] : ui[rr], h = e ? ho[rr] : hi[rr];
             C3_Point(c, k + rr, u, h, P[rr][e][0]); C3_Point(c, k + rr, u, h + HT, P[rr][e][1]); } }
     for (e = 0; e < 2; e++) {   /* the long sides: the road's (e 0) and the far one */
@@ -1036,9 +1037,9 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                     C3_GroundTrees(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], ra->groundTree[tex[i] - ra->ground0] - 1);
                 if (ra && (i == 0 || i == C3_NP - 2) && tex[i] >= ra->ground0 && tex[i] < ra->ground0 + ra->nground && tex[i] - ra->ground0 < 4 && ra->groundHedge[tex[i] - ra->ground0])   /* (REDWOOD beyond P2: its hedge) */
                     C3_GroundHedge(c, k, i, r0, r1, ra->groundHedge[tex[i] - ra->ground0] - 1);
-                if (!g_c3Editor && ra && ra->shrubTex && ra->nground > C3_GSHRUB && tex[i] == ra->ground0 + C3_GSHRUB) C3_Shrub(c, k, i, r0, r1, ra->shrubTex - 1, C3_HEDGEH, 2.0, 1);   /* (SHRUB: its block) */
+                if (!g_c3Editor && ra && ra->shrubTex && ra->nground > C3_GSHRUB && tex[i] == ra->ground0 + C3_GSHRUB) C3_Shrub(c, k, i, r0, r1, ra->shrubTex - 1, C3_HEDGEH, 2.0, 1, C3_SHRUBOUT);   /* (SHRUB: its block) */
                 if (!g_c3Editor && ra && ra->forestTex && ra->nground > C3_GFOREST && tex[i] == ra->ground0 + C3_GFOREST) { const RxTex *ft = &ra->tex[ra->forestTex - 1];
-                    C3_Shrub(c, k, i, r0, r1, ra->forestTex - 1, C3_FORESTH, ft->h > 0 ? (double)ft->w / ft->h : 1.0, 0); }   /* (FOREST: its wall of trees) */
+                    C3_Shrub(c, k, i, r0, r1, ra->forestTex - 1, C3_FORESTH, ft->h > 0 ? (double)ft->w / ft->h : 1.0, 0, C3_FORESTOUT); }   /* (FOREST: its wall of trees) */
                 if (dirt) { C3_Mark(c, m0, 0xef);   /* dirt ground (vertex alpha 239: render3d.h - mottled, pebbles, bumps) and rocks on the flatter of it */
                     if (fabs(r0->h[i + 1] - r0->h[i]) < fabs(r0->u[i + 1] - r0->u[i]) * 0.6) C3_DirtRocks(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], m == M_VERGE, ra ? ra->rockTex : -1); } }
         } else C3_Quad(c, a, b, cc, d, (ground && r0->mat[i] != M_CURB && r0->mat[i] != M_WALK) ? ground : C3_Colour(r0->mat[i], kind, k));

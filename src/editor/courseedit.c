@@ -1894,7 +1894,7 @@ static void FpMarks(const C3Frame *F, int kc)   /* P3D (flat): each footpath's h
             else { SDL_SetRenderDrawColor(g_ren, 64, 224, 255, 255); for (u = 0; u < 2; u++) SDL_RenderLine(g_ren, r.x + 2, r.y + 5 + u, r.x + 14, r.y + 5 + u); } } } }
 static void BlockGrid(const C3Frame *F, int kc)
 {   static const unsigned char bc[7][3] = { { 60, 235, 235 }, { 255, 230, 60 }, { 255, 150, 40 }, { 255, 70, 70 }, { 190, 120, 255 }, { 255, 110, 200 }, { 215, 215, 215 } };
-    int j, side, c, lo, hi;
+    int j, side, c, lo, hi, nl = 0; static struct { float x, y; int d; char t[12]; } lab[400];   /* (the ground cells' texture names, drawn over the grid) */
     g_gridHk = -1;
     if (g_hx >= 0 && !g_lsel && !g_drag) { int ww = 0, wh = 0; float sc; SDL_GetWindowSize(g_sw, &ww, &wh); sc = ww > 0 && g_lastW > 0 ? (float)g_lastW / ww : 1.0f;   /* (the cell under the mouse) */
         g_gridHk = CellPickAt((int)(g_hx * sc), (int)(g_hy * sc), &g_gridHp, &g_gridHc); }
@@ -1913,7 +1913,20 @@ static void BlockGrid(const C3Frame *F, int kc)
                 if ((ln = LanePickAt(j, (int)(g_hx * sc), (int)(g_hy * sc))) >= 0) { const RoadSection *a = ViewSec(j), *b2 = ViewSec(j + 1); double lu[4], lh[4] = { 0, 0, 0, 0 };
                     lu[0] = -250.0 * a->lanesL + 250.0 * ln; lu[1] = lu[0] + 250; lu[3] = -250.0 * b2->lanesL + 250.0 * ln; lu[2] = lu[3] + 250;
                     GridCell(F, j, u, h, bc[c], 0); GridCell(F, j, lu, lh, bc[c], 1); continue; } }
-            GridCell(F, j, u, h, bc[c], hot); } } }
+            GridCell(F, j, u, h, bc[c], hot); }
+        if (c <= 4 && !g_gridUnder && j >= kc - 2 && j <= kc + 12 && nl < 400) {   /* a ground cell: the name of the texture on it, at its middle (user, 2026-11-21: "label each cell (center) with the
+                                                                     name of the texture please if its ground") - painted, else the side's own (its strip: C3_ProfileTex) */
+            const RoadSection *a = ViewSec(j); int ha = g_half && g_vc->piece[j].layout == 2, t = C3_CellTex(g_vra, j, ha, side, c);
+            if (t < 0) { int tx[14]; C3_ProfileTex(g_vra, (RoadSection *)a, j, ha, tx); t = side ? tx[c == 4 ? 13 : 9 + c] : tx[c == 4 ? 0 : 4 - c]; }
+            if (t >= 0 && t < g_vra->ntex) { float pt[3]; C3_PointF(g_vc, F, j + 0.5, (u[0] + u[1] + u[2] + u[3]) / 4, (h[0] + h[1] + h[2] + h[3]) / 4 + 8, pt);
+                if (Project(pt, &lab[nl].x, &lab[nl].y) && lab[nl].x > 0 && lab[nl].y > 24 && lab[nl].x < g_lastW && lab[nl].y < g_lastH) {
+                    snprintf(lab[nl].t, sizeof lab[nl].t, "%.8s", g_vra->tex[t].name); lab[nl].d = abs(j - kc); nl++; } } } }
+    {   static SDL_FRect used[400]; int nu = 0, d, i, q;   /* (nearest pieces first; a label that would cover one already drawn left out) */
+        for (d = 0; d <= 14; d++) for (i = 0; i < nl; i++) { SDL_FRect r; float tw; if (lab[i].d != d || !lab[i].t[0]) continue;
+            tw = (float)strlen(lab[i].t) * 8; r.x = lab[i].x - tw / 2 - 2; r.y = lab[i].y - 6; r.w = tw + 4; r.h = 12;
+            for (q = 0; q < nu; q++) if (r.x < used[q].x + used[q].w && used[q].x < r.x + r.w && r.y < used[q].y + used[q].h && used[q].y < r.y + r.h) break;
+            if (q < nu || nu >= 400) continue; used[nu++] = r;
+            SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 150); SDL_RenderFillRect(g_ren, &r); SDL_SetRenderDrawColor(g_ren, 255, 255, 255, 255); SDL_RenderDebugText(g_ren, r.x + 2, r.y + 2, lab[i].t); } } }
 /* the lane of piece k under frame pixel x, y (0 .. 7 from the road's left edge, as course3d.h C3_Lanes lays them: 250 wide from -250 x lanesL); -1 none (user, 2026-11-18:
    "how do i nominate where the yellow lane is and where white lanes are": a Road block onto one lane - RrcExtra.lane) */
 static int g_pickLane = -1;
