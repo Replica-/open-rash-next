@@ -15,6 +15,7 @@ RR_DATA(int *,         g_sceneTreeNode);
 RR_REPLACE_FAST(CursorIsFar, rr_CursorIsFar, 4);  int rr_IsFarCursor(const void *p);   /* road_build.c: the shadow front cursor of bigger road rings */
 int __fastcall rr_CursorIsFar(char *p) { return rr_IsFarCursor(p) || p == &(*(char *)&rec_ringCursorFar.g_ringCursorFar); }
 
+extern int rr_ceMaps; int rr_CourseEditSrc(int blk, int v);   /* road\course_edit.c */
 /* ---- sprite scan-line copy ---- */
 /* copy every second byte (alternating sprite columns) of one image strip into the other, honouring the clip offset for mode 2 */
 RR_REPLACE_FAST(SpriteColumnsCopy, rr_SpriteColumnsCopy, 4);
@@ -27,10 +28,10 @@ void __fastcall rr_SpriteColumnsCopy(int *s)
     n = s[5] >> 8;
     src = (unsigned char *)(I32(I32(s[sel + 2], 0x10), 4) + 0x11);
     dst = (unsigned char *)(I32(I32(s[3 - sel], 0x10), 4) + 0x11);
-    if (*s == 2) {
-        src += (I32(s[sel + 2], 0x14) - n) * 2;
-        dst += (I32(s[3 - sel], 0x14) - n) * 2;
-    }
+    {   int is = *s == 2 ? I32(s[sel + 2], 0x14) - n : 0, id = *s == 2 ? I32(s[3 - sel], 0x14) - n : 0;
+        if (rr_ceMaps) { is = rr_CourseEditSrc(s[sel + 2], is << 8) >> 8; id = rr_CourseEditSrc(s[3 - sel], id << 8) >> 8; }   /* (the parts of a block cut for a fork
+                                                                     - road\course_edit.c CeForkRange: their pieces' course data through their maps) */
+        src += is * 2; dst += id * 2; }
     if (0 < n) {
         do {
             unsigned char v = *src;

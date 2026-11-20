@@ -992,6 +992,15 @@ void __fastcall rr_Cursor4Step(int *c, int delta)
 
 extern int rr_ceMaps; int rr_CourseEditSrc(int blk, int v);   /* road\course_edit.c: an edited course's pieces put in / taken out (0: none) */
 static void BankSubStep(int o, int d);
+/* the key and scenery cursors of a block part bound at position sp (24.8): bound at the data's start and stepped there with the markers' firing off (g_cursorFlags,
+   as the game prepares the course: TreePrepare) - bound at a position they take the data's END (KeyCursorBind / SceneryCursorBind: any position but 0), a fork's part
+   read the wrong records (ScenerySpriteDraw: garbage); stepped with the firing on, the sprite sets of hundreds of pieces loaded (the slots went stale) */
+static void KeyScenBindNear(int obj, int hdr, int sp)
+{   char fl = g_cursorFlags; int d;
+    KeyCursorBind(obj + 0x70, I32(hdr, 0xc), 0); SceneryCursorBind(obj + 0xb4, I32(hdr, 0x10), 0);
+    g_cursorFlags = 0;
+    for (d = sp; d > 0; ) { int st = d > 0x100 ? 0x100 : d; d -= st; SpriteCursorStep(obj + 0x70, st); EffectAdvance(obj + 0xb4, st); }
+    g_cursorFlags = fl; }
 /* ---- resource bank binding ---- */
 /* bind a 'sprite set' to a cursor object: its eight embedded cursors take the matching sub-blocks of the set's header (offset table at +0x10) */
 RR_REPLACE_FAST(SpriteSetBind, rr_SpriteSetBind, 12);
@@ -1005,6 +1014,16 @@ void __fastcall rr_SpriteSetBind(int obj, int set, char flag)
     else           *pos = 0;
     sp = rr_ceMaps ? (flag == 0 ? rr_CourseEditSrc(set, *pos) : 0) : *pos;
     hdr = I32(set, 0x10);
+    if (rr_ceMaps && flag == 0 && sp != I32(hdr, 0) << 8 && sp >= 0) {   /* (bound at its end, a block whose end is not its course data's: a part of a block cut for a fork,
+                                                                          road\course_edit.c CeForkRange - its cursors bound at the data's start and stepped to its end there;
+                                                                          bound at the data's own end they were hundreds of pieces off: ScenerySpriteDraw wrote through a stale entry) */
+        int d = sp;   /* (the key and scenery cursors bound at sp directly, as the original binds them - stepped, the scenery's effects fired for every piece passed) */
+        RowCursorBind(obj + 0x2c, I32(hdr, 4), 1); TableCursorBind(obj + 0x10, I32(hdr, 0x18), 1); FrameCursorBind(obj + 0x84, I32(hdr, 8), 1);
+        KeyScenBindNear(obj, hdr, sp); CursorInit(obj + 0x5c, I32(hdr, 0x24), 1);
+        TableCursor24Bind(obj + 0x38, I32(hdr, 0x14), 1); ImageCursorBind(obj + 0x1b8, ((int *)hdr)[7], *(int *)hdr, 1);
+        while (d > 0) { int st = d > 0x100 ? 0x100 : d; d -= st;
+            SectionCursorStep(obj + 0x10, st); FrameCursorStep(obj + 0x84, st); RowCursorStep(obj + 0x2c, st); RangeCursorStep(obj + 0x5c, st); Cursor4Step(obj + 0x38, st); KeyCursorStep(obj + 0x1b8, st); }
+        return; }
     RowCursorBind(obj + 0x2c, I32(hdr, 4), flag);
     TableCursorBind(obj + 0x10, I32(hdr, 0x18), flag);
     FrameCursorBind(obj + 0x84, I32(hdr, 8), flag);
@@ -1013,7 +1032,13 @@ void __fastcall rr_SpriteSetBind(int obj, int set, char flag)
     CursorInit(obj + 0x5c, I32(hdr, 0x24), flag);
     TableCursor24Bind(obj + 0x38, I32(hdr, 0x14), flag);
     ImageCursorBind(obj + 0x1b8, ((int *)hdr)[7], *(int *)hdr, flag);
-    if (rr_ceMaps && flag != 0 && rr_CourseEditSrc(set, 0) != 0) BankSubStep(obj, rr_CourseEditSrc(set, 0));   /* (its first piece taken out: the sub-cursors where it starts now) */
+    if (rr_ceMaps && flag != 0 && (sp = rr_CourseEditSrc(set, 0)) != 0) {   /* (its first piece taken out / a part of a block cut for a fork: the sub-cursors where it starts now -
+                                                                            the key and scenery cursors bound there directly: stepped, the scenery's effects fired for every piece passed,
+                                                                            hundreds for a fork's last part, the sprite slots exhausted - ScenerySpriteDraw read a stale one) */
+        int d = sp;
+        KeyScenBindNear(obj, hdr, sp);
+        while (d > 0) { int st = d > 0x100 ? 0x100 : d; d -= st;
+            SectionCursorStep(obj + 0x10, st); FrameCursorStep(obj + 0x84, st); RowCursorStep(obj + 0x2c, st); RangeCursorStep(obj + 0x5c, st); Cursor4Step(obj + 0x38, st); KeyCursorStep(obj + 0x1b8, st); } }
 }
 
 /* initialise an 0x1b0-byte record: header, then its eight embedded sub-objects (constructors with null storage) */

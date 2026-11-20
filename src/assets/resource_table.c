@@ -285,6 +285,8 @@ int __fastcall rr_SoundParamsCopy(int set, int n)
 {
     int snd, entry;
     if (set == 0) return 0;
+    if (IsBadReadPtr((void *)set, 0x1c * (n + 2) + 8) || ((snd = I32(set, 0xc)) != 0 && IsBadWritePtr((void *)snd, 0x50))) return 0;   /* (a stale cached entry - the original's sprite-slot
+                                                                 caches where a course has splits, render\scenery_draw.c: no entry, the caller draws nothing and fetches it again) */
     snd = I32(set, 0xc);
     entry = set + 0x1c + n * 0x1c;
     if (snd == 0) return entry;   /* (no object to set: an edited course's roadside sprite of a set without one - the original wrote through 0 and crashed: user, 2026-11-19) */

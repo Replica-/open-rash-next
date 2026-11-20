@@ -48,6 +48,9 @@ typedef struct GroundFrame {
 
 /* ---- scenery sprite on the road side ---- */
 /* o = road-object record (+0x3fc: sprite slot table), pos = placement record (+2 width, +3 sprite id, +4 flags: bit 0 = mirrored, bit 2 = animation attached), side = lane index, kind != 0 selects the per-lane slot (+0x78 + side*0xc) instead of the main slot (+100). Resolves the sprite (BankEntry / BankEntry2 / SoundParamsCopy), takes its dimensions into the 4096-entry table at tbl_shiftTable and queues the scaled span (DrawPoolAppendCells) unless it is off screen. */
+/* (the original's sprite-slot caches go stale where a course has splits - SoundParamsCopy through a recycled slot: Napa level 5, Peninsula, a fork cut into a
+   block (road\course_edit.c CeForkRange): a cached slot whose pointers lead nowhere is dropped and fetched again, not used) */
+static int SlotBad(const int *slot) { return !slot || IsBadReadPtr(slot, 24) || !slot[0] || IsBadWritePtr((void *)slot[0], 0x44) || !slot[1] || IsBadReadPtr((void *)slot[1], 12); }
 RR_REPLACE_FAST(ScenerySpriteDraw, rr_ScenerySpriteDraw, 16);
 void __fastcall rr_ScenerySpriteDraw(int *o, int pos, int side, char kind)
 {
@@ -65,6 +68,7 @@ void __fastcall rr_ScenerySpriteDraw(int *o, int pos, int side, char kind)
     else
         slot = *(int **)(o[0x3f] + 0x78 + side * 0xc);
     tabs = o + 0x3f;
+    if (slot != 0 && SlotBad(slot)) { slot = 0; if (kind == 0) *(int **)(o[0x3f] + 100) = 0; else *(int **)(o[0x3f] + 0x78 + side * 0xc) = 0; }   /* (stale: SlotBad) */
     if (slot != 0 && (spr = (unsigned *)*slot, spr != 0)) {
         spr[2] = slot[1];
         spr[0xf] = *(unsigned *)(&(*(char *)&tbl_objectTables.tbl_shiftTable) + slot[5] * 4);
@@ -89,11 +93,11 @@ void __fastcall rr_ScenerySpriteDraw(int *o, int pos, int side, char kind)
             *slot = iVar3;
         }
     }
+    if (*slot != 0 && IsBadReadPtr((void *)*slot, 16)) *slot = 0;   /* (the bank entry cached there stale: none this frame, fetched again next) */
     if (*slot == 0)
         return;
-    slot = (int *)SoundParamsCopy(*slot, 2);
-    if (slot == 0)
-        return;
+    {   int *cell = slot; slot = (int *)SoundParamsCopy(*slot, 2);
+        if (slot == 0) { *cell = 0; return; } }   /* (stale: SoundParamsCopy none - fetched again next time) */
     spr = (unsigned *)*slot;
     if (spr == 0)
         return;
