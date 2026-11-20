@@ -1077,6 +1077,9 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         const char *e = getenv("RR_NOFORK");
         g_w3fork = (e && *e) ? *e != '0' : !g_w3forkWant;   /* (the editor's forks: on) */
         g_w3c.forkPick = g_w3fork; g_w3c.soft = !g_w3fork; g_w3c.noGround = !g_vid.ground;   /* (True 3D detail > Ground detail: rocks, fallen leaves) */
+        {   const char *bt = getenv("RR_W3BTRUE"); if (!g_w3fork && (bt && *bt ? *bt == '1' : g_w3forkWant)) g_w3c.soft = 0; }   /* (a course with the Course Editor's forks: B on its
+                                                                                                                  own path as the editor draws it - course3d.h C3_FramesB - not built round the camera like
+                                                                                                                  the original's view; test switch RR_W3BTRUE=1 / 0: so for any course / not) */
         if (ViewerOn()) { g_w3c.forkPick = 0; g_w3c.soft = 0; }   /* (the Course Editor's viewer: the forks always seen - both carriageways, B on its own path: course3d.h C3_FramesB) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
