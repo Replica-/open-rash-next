@@ -12,11 +12,21 @@ static const unsigned k_c3GroundCol[C3_NGROUND] = { 0, 0, 0, 0, 0xd6c4a0u, 0x6e6
 static int C3_GroundIsPath(int n) { return n >= 0 && n < C3_NGROUND && (!strcmp(k_c3Ground[n], "SANDPATH") || !strcmp(k_c3Ground[n], "SLABS") || !strcmp(k_c3Ground[n], "TILES")); }   /* (a footpath's picture: the Course Editor's Footpaths list - SANDPATH the sand footpath, DUNES its ground: user, 2026-11-19 "two version of sand") */
 static const char *C3_GroundLabel(int n) { return n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "HOLE") ? "CLIFF HOLE" : n >= 0 && n < C3_NGROUND ? k_c3Ground[n] : "?"; }   /* (the Course Editor's name for it - user,
                                                                  2026-11-19 "rename hole as CLIFF HOLE": k_c3Ground keeps HOLE, its picture's file name) */
-#define C3_NROAD 2
-static const char *const k_c3Road[C3_NROAD] = { "COBBLE", "RAINBOW" };   /* (RAINBOW: user, 2026-11-19 - an animated road of coloured squares in waves: render3d.h vertex alpha 235) */   /* extra road surfaces (user, 2026-11-18: "for road can you add cobblestone texture"): <hd>\road\<NAME>.png
+#define C3_NROAD 4
+static const char *const k_c3Road[C3_NROAD] = { "COBBLE", "RAINBOW", "TRAM", "SPDBUMP" };   /* (TRAM: a lane with tram rails - a tram runs on it, world3d.inc W3Trams; SPDBUMP: a speed bump across it - a hump in the game, course3d.h C3_Lanes: user, 2026-11-20) */   /* (RAINBOW: user, 2026-11-19 - an animated road of coloured squares in waves: render3d.h vertex alpha 235) */   /* extra road surfaces (user, 2026-11-18: "for road can you add cobblestone texture"): <hd>\road\<NAME>.png
                                                                  512 x 512, tiling (analysis\redwood\cobble.py) - COBBLE: the shader's cobbles (vertex alpha 240, render3d.h),
                                                                  its rattle (road\course_edit.c rr_CourseEditCobble) */
 static unsigned *g_c3RoadPx[C3_NROAD];
+static unsigned C3G_Px(int r, int g, int b) { return 0xff000000u | (unsigned)(b < 0 ? 0 : b > 255 ? 255 : b) << 16 | (unsigned)(g < 0 ? 0 : g > 255 ? 255 : g) << 8 | (unsigned)(r < 0 ? 0 : r > 255 ? 255 : r); }
+static unsigned *C3G_Road(int S, int kind)   /* (no TRAM.png / SPDBUMP.png: asphalt with two steel rails at 30 / 70 % across, along v / a yellow and black striped band across the middle) */
+{   unsigned *p = (unsigned *)malloc((size_t)S * S * 4); int x, y;
+    if (!p) return NULL;
+    for (y = 0; y < S; y++) for (x = 0; x < S; x++) { unsigned g = (unsigned)(x * 73 + y * 151) * 2654435761u; int v = 74 + (int)((g >> 26) % 12), c = v, r = v, b = v + 2; double u = (double)x / S, w = (double)y / S;
+        if (kind == 0) { double d0 = fabs(u - 0.30), d1 = fabs(u - 0.70), d = d0 < d1 ? d0 : d1;
+            if (d < 0.022) r = c = b = 182 + (int)((g >> 27) % 16); else if (d < 0.034) r = c = b = 34; else if (d < 0.08) { r = c = 106; b = 102; } }
+        else if (w > 0.42 && w < 0.58) { int st = ((int)((u + w) * 12)) & 1; if (st) { r = 226; c = 186; b = 30; } else { r = c = b = 28; } }
+        p[y * S + x] = C3G_Px(r, c, b); }
+    return p; }
 static unsigned *C3G_Cobble(int S)   /* (no COBBLE.png: rows of grey setts, dark joints) */
 {   unsigned *px = (unsigned *)malloc((size_t)S * S * 4); int x, y;
     if (!px) return NULL;
@@ -126,7 +136,7 @@ static int C3_GroundArt(RxAssets *ra, const char *hdDir)
     for (n = 0; n < C3_NROAD && ra->ntex < 8192; n++) { RxTex *x; unsigned *px; int W = 512, H = 512;   /* (the road surfaces: in order - their codes are their places) */
         free(g_c3RoadPx[n]); g_c3RoadPx[n] = NULL;
         _snprintf(p, sizeof p - 1, "%s\\road\\%s.png", hdDir, k_c3Road[n]); p[sizeof p - 1] = 0;
-        if (!(px = hdDir[0] ? C3G_LoadPng(p, W, H) : NULL) && (px = !strcmp(k_c3Road[n], "RAINBOW") ? C3G_Rainbow(256) : C3G_Cobble(256)) != NULL) W = H = 256;
+        if (!(px = hdDir[0] ? C3G_LoadPng(p, W, H) : NULL) && (px = !strcmp(k_c3Road[n], "RAINBOW") ? C3G_Rainbow(256) : !strcmp(k_c3Road[n], "TRAM") ? C3G_Road(256, 0) : !strcmp(k_c3Road[n], "SPDBUMP") ? C3G_Road(256, 1) : C3G_Cobble(256)) != NULL) W = H = 256;
         if (!px) break;
         g_c3RoadPx[n] = px; x = &ra->tex[ra->ntex]; memset(x, 0, sizeof *x);
         _snprintf(x->name, sizeof x->name, "%.8s", k_c3Road[n]); x->name[8] = 0; x->w = W; x->h = H; x->gen = px; x->gpu = -1;

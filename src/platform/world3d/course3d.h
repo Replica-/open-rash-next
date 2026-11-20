@@ -557,6 +557,8 @@ static void C3_Span(C3Course *c, int k, double u0, double h0, double u1, double 
    at the curb's foot (user, 2026-11-15: "make the city gutters dip a little bit") - the outermost lanes end in that slope (C3_Lanes, gut) */
 #define C3_GUTW 45.0
 #define C3_GUTD 6.0
+#define C3_BUMPH 22.0   /* (a speed bump: its height, and its length along the road - SPDBUMP, C3_Lanes) */
+#define C3_BUMPW 90.0
 static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const RoadSection *s1, double o1, const RxAssets *ra, double gut)
 {
     int nl = (int)s0->lanesL + (int)s0->lanesR, j;
@@ -619,10 +621,16 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
                 uv[0] = C3_LU(nx[q]); uv[1] = 1; uv[2] = C3_LU(nx[q + 1]); uv[3] = 1; uv[4] = C3_LU(fx[q + 1]); uv[5] = 0; uv[6] = C3_LU(fx[q]); uv[7] = 0;
                 if (s0->kindFlags & 0x10) { uv[1] = uv[3] = 0; uv[5] = uv[7] = 1; }   /* rr_RoadsideStripDraw swaps the near and far edges of a 0x10 piece: the crossing
                                                                                        after a junction is the one before it turned round (zebra at the junction, the lane lines after it) */
-                if (cob) { double rep = c->L / (w0 > 1 ? w0 : 1), b0 = -fmod((k + 1) * rep, 64.0); uv[5] = uv[7] = (float)b0; uv[1] = uv[3] = (float)(b0 + rep); }   /* (cobbles: square, on from piece to piece) */
+                if (cob == 4) { uv[5] = uv[7] = 0; uv[1] = uv[3] = 1; }   /* (a speed bump: its band once a piece, across its middle) */
+                else if (cob) { double rep = c->L / (w0 > 1 ? w0 : 1), b0 = -fmod((k + 1) * rep, 64.0); uv[5] = uv[7] = (float)b0; uv[1] = uv[3] = (float)(b0 + rep); }   /* (cobbles: square, on from piece to piece) */
                 C3_QuadT(c, a, b, cc, d, C3_Colour(M_ROAD, 0, k), tex, uv); }
 #undef C3_LU
-            if (cob) C3_Mark(c, m0, cob == 2 ? 0xeb : 0xf0);   /* (cobbles: vertex alpha 240 - render3d.h, each stone bumped and glossy; the rainbow road: 235, animated) */
+            if (cob == 1 || cob == 2) C3_Mark(c, m0, cob == 2 ? 0xeb : 0xf0);
+            if (cob == 4 && !g_c3Editor) {   /* a speed bump in the game: a hump C3_BUMPH high over the band, C3_BUMPW long, across the lane (flat in the editor's own view) */
+                double dp = C3_BUMPW * 0.5 / c->L, pm = k + 0.5, ua = (n0 + f0) * 0.5, ub = (n1 + f1) * 0.5, om = (o0 + o1) * 0.5; float q[3][2][3]; int r;
+                for (r = 0; r < 3; r++) { double pp = pm + (r - 1) * dp, hh = r == 1 ? C3_BUMPH : 0; C3_Point(c, pp, ua + om, hh, q[r][0]); C3_Point(c, pp, ub + om, hh, q[r][1]); }
+                uv[0] = 0; uv[1] = 0.42f; uv[2] = 1; uv[3] = 0.42f; uv[4] = 1; uv[5] = 0.58f; uv[6] = 0; uv[7] = 0.58f;
+                C3_QuadT(c, q[0][0], q[0][1], q[1][1], q[1][0], C3_Colour(M_ROAD, 0, k), tex, uv); C3_QuadT(c, q[1][0], q[1][1], q[2][1], q[2][0], C3_Colour(M_ROAD, 0, k), tex, uv); }   /* (cobbles: vertex alpha 240 - render3d.h, each stone bumped and glossy; the rainbow road: 235, animated) */
         }
     }
 }

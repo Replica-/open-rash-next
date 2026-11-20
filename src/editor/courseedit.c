@@ -3659,6 +3659,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         if (sscanf(spec, "%d %d %d %d %d %d %d", &cat, &item, &k, &side, &cell, &cnt, &lane) >= 5) { char nm[40] = ""; LVITEMA it;
             {   int L = cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1;   /* (category 0 Road, 1 Curbs, 2 Ground, 3 Buildings, 4 Footpaths) */
                 g_bFill = -1; BlocksFill();
+                { const char *bar = strchr(spec, '|'); static char gbn[40]; if (bar) { sprintf(gbn, "%.39s", bar + 1); SetEnvironmentVariableA("CE_TESTGBNAME", gbn); _putenv_s("CE_TESTGBNAME", gbn); } }   /* (tests: "...|NAME" - this entry's block by name) */
                 if (item < 0 && getenv("CE_TESTGBNAME")) { int j, nb = ListView_GetItemCount(g_blk[L]); for (j = 0; j < nb; j++) { char b2[40] = ""; LVITEMA gi; memset(&gi, 0, sizeof gi); gi.pszText = b2; gi.cchTextMax = 40; SendMessageA(g_blk[L], LVM_GETITEMTEXTA, (WPARAM)j, (LPARAM)&gi);   /* (tests: item -1 = the block of that name) */
                     if (!strcmp(b2, getenv("CE_TESTGBNAME"))) { item = j; break; } }
                     if (item < 0) LOG("test gb: no block \"%s\" among %d in list %d", getenv("CE_TESTGBNAME"), nb, L); }

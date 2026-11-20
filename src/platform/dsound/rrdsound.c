@@ -59,6 +59,10 @@ __declspec(dllexport) void __stdcall RR_Splash(float strength,float pan){ if(str
    out when the calls stop (~0.15 s) */
 static volatile float g_cobSpd; static volatile DWORD g_cobT;
 __declspec(dllexport) void __stdcall RR_Cobble(float speed){ g_cobSpd=speed<0?0:(speed>1?1:speed); g_cobT=GetTickCount(); }
+/* a tram's bell (the ddraw shim's world3d.inc, a tram near the player - user, 2026-11-20 "when its near the player it should make a ding ding noise"): RR_Ding(volume
+   0..1, pan 0 left .. 1 right) - two strikes 0.32 s apart, each a struck bell: inharmonic partials of ~1.1 kHz, the higher ones dying faster */
+static volatile float g_dingVol, g_dingPan=0.5f; static volatile LONG g_dingReq;
+__declspec(dllexport) void __stdcall RR_Ding(float vol,float pan){ g_dingVol=vol<0?0:(vol>1?1:vol); g_dingPan=pan<0?0:(pan>1?1:pan); InterlockedExchange(&g_dingReq,1); }
 static double MasterGain(void)
 {   const BYTE *t=g_mixTab; int gv; if(!t) return 1.0; if(t[4*24+20]) return 0.0; gv=*(const int*)(t+4*24+16); if(gv<0) gv=0; if(gv>100) gv=100; return gv/100.0; }
 static void AmbMix(float *acc,int frames)
@@ -79,6 +83,13 @@ static void AmbMix(float *acc,int frames)
                 v=((cbA-cbB)*cbTh*3.0f+(w-cbW)*cbCl*0.35f+cbR2*1.4f)*cbL*0.9f;
                 cbTh*=0.9975f; cbCl*=0.992f;
                 acc[i*2]+=(float)(v*cg); acc[i*2+1]+=(float)(v*cg); } } }
+    {   static double ph[4], env[4], t2; static int left; static float dv, dp; static const double fr[4]={ 1120.0, 2980.0, 5540.0, 8410.0 }, dk[4]={ 1.6, 2.6, 4.6, 7.5 }, am[4]={ 0.55, 0.30, 0.16, 0.08 };   /* (the tram's bell: RR_Ding) */
+        if(InterlockedExchange(&g_dingReq,0)){ int q; dv=g_dingVol; dp=g_dingPan; for(q=0;q<4;q++) env[q]=am[q]; left=1; t2=0; }
+        if(env[0]>0.0005){ double cg=MasterGain();
+            for(i=0;i<frames;i++){ double v=0; int q;
+                if(left){ t2+=1.0/OUT_RATE; if(t2>=0.32){ for(q=0;q<4;q++) env[q]+=am[q]; left=0; } }   /* (the second strike) */
+                for(q=0;q<4;q++){ ph[q]+=fr[q]/OUT_RATE; if(ph[q]>=1) ph[q]-=1; v+=sin(ph[q]*6.283185307)*env[q]; env[q]*=1.0-dk[q]/OUT_RATE; }
+                v*=dv*0.45*cg; acc[i*2]+=(float)(v*(1.2-dp)); acc[i*2+1]+=(float)(v*(0.2+dp)); } } }
     if(lvl[1]<0.0005f && lvl[2]<0.0005f && want[1]==0 && want[2]==0 && thEnv<0.001f && spEnv<0.001f) return;
     for(i=0;i<frames;i++){ float wl, wr, l=0, r=0;
         for(k=1;k<3;k++) lvl[k]+=(want[k]-lvl[k])*0.00004f;   /* ~0.5 s fades */

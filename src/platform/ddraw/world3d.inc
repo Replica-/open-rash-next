@@ -1442,6 +1442,82 @@ static int W3Cars(R3Vert *v, int cap, R3Batch *b, int nbMax, double vp)
     }
     return nb; }
 
+/* ---- trams (user, 2026-11-20: "for the road, can we add tram tracks please, which a tram can spawn on. the tram probably should be 3d because it will be long.
+   also when its near the player it should make a ding ding noise") ----
+   A lane painted TRAM in the Course Editor (ground_art.h k_c3Road; RrcExtra.road / lane) is a tram line: each run of pieces with it, lane by lane, has a tram every
+   W3_TRAMGAP pieces going the lane's way (left of the centre line oncoming), W3_TRAMV pieces a game frame, back to the run's start at its end.  The tram: a box
+   W3_TRAML long bent along the road (W3CarXf, as the cars), its sides / ends from <mod>\hd\tram\SIDE.png (1024 x 256) / FRONT.png (256 x 256) - drawn ones
+   without them.  Nearer than W3_TRAMDING pieces to the player: its bell (rrdsound.dll RR_Ding), once each time one comes near.  Not solid: the riders go through */
+#define W3_TRAML 2600.0
+#define W3_TRAMW 230.0
+#define W3_TRAMH 330.0
+#define W3_TRAMV 0.028
+#define W3_TRAMGAP 120
+#define W3_TRAMDING 8.0
+#define W3_TRAMVX (16 * 8 * 30 * 3)   /* (room for the trams in sight: 16 x 8 slices x 30 vertices, x 3) */
+typedef struct W3TramRun { int k0, k1, j, dir; } W3TramRun;
+static W3TramRun g_w3tr[64]; static int g_w3ntr = -1; static const void *g_w3trExt; static int g_w3trN;
+static int W3TramTex(void)   /* the atlas: side (v 0 .. 0.5), front (u 0 .. 0.25, v 0.5 .. 1), roof grey (u 0.25 .. 1, v 0.5 .. 1) */
+{   static int tex = -1, gen = -1; unsigned *a, *sd = NULL, *fr = NULL; int x, y, d;
+    if (tex >= 0 && gen == g_w3texGen) return tex;
+    if (!(a = (unsigned *)malloc(1024 * 512 * 4))) return -1;
+    if (g_mwNDir < 0) MwDirs();
+    for (d = 0; d < g_mwNDir && !sd; d++) { char p[MAX_PATH]; _snprintf(p, sizeof p - 1, "%s\\hd\\tram\\SIDE.png", g_mwDir[d]); p[sizeof p - 1] = 0; if ((sd = C3G_LoadPng(p, 1024, 256)) != NULL) {
+        _snprintf(p, sizeof p - 1, "%s\\hd\\tram\\FRONT.png", g_mwDir[d]); p[sizeof p - 1] = 0; fr = C3G_LoadPng(p, 256, 256); } }
+    for (y = 0; y < 512; y++) for (x = 0; x < 1024; x++) { unsigned c;
+        if (y < 256) c = sd ? sd[y * 1024 + x] : (y < 40 ? 0xff3a3a3eu : y < 130 ? ((x % 92) < 70 && y > 60 ? 0xff3a2c24u : 0xffc4dee8u) : y > 226 ? 0xff202022u : 0xff2428c8u);   /* (drawn: cream band, windows, red body - ABGR) */
+        else if (x < 256) c = fr ? fr[(y - 256) * 256 + x] : (y < 400 && y > 290 && x > 30 && x < 226 ? 0xff3a2c24u : 0xff2428c8u);
+        else c = 0xff6a6a6eu;
+        a[y * 1024 + x] = c; }
+    free(sd); free(fr);
+    tex = R3_Texture(&g_w3r, a, 1024, 512); gen = g_w3texGen; free(a); return tex; }
+static void W3TramScan(void)   /* the course's tram lines (again when the course or its edits change) */
+{   int k, j, tram = -1, i;
+    g_w3ntr = 0; g_w3trExt = g_w3a.ext; g_w3trN = g_w3c.n;
+    for (i = 0; i < g_w3a.nroad; i++) if (!strcmp(g_w3a.tex[g_w3a.road0 + i].name, "TRAM")) tram = i;
+    if (tram < 0 || !g_w3a.ext) return;
+    for (j = 0; j < 8; j++) { int run = -1;
+        for (k = 0; k <= g_w3c.n && k < g_w3a.next; k++) { int on = 0;
+            if (k < g_w3c.n) { const RoadSection *s = &g_w3c.piece[k].halfA; unsigned rv;
+                if (j < (int)s->lanesL + (int)s->lanesR) { rv = g_w3a.ext[k].lane[0][j] ? g_w3a.ext[k].lane[0][j] : g_w3a.ext[k].road[0][j < (int)s->lanesL ? 0 : 1];
+                    on = (rv & (RRC_BAND | RRC_GEN | RRC_TEXG)) == (RRC_BAND | RRC_GEN) && (int)(rv & 0xff) == tram; } }
+            if (on && run < 0) run = k;
+            if (!on && run >= 0) { if (k - run >= 8 && g_w3ntr < 64) { W3TramRun *r = &g_w3tr[g_w3ntr++]; r->k0 = run; r->k1 = k - 1; r->j = j; r->dir = j < (int)g_w3c.piece[run].halfA.lanesL ? -1 : 1; } run = -1; } } }
+    LOG("world3d: %d tram line(s)", g_w3ntr); }
+static double W3LaneMid(int k, int j)   /* lane j's middle across piece k (C3_Lanes' grid) */
+{   const RoadSection *s = &g_w3c.piece[k < 0 ? 0 : k >= g_w3c.n ? g_w3c.n - 1 : k].halfA;
+    return -250.0 * s->lanesL + s->laneEdgeL + s->laneL * (250.0 / 256) + (j + 0.5) * 250; }
+static int W3Trams(R3Vert *v, int cap, double vp)   /* this frame's trams into v (W3TramTex's texture); returns the vertices */
+{   Car3DOut o; int r, t, tex; static unsigned char near_[64][16]; double pl = vp + 1.0, L = g_w3c.L, TL = W3_TRAML / L;
+    if (g_w3ntr < 0 || g_w3trExt != g_w3a.ext || g_w3trN != g_w3c.n) W3TramScan();
+    if (!g_w3ntr || (tex = W3TramTex()) < 0) return 0;
+    o.v = v; o.n = 0; o.cap = cap; o.xf = W3CarXf;
+    for (r = 0; r < g_w3ntr; r++) { const W3TramRun *R = &g_w3tr[r]; int len = R->k1 - R->k0 + 1, nt = len / W3_TRAMGAP + 1;
+        for (t = 0; t < nt && t < 16; t++) { double ph = fmod(t * (double)len / nt + g_frame * W3_TRAMV, (double)len), q = R->dir > 0 ? R->k0 + ph : R->k1 + 1 - ph, mid = q - R->dir * TL * 0.5, d = fabs(mid - pl);
+            W3CarPose pose; int s, NS = 8; static const float uvr[3][4] = { { 0, 0, 1, 0.5f }, { 0, 0.5f, 0.25f, 1 }, { 0.25f, 0.5f, 1, 1 } };
+            if (d < W3_TRAMDING && !near_[r][t]) { static void (__stdcall *ding)(float, float); near_[r][t] = 1;   /* the bell, once as it comes near */
+                if (!ding) { HMODULE m = GetModuleHandleA("rrdsound.dll"); ding = m ? (void (__stdcall *)(float, float))GetProcAddress(m, "RR_Ding") : 0; }
+                LOG("world3d: tram %d.%d near the player (%.1f pieces) - its bell", r, t, d);
+                if (ding && !g_vwHold) { double lat = 0; int i; for (i = 0; i < g_w3ns; i++) if (g_w3s[i].kind == RRO_PLAYER) { lat = g_w3s[i].lat; break; }
+                    ding((float)(1.0 - d / (W3_TRAMDING * 1.6)), (float)(0.5 + (W3LaneMid((int)mid, R->j) - lat) / 1200.0)); } }
+            else if (d > W3_TRAMDING * 2.5) near_[r][t] = 0;
+            if (mid < vp - 4 || mid > vp + 140) continue;   /* (out of sight) */
+            {   double um = W3LaneMid((int)mid, R->j), lat = 0, cp = vp + W3_EYE - 1.0; int i;   /* (not solid - the riders go through: while the camera or the player's bike is
+                                                                                                    inside it, not drawn, rather than the screen filled with it) */
+                for (i = 0; i < g_w3ns; i++) if (g_w3s[i].kind == RRO_PLAYER) { lat = g_w3s[i].lat; break; }
+                if ((fabs(mid - cp) < TL * 0.5 + 0.4 && fabs(um - g_w3cam.camX) < W3_TRAMW * 0.5 + 80) || (fabs(mid - pl) < TL * 0.5 + 0.2 && fabs(um - lat) < W3_TRAMW * 0.5 + 60)) continue; }
+            pose.q = mid; pose.u0 = W3LaneMid((int)mid, R->j); pose.L = L; pose.c = R->dir > 0 ? 1 : -1; pose.s = 0; o.ctx = &pose;
+            for (s = 0; s < NS; s++) {   /* slices along it (bent with the road): sides, roof; the ends at the first / last */
+                float z0 = (float)(-W3_TRAML * 0.5 + W3_TRAML * s / NS), z1 = (float)(-W3_TRAML * 0.5 + W3_TRAML * (s + 1) / NS), hw = (float)(W3_TRAMW * 0.5), y0 = 25, y1 = (float)W3_TRAMH;
+                float u0 = uvr[0][0] + (uvr[0][2] - uvr[0][0]) * s / NS, u1 = uvr[0][0] + (uvr[0][2] - uvr[0][0]) * (s + 1) / NS, nR[3] = { 1, 0, 0 }, nL[3] = { -1, 0, 0 }, nU[3] = { 0, 1, 0 };
+                float A[3] = { hw, y0, z0 }, B[3] = { hw, y0, z1 }, C[3] = { hw, y1, z1 }, D[3] = { hw, y1, z0 }, E[3] = { -hw, y0, z0 }, F[3] = { -hw, y0, z1 }, G[3] = { -hw, y1, z1 }, H2[3] = { -hw, y1, z0 };
+                float ta[2] = { u0, 0.5f }, tb[2] = { u1, 0.5f }, tc[2] = { u1, 0 }, td[2] = { u0, 0 }, ra2[2] = { 0.3f, 0.6f }, rb[2] = { 0.9f, 0.6f }, rc[2] = { 0.9f, 0.95f }, rd[2] = { 0.3f, 0.95f };
+                Car3D_Quad(&o, A, B, C, D, ta, tb, tc, td, nR); Car3D_Quad(&o, F, E, H2, G, tb, ta, td, tc, nL);   /* (each side reads front -> back the same way) */
+                Car3D_Quad(&o, D, C, G, H2, ra2, rb, rc, rd, nU);
+                if (s == 0 || s == NS - 1) { float z = s == 0 ? z0 : z1, P0[3] = { -hw, y0, z }, P1[3] = { hw, y0, z }, P2[3] = { hw, y1, z }, P3[3] = { -hw, y1, z }, nz[3] = { 0, 0, s == 0 ? -1.0f : 1.0f };
+                    float f0[2] = { uvr[1][0], uvr[1][3] }, f1[2] = { uvr[1][2], uvr[1][3] }, f2[2] = { uvr[1][2], uvr[1][1] }, f3[2] = { uvr[1][0], uvr[1][1] };
+                    if (s == 0) Car3D_Quad(&o, P1, P0, P3, P2, f0, f1, f2, f3, nz); else Car3D_Quad(&o, P0, P1, P2, P3, f0, f1, f2, f3, nz); } } } }
+    return o.n; }
 #define W3_HALOV (6 * 4 * 256)   /* the sprites pass: room for the road users' light halos after the sprites' own vertices */
 /* where each sprite polygon is drawn this frame (P: x[4], y[4] frame pixels) and how far away (D; W3Spr.dObj per object) - made before the world pass,
    so the lights (W3Lights: the headlights' cones) start where the bikes are drawn */
@@ -2316,12 +2392,13 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
     {   /* per-frame geometry of the world pass: traffic as 3D cars, then the light halos (their point lights into f) */
         static R3Vert *cv; static int ccap; static R3Batch cb[66 + 256]; int nc = 0, i, nb = 0, nv = 0, need, nh;
         if (W3CarsOn()) for (i = 0; i < g_w3ns; i++) if (g_w3s[i].kind == RRO_CAR) nc++;
-        need = nc * 2400 + 18 * 400 + 512 * 6 * W3_SHL * W3_SHW + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (cars, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
+        need = nc * 2400 + W3_TRAMVX + 18 * 400 + 512 * 6 * W3_SHL * W3_SHW + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (cars, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
         W3HydCheck(p);   /* (a rider on a fire hydrant breaks it) */
         if (ccap < need) { ccap = need; cv = (R3Vert *)realloc(cv, sizeof(R3Vert) * ccap); if (!cv) ccap = 0; }
         if (cv) {
             PF_T0(pfX);   /* (RR_PROFILE: extras - grass included) */
-            if (nc && (nb = W3Cars(cv, ccap - 18 * 400 - W3_GRMAX * 6 - 6 * (16 + 210 * 12), cb, 64, vp)) > 0) nv = cb[nb - 1].first + cb[nb - 1].count;
+            if (nc && (nb = W3Cars(cv, ccap - 18 * 400 - W3_GRMAX * 6 - 6 * (16 + 210 * 12) - W3_TRAMVX, cb, 64, vp)) > 0) nv = cb[nb - 1].first + cb[nb - 1].count;
+            {   int nt = W3Trams(cv + nv, W3_TRAMVX, vp); if (nt > 0) { cb[nb].first = nv; cb[nb].count = nt; cb[nb].tex = W3TramTex(); cb[nb].alpha = 0; nb++; nv += nt; } }   /* (trams) */
             if (g_w3ngr && W3GrassTex() >= 0) { PF_T0(pfG); LARGE_INTEGER g0, g1, gf; int ng; QueryPerformanceCounter(&g0); ng = W3Grass(cv + nv, W3_GRMAX * 6, eye); QueryPerformanceCounter(&g1); QueryPerformanceFrequency(&gf);
                 g_grLast = ng / 6; g_grLastMs = (float)((g1.QuadPart - g0.QuadPart) * 1000.0 / gf.QuadPart); PF_ADD(PF_GRASS, pfG); if (ng > 0) { cb[nb].first = nv; cb[nb].count = ng; cb[nb].tex = W3GrassTex(); cb[nb].alpha = 0; nb++; nv += ng; } }   /* grass tufts on the green ground */
             nv += W3HydDraw(cv, nv, nv + 6 * (16 + 210 * 12), cb, &nb, 64 + 180, eye);   /* broken hydrants: the stumps, the water */

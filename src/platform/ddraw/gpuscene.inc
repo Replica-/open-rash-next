@@ -158,11 +158,31 @@ static int GpuCarPaint(DWORD *dst, int dw, int dh, const DWORD *orig, int w, int
         if (ss > 0.15f && GcHd(hh, h0) < 0.12f) dst[y * dw + x] = GcRgb(p, th, ts < 0.1f ? ts : ts * ss / (sm > 0.02f ? sm : 0.02f), vr * tv);   /* the paint */
         else if (mk == 2 && vv > 0.6f && ss < 0.3f) dst[y * dw + x] = GcRgb(p, th, ts * 0.3f, vv * 0.7f + (vr * tv > 1 ? 1 : vr * tv) * 0.3f); }   /* a pale reflection on it */
     free(src); free(m); return 1; }
+/* more pedestrians (user, 2026-11-20: "can we have more pedestrian types"): a pedestrian (a game object that is no car / rider: RRO_NONE with an object depth, its
+   picture standing - at least 1.4 times as tall as wide) wears one of GP_NVAR outfits or its own (3 in 10), chosen by its record (RrGpuQuad.objId) - its clothes'
+   colours (the saturated pixels that are not skin) turned to another hue, darker or lighter; skin, hair, grey / black / white clothes as they are.
+   Test switch RR_PEDVAR=<1..7>: every pedestrian in that outfit, 0 = all their own */
+#define GP_NVAR 7
+static int GpuPedVar(const RrGpuQuad *q, int w, int h)
+{   unsigned r; static int force = -2;
+    if (q->objDepth < 0 || q->objKind != RRO_NONE || (q->flags & RRG_SNAP) || w < 8 || h < w * 1.4) return 0;
+    if (force == -2) { const char *e = getenv("RR_PEDVAR"); force = e && *e ? atoi(e) : -1; }
+    if (force >= 0) return force <= GP_NVAR ? force : 0;
+    r = q->objId * 2654435761u; r ^= r >> 15; r *= 2246822519u; r ^= r >> 13;
+    return (r % 10u) < 3u ? 0 : 1 + (int)((r >> 8) % GP_NVAR); }
+static void GpuPedTint(DWORD *px, int w, int h, int var)   /* (below the head - the top fifth: face, hair - the clothes: coloured ones turned to the outfit's hue; dark ones
+                                                             coloured too in every other outfit; light grey / white as they are) */
+{   static const float dh[GP_NVAR] = { 0.17f, 0.33f, 0.50f, 0.62f, 0.78f, 0.90f, 0.42f }, dv[GP_NVAR] = { 1.0f, 0.85f, 1.1f, 0.75f, 1.0f, 1.15f, 0.6f }; int i, x, y; float hh, ss, vv;
+    for (y = h / 5; y < h; y++) for (x = 0; x < w; x++) { DWORD p; i = y * w + x; p = px[i]; if ((p >> 24) < 128) continue;
+        GcHsv(p, &hh, &ss, &vv);
+        if (ss >= 0.15f && vv >= 0.1f) px[i] = GcRgb(p, fmodf(hh + dh[var - 1], 1.0f), ss < 0.35f ? 0.35f : ss > 0.6f ? 0.6f : ss, vv * dv[var - 1]);   /* (not garish: 0.35 .. 0.6) */
+        else if ((var & 1) && vv < 0.45f && vv >= 0.06f) px[i] = GcRgb(p, dh[var - 1], 0.55f, vv * 1.25f); } }
 static GpuTex *GpuTexFor(const RrGpuQuad *q)
 {   int pitch=q->pitch?q->pitch:q->w, key=((q->flags&RRG_KEY)!=0)|((q->flags&RRG_TRUECOL)?2:0), w=q->w, h=q->h, l;   /* (key bit 2: true-colour rider tile, a texture of its own) */ DWORD hs=GpuHashMemo(q->bits[0],w,h,pitch,(q->flags&RRG_SNAP)!=0);
     int wpn=(q->objKind==RRO_PLAYER && WpClubSprite(q->riderSprite))?WpPicture():0; if(wpn>0) hs^=0x9e3779b9u*(unsigned)wpn;   /* the player swinging the club: drawn as the chosen weapon (weapons.inc) - a texture of its own per choice */
     int cv=0, cc=0; if(q->objKind==RRO_CAR && q->name[0] && !(q->flags&RRG_SNAP) && HdTexOn() && _strnicmp(q->name,"TAXI",4) && _strnicmp(q->name,"POLICE",6)) GpuCarPick(q->objId,HdCarVariants(q->name),&cv,&cc);
-    if(cv) hs^=0x7f4a7c15u*(unsigned)cv; if(cc) hs^=0x5bd1e995u*(unsigned)cc;   /* (a traffic car in one of its family's other pictures / another paint: a texture of its own; taxis and police cars keep their livery) */
+    if(cv) hs^=0x7f4a7c15u*(unsigned)cv; if(cc) hs^=0x5bd1e995u*(unsigned)cc;
+    int pv=GpuPedVar(q,w,h); if(pv) hs^=0x27d4eb2fu*(unsigned)pv;   /* (a pedestrian in another outfit: a texture of its own) */   /* (a traffic car in one of its family's other pictures / another paint: a texture of its own; taxis and police cars keep their livery) */
     unsigned k=((((unsigned)(size_t)q->bits[0]>>4)*2654435761u) ^ hs ^ (unsigned)(w*7+h*13+key))%GPU_TEXSLOTS, i; GpuTex *e, *freeSlot=NULL; DWORD *px;
     for(i=0;i<64;i++){ e=&g_gt2[(k+i)%GPU_TEXSLOTS];
         if(!e->bits){ if(!freeSlot) freeSlot=e; break; }
@@ -195,6 +215,7 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
             free(px); px=hx; w*=4; h*=4; e->hd=2; }
         free(rp); }
     if(cc && !e->hd) GpuCarPaint(px,w,h,px,w,h,cc);   /* (no HD picture: the original texture repainted) */
+    if(pv) GpuPedTint(px,w,h,pv);   /* (a pedestrian's outfit) */
     for(l=0;l<RRG_MAXMIP+4;l++){ DWORD *nx; int nw, nh; e->lv[l]=GpuUpload(px,w,h); e->nl=l+1; if(!e->lv[l] || (w==1 && h==1)) break; nx=GpuHalve(px,w,h,&nw,&nh); free(px); px=nx; w=nw; h=nh; if(!px) break; }
     free(px); return e; }
 
