@@ -50,6 +50,9 @@ static C3Course g_c; static RxAssets g_ra; static RoadPiece *g_orig; static int 
 /* pieces put in / taken out (the plan: a dragged point's stretches given the pieces their length needs): each piece is made from an original one (g_src;
    the same twice = one put in, one missed = one taken out); g_orig[i] = original piece g_src[i], so "changed" stays per piece (road\course_edit.h) */
 static int g_pEnd = -1;   /* (the plan: a course being built - the road drawn to this piece (New track: the start; Shift+click lays it on: PlanExtend); -1 the whole course) */
+static int g_lock[2] = { -1, -1 };   /* locked plan points (user, 2026-11-21: "lock vertex points by right clicking on them ... only two vertex points can be locked and
+                                        you can only right click drag on the ones between the lock points ... if there is no 2nd lock then anything past the first lock point can be
+                                        moved but nothing before it"): -1 none; a right-drag bends only the road between them (PlanConformDrag) */
 static int g_forkFrom = -1;   /* (a fork begun - "Fork from here": its first piece, -1 none; drawn magenta on the plan) */
 static int g_lvFin0[5], g_lvFin[5];   /* each level's finish (its marker: a section with kindArg 7, level; road\road_build.c rr_RoadSectionFill): in the extract / the course now (-1 none) */
 static RoadPiece *g_ext; static int g_n0, *g_src, g_start0, g_finish0, g_pcurOwn; static unsigned (*g_pcur0)[6]; static unsigned short (*g_bind0)[2][4];
@@ -266,7 +269,7 @@ static void FreeGame(void)
 static void FreeCourse(void)
 {   FreeGame(); free(g_c.piece); free(g_c.frame); free(g_c.frameB); free(g_c.v); free(g_c.vpiece); free(g_c.bdead); free(g_c.pairA); free(g_c.pairB); free(g_c.bldg); memset(&g_c, 0, sizeof g_c);
     if (g_pcurOwn) free(g_ra.pcur); if (g_bind0 != g_ra.bind) free(g_bind0); g_pcurOwn = 0; g_pcur0 = NULL; g_bind0 = NULL;
-    free(g_ra.file); free(g_ra.bind); free(g_ra.ext); memset(&g_ra, 0, sizeof g_ra);   /* (pcur points into file) */ free(g_orig); g_orig = NULL; free(g_ext); g_ext = NULL; free(g_src); g_src = NULL; g_n0 = 0; g_open = 0; g_pvSel = -1; g_nmv = 0; g_pEnd = -1; g_forkFrom = -1; }
+    free(g_ra.file); free(g_ra.bind); free(g_ra.ext); memset(&g_ra, 0, sizeof g_ra);   /* (pcur points into file) */ free(g_orig); g_orig = NULL; free(g_ext); g_ext = NULL; free(g_src); g_src = NULL; g_n0 = 0; g_open = 0; g_pvSel = -1; g_nmv = 0; g_pEnd = -1; g_forkFrom = -1; g_lock[0] = g_lock[1] = -1; }
 static void CourseSet(int n, RoadPiece *pc, int *src)   /* the course now: n pieces pc, piece i made from original piece src[i] (both taken over) */
 {   int i;
     {   RrcExtra *nx = (RrcExtra *)calloc(n + 1, sizeof(RrcExtra)); int *at = (int *)malloc(sizeof(int) * (g_n0 + 1));   /* (the extras: each piece keeps its original's) */
@@ -870,6 +873,10 @@ static void PaintPlan(HWND w, HDC dc, RECT rc)
         int x = (int)PX2(&t, m >= 0 ? g_mv[m].tx : F->x), y = (int)PZ2(&t, m >= 0 ? g_mv[m].tz : F->z);
         HPEN ps = CreatePen(PS_SOLID, 2, RGB(255, 225, 60)); HBRUSH bs = CreateSolidBrush(RGB(255, 255, 255));   /* (yellow: red is a move that does not fit - a moved one hollow, its own colour seen) */
         SelectObject(dc, ps); SelectObject(dc, m >= 0 ? (HBRUSH)GetStockObject(NULL_BRUSH) : bs); Rectangle(dc, x - 8, y - 8, x + 9, y + 9); SelectObject(dc, pv); SelectObject(dc, bv); DeleteObject(ps); DeleteObject(bs); }
+    {   int li; for (li = 0; li < 2; li++) if (g_lock[li] >= 0 && g_lock[li] <= g_c.n) { const C3Frame *F = &g_c.frame[g_lock[li]]; int x = (int)PX2(&t, F->x), y = (int)PZ2(&t, F->z);   /* (locked points: red, a padlock bar) */
+            HPEN pl = CreatePen(PS_SOLID, 3, RGB(230, 40, 40)); HBRUSH bl = CreateSolidBrush(RGB(120, 0, 0)); SelectObject(dc, pl); SelectObject(dc, bl); Rectangle(dc, x - 7, y - 4, x + 8, y + 8);
+            SelectObject(dc, GetStockObject(NULL_BRUSH)); Arc(dc, x - 5, y - 11, x + 6, y + 2, x + 6, y - 4, x - 5, y - 4);
+            SelectObject(dc, pv); SelectObject(dc, bv); DeleteObject(pl); DeleteObject(bl); } }
     if (g_forkFrom >= 0 && g_forkFrom <= g_c.n) { const C3Frame *F = &g_c.frame[g_forkFrom]; int x = (int)PX2(&t, F->x), y = (int)PZ2(&t, F->z);   /* (a fork begun: its first point) */
         HPEN pm = CreatePen(PS_SOLID, 3, RGB(255, 60, 220)); HBRUSH bm2 = CreateSolidBrush(RGB(255, 120, 235)); SelectObject(dc, pm); SelectObject(dc, bm2); Rectangle(dc, x - 7, y - 7, x + 8, y + 8);
         SelectObject(dc, pv); SelectObject(dc, bv); DeleteObject(pm); DeleteObject(bm2); }
@@ -1504,7 +1511,7 @@ static int PlanUnforkAt(int k)
    to the drop, leaving it the way it did (the road on from k keeps its shape, carried with the point); a the point before k, then further back while the bend that
    takes is sharper than the game's (CE_MAXCURVE) or cannot reach - not over a split road.  Whole-number curves (rounded as they add up: the turn at k exact) */
 static int g_cfOn, g_cfK, g_cfA, g_cfOk, g_cfN; static double g_cfTx, g_cfTz, g_cfErr; static int *g_cfC; static double *g_cfX, *g_cfZ;   /* (the drag shown: pieces a .. k's curves, where they lie) */
-static int PlanConformTry(int a, int k, double tx, double tz, int *ci, double *px, double *pz, double *err)   /* 1 = done within the limits (ci: a .. k - 1's curves) */
+static int PlanConformTry(int a, int k, double x0, double z0, double tx, double tz, int *ci, double *px, double *pz, double *err)   /* 1 = done within the limits (ci: a .. k - 1's curves) */
 {   int n = k - a, i, it, pass, ok = 1; double L = g_c.L, S0 = a > 0 ? g_c.frame[a - 1].heading * L : 0, *o = (double *)malloc(sizeof(double) * n * 3), *c, *J, s, x, z, acc, prev;
     char *fx = (char *)calloc(n + 1, 1);   /* (pieces held at the game's limit: the bend that would take them past it left to the others - a course already turning at
                                               the limit had every bend refused, user's note 2026-11-20) */
@@ -1513,7 +1520,7 @@ static int PlanConformTry(int a, int k, double tx, double tz, int *ci, double *p
     for (i = 0; i < n; i++) c[i] = o[i] = g_c.piece[a + i].halfA.curve;
     for (pass = 0; pass < n && ok; pass++) { int nf = 0, more = 0;
         for (it = 0; it < 40; it++) { double r[3], M[3][3], b[3], lam[3], det, Jx, Jz; int p, q;   /* (Gauss-Newton over the free pieces: c = o + J'lam, J (c - c now) = -r) */
-            s = S0; x = g_c.frame[a].x; z = g_c.frame[a].z;
+            s = S0; x = x0; z = z0;
             for (i = 0; i < n; i++) { px[i] = x; pz[i] = z; s += c[i]; x += L * sin(s / L); z += L * cos(s / L); } px[n] = x; pz[n] = z;
             r[0] = x - tx; r[1] = z - tz; r[2] = 0; for (i = 0; i < n; i++) r[2] += c[i] - o[i];
             if (fabs(r[0]) < 0.2 && fabs(r[1]) < 0.2 && fabs(r[2]) < 1e-6) break;
@@ -1529,44 +1536,84 @@ static int PlanConformTry(int a, int k, double tx, double tz, int *ci, double *p
         for (i = 0; i < n; i++) if (!fx[i]) { if (c[i] > CE_MAXCURVE + 0.01 || c[i] < -CE_MAXCURVE - 0.01) { c[i] = c[i] > 0 ? CE_MAXCURVE : -CE_MAXCURVE; fx[i] = 1; more = 1; } else nf++; }   /* (past the limit: held there, solved again) */
         if (!more) break;
         if (nf < 3) ok = 0; }
-    acc = prev = 0; s = S0; x = g_c.frame[a].x; z = g_c.frame[a].z;
+    acc = prev = 0; s = S0; x = x0; z = z0;
     for (i = 0; i < n; i++) { double r1; acc += c[i]; r1 = floor(acc + 0.5); ci[i] = (int)(r1 - prev);   /* (rounded as they add up - a piece at the limit passing the rest on) */
         if (ci[i] > CE_MAXCURVE) ci[i] = CE_MAXCURVE; if (ci[i] < -CE_MAXCURVE) ci[i] = -CE_MAXCURVE; prev += ci[i];
         px[i] = x; pz[i] = z; s += ci[i]; x += L * sin(s / L); z += L * cos(s / L); } px[n] = x; pz[n] = z;
     if (fabs(prev - floor(acc + 0.5)) > 0.5) ok = 0;   /* (the turn at k not exact: the road after it would swing) */
+    for (it = 0; it < 60 && ok; it++) {   /* the rounding's miss closed: one unit of curve moved from one piece to another (the turn at k as it is) while that brings the end nearer
+                                             - a lock after the point (user, 2026-11-21) stays where it was, not ~30 units off */
+        double ex = x - tx, ez = z - tz, best = ex * ex + ez * ez, ix, iz; int bi = -1, bj = -1, p2, q2;
+        if (best < 4) break;
+        for (p2 = 0; p2 < n; p2++) for (q2 = 0; q2 < n; q2++) { double dx, dz, e2;   /* (+1 at p2, -1 at q2: the end turned about each by 1 / L) */
+            if (p2 == q2 || ci[p2] + 1 > CE_MAXCURVE || ci[q2] - 1 < -CE_MAXCURVE) continue;
+            dx = ((pz[n] - pz[p2]) - (pz[n] - pz[q2])) / L; dz = (-(px[n] - px[p2]) + (px[n] - px[q2])) / L;
+            e2 = (ex + dx) * (ex + dx) + (ez + dz) * (ez + dz); if (e2 < best - 0.01) { best = e2; bi = p2; bj = q2; } }
+        if (bi < 0) break;
+        ci[bi]++; ci[bj]--;
+        s = S0; ix = x0; iz = z0; for (i = 0; i < n; i++) { px[i] = ix; pz[i] = iz; s += ci[i]; ix += L * sin(s / L); iz += L * cos(s / L); } px[n] = ix; pz[n] = iz;
+        if ((ix - tx) * (ix - tx) + (iz - tz) * (iz - tz) >= ex * ex + ez * ez) { ci[bi]--; ci[bj]++; s = S0; ix = x0; iz = z0; for (i = 0; i < n; i++) { px[i] = ix; pz[i] = iz; s += ci[i]; ix += L * sin(s / L); iz += L * cos(s / L); } px[n] = ix; pz[n] = iz; break; }
+        x = ix; z = iz; }
     *err = sqrt((x - tx) * (x - tx) + (z - tz) * (z - tz)); if (*err > 60) ok = 0;
     free(o); free(fx); return ok; }
+static int PlanLockBefore(int k) { int a = -1, i; for (i = 0; i < 2; i++) if (g_lock[i] >= 0 && g_lock[i] < k && g_lock[i] > a) a = g_lock[i]; return a; }   /* (the lock before / after k, -1 none) */
+static int PlanLockAfter(int k) { int b = -1, i; for (i = 0; i < 2; i++) if (g_lock[i] > k && (b < 0 || g_lock[i] < b)) b = g_lock[i]; return b; }
+static int PlanIsLocked(int k) { return k >= 0 && (g_lock[0] == k || g_lock[1] == k); }
+static const char *PlanLockWhy(int k)   /* NULL = point k may be right-dragged; else why not */
+{   int nl = (g_lock[0] >= 0) + (g_lock[1] >= 0);
+    if (PlanIsLocked(k)) return "Plan: this point is locked (right-click it to unlock)";
+    if (nl && PlanLockBefore(k) < 0) return "Plan: only the points after the first lock can be moved";
+    if (nl == 2 && PlanLockAfter(k) < 0) return "Plan: only the points between the two locks can be moved";
+    return NULL; }
+static int g_cf2N; static int *g_cf2C; static double *g_cf2X, *g_cf2Z;   /* (with a lock after the point: the road from it to the lock, bent so the lock stays where it is, as it was) */
 static int PlanConformLow(int k)   /* the first piece the bend can reach back to: after a split road (two pieces clear), not the course's first */
 {   int i; for (i = k - 1; i > 1; i--) if (g_c.piece[i].layout == 2 || g_c.piece[i - 1].layout == 2 || g_c.piece[i - 2].layout == 2) return i + 1; return 1; }
 static void PlanConformDrag(const PlanXf *t, int k, double tx, double tz)   /* the drag to tx, tz: g_cf* (shown; PlanConformApply) */
-{   int lo = PlanConformLow(k), a, kp, kn, st = PlanStep(t), tries = 0; double err = 0;
-    g_cfOn = 1; g_cfK = k; g_cfTx = tx; g_cfTz = tz; g_cfOk = 0;
+{   int lo = PlanConformLow(k), a, kp, kn, st = PlanStep(t), tries = 0, la = PlanLockBefore(k), lb = PlanLockAfter(k); double err = 0;
+    g_cfOn = 1; g_cfK = k; g_cfTx = tx; g_cfTz = tz; g_cfOk = 0; g_cf2N = 0;
+    if (la > lo) lo = la;   /* (never back past the lock before it) */
     free(g_cfC); free(g_cfX); g_cfC = (int *)malloc(sizeof(int) * (k + 2)); g_cfX = (double *)malloc(sizeof(double) * (k + 2) * 2); g_cfZ = g_cfX ? g_cfX + k + 2 : NULL;
     if (!g_cfC || !g_cfX || k - lo < 2) { g_cfN = 0; return; }
     PlanNeighbours(t, k, k, &kp, &kn, 0); a = kp < k - 1 ? kp : k - st; if (a < lo) a = lo;
-    for (;;) { g_cfA = a; g_cfN = k - a; g_cfOk = PlanConformTry(a, k, tx, tz, g_cfC, g_cfX, g_cfZ, &err); g_cfErr = err; tries++;
+    for (;;) { g_cfA = a; g_cfN = k - a; g_cfOk = PlanConformTry(a, k, g_c.frame[a].x, g_c.frame[a].z, tx, tz, g_cfC, g_cfX, g_cfZ, &err); g_cfErr = err; tries++;
         if (getenv("CE_TESTPLANCONFORM")) { int i, mc = 0; for (i = 0; i < g_cfN; i++) if (abs(g_cfC[i]) > mc) mc = abs(g_cfC[i]); LOG("  conform try from %d: ok %d off %.1f sharpest %d", a, g_cfOk, err, mc); }
         if (g_cfOk || a <= lo) break;
-        a -= (k - a) / 2 > 4 ? (k - a) / 2 : 4; if (a < lo) a = lo; } }   /* (further back, half as far again each time: the bend spread over more road, no more than it needs) */
+        a -= (k - a) / 2 > 4 ? (k - a) / 2 : 4; if (a < lo) a = lo; }   /* (further back, half as far again each time: the bend spread over more road, no more than it needs) */
+    if (lb > k && g_cfOk) {   /* a lock after it: the road on to it bent too - the lock where it was, facing as it did (nothing past it moves) */
+        int i, ok2 = lb - k >= 2; double e2 = 0;
+        for (i = k - 1; i <= lb && ok2; i++) if (i >= 0 && i < g_c.n && g_c.piece[i].layout == 2) ok2 = 0;   /* (not over a split road) */
+        free(g_cf2C); free(g_cf2X); g_cf2C = (int *)malloc(sizeof(int) * (lb - k + 2)); g_cf2X = (double *)malloc(sizeof(double) * (lb - k + 2) * 2); g_cf2Z = g_cf2X ? g_cf2X + lb - k + 2 : NULL;
+        if (ok2 && g_cf2C && g_cf2X) { g_cf2N = lb - k; ok2 = PlanConformTry(k, lb, g_cfX[g_cfN], g_cfZ[g_cfN], g_c.frame[lb].x, g_c.frame[lb].z, g_cf2C, g_cf2X, g_cf2Z, &e2); if (e2 > 3) ok2 = 0; g_cfErr = e2; }   /* (the lock where it was - within 3 units, else not done) */
+        else { g_cf2N = 0; ok2 = 0; }
+        g_cfOk = ok2; } }
 static void PlanConformApply(void)
 {   int i, *idx; Undo *u;
     if (!g_cfOn || !g_cfOk || g_cfN < 2) { Status("Plan: the road cannot come to there within the game's limits (4.4 degrees a piece) - it stays as it was"); g_cfOn = 0; PlanInv(); return; }
-    idx = (int *)malloc(sizeof(int) * g_cfN); if (!idx) return;
-    for (i = 0; i < g_cfN; i++) idx[i] = g_cfA + i;
-    u = UndoBegin(idx, g_cfN);
-    for (i = 0; i < g_cfN; i++) { RoadSection *s = &g_c.piece[g_cfA + i].halfA; s->curve = g_cfC[i]; Derive(s, 0xb8); if (g_c.piece[g_cfA + i].layout != 2) g_c.piece[g_cfA + i].halfB = *s; }
+    idx = (int *)malloc(sizeof(int) * (g_cfN + g_cf2N)); if (!idx) return;
+    for (i = 0; i < g_cfN + g_cf2N; i++) idx[i] = g_cfA + i;   /* (a .. k - 1, then k .. the lock after it - 1) */
+    u = UndoBegin(idx, g_cfN + g_cf2N);
+    for (i = 0; i < g_cfN + g_cf2N; i++) { RoadSection *s = &g_c.piece[g_cfA + i].halfA; s->curve = i < g_cfN ? g_cfC[i] : g_cf2C[i - g_cfN]; Derive(s, 0xb8); if (g_c.piece[g_cfA + i].layout != 2) g_c.piece[g_cfA + i].halfB = *s; }
     UndoEnd(u); free(idx); g_cfOn = 0; g_dirty = 1; Redraw(); PropsFill(); PlanChoose(g_cfK, 0);
-    Status("Plan: point %d moved - pieces %d..%d bent to meet it (%.0f units off), the road on from it carried along (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK - 1, g_cfErr); }
+    if (g_cf2N) Status("Plan: point %d moved - pieces %d..%d bent to meet it and on to the lock at %d (%.0f units off), nothing past the locks moved (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK + g_cf2N - 1, g_cfK + g_cf2N, g_cfErr);
+    else Status("Plan: point %d moved - pieces %d..%d bent to meet it (%.0f units off), the road on from it carried along (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK - 1, g_cfErr); }
 static void PlanConformPaint(HDC dc, const PlanXf *t)   /* the drag: the bend (cyan; red: not within the limits), the road on from the point carried (grey) */
 {   HPEN pc, pr, pg, old; POINT pt; int i; double ex, ez;
     if (!g_cfOn || g_cfN < 2 || !g_cfX) return;
     pc = CreatePen(PS_SOLID, 3, RGB(80, 230, 255)); pr = CreatePen(PS_SOLID, 3, RGB(255, 70, 70)); pg = CreatePen(PS_DOT, 1, RGB(170, 170, 170));
     old = (HPEN)SelectObject(dc, g_cfOk ? pc : pr);
     for (i = 0; i <= g_cfN; i++) { int x = (int)PX2(t, g_cfX[i]), y = (int)PZ2(t, g_cfZ[i]); if (!i) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
+    if (g_cf2N && g_cf2X) for (i = 0; i <= g_cf2N; i++) { int x = (int)PX2(t, g_cf2X[i]), y = (int)PZ2(t, g_cf2Z[i]); if (!i) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }   /* (on to the lock) */
     ex = g_cfX[g_cfN] - g_c.frame[g_cfK].x; ez = g_cfZ[g_cfN] - g_c.frame[g_cfK].z; SelectObject(dc, pg);
-    for (i = g_cfK; i <= PlanLast(); i++) { int x = (int)PX2(t, g_c.frame[i].x + ex), y = (int)PZ2(t, g_c.frame[i].z + ez); if (i == g_cfK) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
+    if (!g_cf2N) for (i = g_cfK; i <= PlanLast(); i++) { int x = (int)PX2(t, g_c.frame[i].x + ex), y = (int)PZ2(t, g_c.frame[i].z + ez); if (i == g_cfK) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
     {   int x = (int)PX2(t, g_cfTx), y = (int)PZ2(t, g_cfTz); SelectObject(dc, g_cfOk ? pc : pr); SelectObject(dc, GetStockObject(NULL_BRUSH)); Rectangle(dc, x - 8, y - 8, x + 9, y + 9); }
     SelectObject(dc, old); DeleteObject(pc); DeleteObject(pr); DeleteObject(pg); }
+static void PlanLockToggle(int v)   /* a right-click on point v: locked / unlocked (two at most) */
+{   if (PlanIsLocked(v)) { if (g_lock[0] == v) g_lock[0] = -1; else g_lock[1] = -1; Status("Plan: point %d unlocked", v); }
+    else if (g_lock[0] >= 0 && g_lock[1] >= 0) Status("Plan: two points are locked already - right-click one of them to unlock it first");
+    else { if (g_lock[0] < 0) g_lock[0] = v; else g_lock[1] = v;
+        if (g_lock[0] >= 0 && g_lock[1] >= 0) Status("Plan: points %d and %d locked - right-drag a point between them: only the road between them bends (Shift + right-click: the point's menu)", g_lock[0] < g_lock[1] ? g_lock[0] : g_lock[1], g_lock[0] > g_lock[1] ? g_lock[0] : g_lock[1]);
+        else Status("Plan: point %d locked - right-drag a point after it: the road before the lock stays (right-click it again: unlock; Shift + right-click: the point's menu)", v); }
+    PlanInv(); }
 static void PlanPointMenu(HWND w, int v, int x, int y)   /* right-click on point v: start / each level's finish there */
 {   HMENU m = CreatePopupMenu(); POINT p = { x, y }; int i, cmd; char lb[48];
     AppendMenuA(m, MF_STRING, 100, "Start here"); AppendMenuA(m, MF_SEPARATOR, 0, NULL);
@@ -1597,7 +1644,9 @@ static void PlanMouse(HWND w, UINT m, WPARAM wp, LPARAM lp)
     if (m == WM_RBUTTONUP) { int vh, v;
         if (GetCapture() == w && (g_pmMode == 5 || g_pmMode == 6)) { int md = g_pmMode; ReleaseCapture(); g_pmMode = 0;
             if (md == 6) { PlanConformApply(); return; } }
-        v = PlanVertAt(&t, x, y, &vh); if (v >= 0 && !vh) { PlanChoose(v, 0); PlanPointMenu(w, v, x, y); } return; }
+        v = PlanVertAt(&t, x, y, &vh); if (v >= 0 && !vh) { PlanChoose(v, 0);
+            if (wp & MK_SHIFT) PlanPointMenu(w, v, x, y);   /* (Shift + right-click: the point's menu - start, finishes, forks) */
+            else PlanLockToggle(v); } return; }
     if (m == WM_LBUTTONDOWN) { int vh, v = PlanVertAt(&t, x, y, &vh);
         SetFocus(w); SetCapture(w); g_pmX = x; g_pmY = y; g_pmCx = t.cx; g_pmCz = t.cz;
         if (v >= 0) { PlanChoose(v, vh); g_pmMode = 1; } else g_pmMode = 3;
@@ -1623,10 +1672,12 @@ static void PlanMouse(HWND w, UINT m, WPARAM wp, LPARAM lp)
             PlanInv(); return; }
         if (g_pmMode == 5 && moved) {   /* (the right-drag started) */
             if (g_nmv) { g_nmv = 0; Status("Plan: the moves waiting were dropped (a right-drag bends the road itself)"); }   /* (refused, nothing seemed to work: user, 2026-11-20) */
+            if (PlanLockWhy(g_pvSel)) { Status("%s", PlanLockWhy(g_pvSel)); g_pmMode = 0; ReleaseCapture(); return; }
             if (g_pvSel < 3 || g_pvSel >= g_c.n || g_pvSel - PlanConformLow(g_pvSel) < 2) { Status("Plan: this point cannot be moved this way (no road before it to bend - a split road or the course's start)"); g_pmMode = 0; ReleaseCapture(); return; }
             g_pmMode = 6; }
         if (g_pmMode == 6) { PlanConformDrag(&t, g_pvSel, t.cx + (x - t.W * 0.5) / t.sc, t.cz - (y - t.H * 0.5 - 8) / t.sc);
-            Status(g_cfOk ? "Plan: release to bend pieces %d..%d to meet the point (%.0f units off; the road on from it carried along)" : "Plan: too sharp to meet there even from piece %d (the game turns 4.4 degrees a piece at most) - release: no change", g_cfA, g_pvSel - 1, g_cfErr);
+            if (g_cf2N && !g_cfOk) Status("Plan: too sharp to meet there and keep the lock at %d where it is (the game turns 4.4 degrees a piece at most) - release: no change", g_cfK + g_cf2N);
+            else Status(g_cfOk ? (g_cf2N ? "Plan: release to bend pieces %d..%d to meet the point and on to the lock (nothing past the locks moves)" : "Plan: release to bend pieces %d..%d to meet the point (%.0f units off; the road on from it carried along)") : "Plan: too sharp to meet there even from piece %d (the game turns 4.4 degrees a piece at most) - release: no change", g_cfA, g_cf2N ? g_cfK + g_cf2N - 1 : g_pvSel - 1, g_cfErr);
             PlanInv(); return; }
         if (g_pmMode == 3 && moved) g_pmMode = 4;
         if (g_pmMode == 4) { g_pFit = 0; g_pCx = g_pmCx - dx; g_pCz = g_pmCz - dz; PlanInv(); }
@@ -3685,7 +3736,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (getenv("CE_TESTBLOCKRUNS") && g_pcur0) { int i, a = 0; for (i = 1; i <= g_n0 && a < g_n0; i++) if (i == g_n0 || g_pcur0[i][0] != g_pcur0[a][0]) { LOG("test block run: originals %d..%d (%d) word %08x", a, i - 1, i - a, g_pcur0[a][0]); a = i; } }   /* (tests: the course data's blocks?) */
     if (getenv("CE_TESTPLANFIN")) { int lv = 0, k = 0; if (sscanf(getenv("CE_TESTPLANFIN"), "%d %d", &lv, &k) == 2) { PlanFinishAt(lv, k); LOG("test plan finish: %s; finishes %d %d %d %d %d start %d", g_status, g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4], g_c.start); } }
     if (getenv("CE_TESTPLANSTART")) { int k = atoi(getenv("CE_TESTPLANSTART")); PlanStartAt(k); LOG("test plan start: %s; n %d end %d finishes %d %d %d %d %d", g_status, g_c.n, g_pEnd, g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4]); }
-    if (getenv("CE_TESTPLANCONFORM")) { const char *gp = getenv("CE_TESTPLANCONFORM"); int k; double rt, fw;   /* (tests) "<piece> <right> <ahead>;...": point k right-dragged that far (world units, across / along its heading) */
+    if (getenv("CE_TESTPLANLOCK")) { int a = -1, b = -1; sscanf(getenv("CE_TESTPLANLOCK"), "%d %d", &a, &b); if (a >= 0) PlanLockToggle(a); if (b >= 0) PlanLockToggle(b); LOG("test plan lock: %d %d; %s", g_lock[0], g_lock[1], g_status); }   /* (tests) "<a> [<b>]": locked */
+    if (getenv("CE_TESTPLANCONFORM")) { const char *gp = getenv("CE_TESTPLANCONFORM"); int k; double rt, fw, lx[2] = { 0, 0 }, lz[2] = { 0, 0 }, lh[2] = { 0, 0 }, b0x = 0, b0z = 0, e0x = 0, e0z = 0; int li, last = g_lock[1] >= 0 ? (g_lock[0] > g_lock[1] ? g_lock[0] : g_lock[1]) + 60 : (g_lock[0] >= 0 ? g_lock[0] + 200 : 0);
+        for (li = 0; li < 2; li++) if (g_lock[li] >= 0) { lx[li] = g_c.frame[g_lock[li]].x; lz[li] = g_c.frame[g_lock[li]].z; lh[li] = g_c.frame[g_lock[li]].heading; }
+        if (g_lock[0] >= 0) { int f = PlanLockBefore(100000) >= 0 ? (g_lock[0] < g_lock[1] || g_lock[1] < 0 ? g_lock[0] : g_lock[1]) : 0; b0x = g_c.frame[f > 2 ? f - 2 : 0].x; b0z = g_c.frame[f > 2 ? f - 2 : 0].z; }
+        e0x = g_c.frame[last].x; e0z = g_c.frame[last].z;   /* (tests) "<piece> <right> <ahead>;...": point k right-dragged that far (world units, across / along its heading) */
         while (gp && sscanf(gp, "%d %lf %lf", &k, &rt, &fw) == 3) { RECT rc; PlanXf t; double h, tx, tz, h0; int i, mx = 0;
             GetClientRect(g_plan, &rc); PlanView(rc, &t);
             if (k > 2 && k < g_c.n) { h = g_c.frame[k].heading; h0 = h; tx = g_c.frame[k].x + cos(h) * rt + sin(h) * fw; tz = g_c.frame[k].z - sin(h) * rt + cos(h) * fw;
@@ -3694,7 +3749,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                 PlanConformApply();
                 for (i = 0; i < g_c.n; i++) { int c = g_c.piece[i].halfA.curve; if (c < 0) c = -c; if (c > mx) mx = c; }
                 LOG("test plan conform applied: piece %d at %.0f %.0f (aimed %.0f %.0f), heading %.5f (was %.5f), sharpest curve %d; %s", k, g_c.frame[k].x, g_c.frame[k].z, tx, tz, g_c.frame[k].heading, h0, mx, g_status); }
-            gp = strchr(gp, ';'); if (gp) gp++; } }
+            gp = strchr(gp, ';'); if (gp) gp++; }
+        for (li = 0; li < 2; li++) if (g_lock[li] >= 0) LOG("test plan lock %d after: moved %.2f, heading %.6f -> %.6f", g_lock[li], hypot(g_c.frame[g_lock[li]].x - lx[li], g_c.frame[g_lock[li]].z - lz[li]), lh[li], g_c.frame[g_lock[li]].heading);
+        if (g_lock[0] >= 0) { int f = g_lock[1] >= 0 && g_lock[1] < g_lock[0] ? g_lock[1] : g_lock[0]; LOG("test plan lock: before the first lock moved %.2f, piece %d (past the locks) moved %.2f", hypot(g_c.frame[f > 2 ? f - 2 : 0].x - b0x, g_c.frame[f > 2 ? f - 2 : 0].z - b0z), last, hypot(g_c.frame[last].x - e0x, g_c.frame[last].z - e0z)); } }
     if (getenv("CE_TESTFORK")) { int k = 0, kj = 0, ok, i, nb = 0; sscanf(getenv("CE_TESTFORK"), "%d %d", &k, &kj); PlanForkFrom(k); ok = PlanForkRange(g_forkFrom, kj);   /* (tests) "<from> <join>": Fork from here, Join here */
         for (i = 0; i < g_c.n; i++) nb += PlanNewFork(i);
         LOG("test fork at %d: %d, %d pieces forked; %s", k, ok, nb, g_status);
