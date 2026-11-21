@@ -136,24 +136,38 @@ static const unsigned char *RcSprite(int n, int *w, int *h)   /* sprite n of HIB
     if (!g_rcBob) return NULL;
     for (i = 0; i <= n && o + 2 <= g_rcBobN; i++) { int sw = g_rcBob[o], sh = g_rcBob[o + 1]; if (i == n) { *w = sw; *h = sh; return sw && sh && o + 2 + sw * sh <= g_rcBobN ? g_rcBob + o + 2 : NULL; } o += 2 + sw * sh; }
     return NULL; }
-/* sprite n through row at (x, y) on dc, scaled by sc, transparent bytes (0) left as the background colour bg */
-static void RcDrawSprite(HDC dc, int n, const unsigned *lut, int x, int y, int sc, unsigned bg)   /* lut: 0x00RRGGBB per template index (RcLut) */
-{   int w, h, i; const unsigned char *s = RcSprite(n, &w, &h); unsigned *px; BITMAPINFO bi;
+/* px (w x h, 0x00RRGGBB) shrunk to dw x dh by area averaging and copied 1:1 to (x, y) - GDI's HALFTONE dithers on the 16-bit screen (a faint box round the sprite) */
+static void RcBlitShrunk(HDC dc, const unsigned *px, int w, int h, int x, int y, int dw, int dh)
+{   unsigned *o; int X, Y; BITMAPINFO bi;
+    if (dw < 1 || dh < 1 || !(o = (unsigned *)malloc((size_t)dw * dh * 4))) return;
+    for (Y = 0; Y < dh; Y++) for (X = 0; X < dw; X++) { int x0 = X * w / dw, x1 = (X + 1) * w / dw, y0 = Y * h / dh, y1 = (Y + 1) * h / dh, xx, yy, n = 0; unsigned r = 0, g = 0, b = 0;
+        if (x1 <= x0) x1 = x0 + 1; if (y1 <= y0) y1 = y0 + 1;
+        for (yy = y0; yy < y1 && yy < h; yy++) for (xx = x0; xx < x1 && xx < w; xx++) { unsigned c = px[yy * w + xx]; r += c >> 16 & 255; g += c >> 8 & 255; b += c & 255; n++; }
+        o[Y * dw + X] = n ? ((r / n) << 16) | ((g / n) << 8) | (b / n) : 0; }
+    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = dw; bi.bmiHeader.biHeight = -dh; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    SetDIBitsToDevice(dc, x, y, dw, dh, 0, 0, 0, dh, o, &bi, DIB_RGB_COLORS);
+    free(o); }
+/* sprite n through row, fitted into the cell (cw x ch at x, y) on dc: whole pixels up to 2x where it fits, else shrunk smoothly; transparent bytes (0)
+   left as the background colour bg */
+static void RcDrawSprite(HDC dc, int n, const unsigned *lut, int x, int y, int cw, int ch, unsigned bg)   /* lut: 0x00RRGGBB per template index (RcLut) */
+{   int w, h, i, dw, dh, sc; const unsigned char *s = RcSprite(n, &w, &h); unsigned *px; BITMAPINFO bi;
     if (!s || !(px = (unsigned *)malloc((size_t)w * h * 4))) return;
     for (i = 0; i < w * h; i++) px[i] = s[i] ? lut[s[i]] : bg;
+    sc = cw / w < ch / h ? cw / w : ch / h; if (sc > 2) sc = 2;
+    if (sc < 1) { double f = (double)cw / w < (double)ch / h ? (double)cw / w : (double)ch / h; dw = (int)(w * f + 0.5); dh = (int)(h * f + 0.5);
+        RcBlitShrunk(dc, px, w, h, x + (cw - dw) / 2, y + (ch - dh) / 2, dw, dh); free(px); return; }
+    dw = w * sc; dh = h * sc; SetStretchBltMode(dc, COLORONCOLOR);
     memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
-    StretchDIBits(dc, x, y, w * sc, h * sc, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
+    StretchDIBits(dc, x + (cw - dw) / 2, y + (ch - dh) / 2, dw, dh, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
     free(px); }
 /* Game Options > HD Rider on: sprite n's HD picture in the player's colours (hdrider.inc HrPreview), fitted into the cell (cw x ch at x, y) on background bg */
 static int RcDrawHd(HDC dc, int n, int row, int x, int y, int cw, int ch, unsigned bg)
-{   int W, H, i, dw, dh; const DWORD *hp = HrPreview(n, row, &W, &H); unsigned *px; BITMAPINFO bi; double f; POINT o;
+{   int W, H, i, dw, dh; const DWORD *hp = HrPreview(n, row, &W, &H); unsigned *px; double f;
     if (!hp || !(px = (unsigned *)malloc((size_t)W * H * 4))) return 0;
     for (i = 0; i < W * H; i++) { unsigned a = hp[i] >> 24, c = hp[i], r = ((c >> 16 & 255) * a + (bg >> 16 & 255) * (255 - a)) / 255, g = ((c >> 8 & 255) * a + (bg >> 8 & 255) * (255 - a)) / 255, b = ((c & 255) * a + (bg & 255) * (255 - a)) / 255;
         px[i] = (r << 16) | (g << 8) | b; }   /* (its soft outline over the cell's colour) */
     f = (double)cw / W < (double)ch / H ? (double)cw / W : (double)ch / H; dw = (int)(W * f + 0.5); dh = (int)(H * f + 0.5);
-    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, HALFTONE); SetBrushOrgEx(dc, 0, 0, &o);
-    StretchDIBits(dc, x + (cw - dw) / 2, y + (ch - dh) / 2, dw, dh, 0, 0, W, H, px, &bi, DIB_RGB_COLORS, SRCCOPY);
+    RcBlitShrunk(dc, px, W, H, x + (cw - dw) / 2, y + (ch - dh) / 2, dw, dh);
     free(px); return 1; }
 
 /* the palette (under the parts): 12 hues light / mid / dark and a column of greys; a swatch makes the chosen part that custom colour */
@@ -205,7 +219,9 @@ static void RcOutfitSet(int o) { int p; for (p = 0; p < RC_PARTS; p++) { g_rcPar
 /* pc >= 0: the palette has the keyboard, its cursor on swatch pc */
 static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
 {   HDC dc; HFONT title, rowf, fSm, fMid, old; int i, row = g_rcRow >= 0 ? g_rcRow : 0, hd = HrWanted(); unsigned cur[256]; char t[64];
-    static const int spr[4] = { 89, 197, 297, 292 };   /* (292: walking towards the camera) */
+    static const struct { int spr, x, y, w, h; } cell[7] = {   /* the preview: three of the rider (riding, swinging the chain, walking towards the camera), then the bike alone */
+        { 197, 408, 62, 72, 150 }, { 89, 481, 62, 72, 150 }, { 292, 554, 62, 72, 150 },
+        { 319, 408, 216, 107, 82 }, { 320, 519, 216, 107, 82 }, { 321, 408, 300, 107, 82 }, { 322, 519, 300, 107, 82 } };
     memcpy(tmp->bits, base->bits, (size_t)tmp->pitch * tmp->h); SdDarken(tmp, 0, 0, tmp->w, tmp->h); SdDarken(tmp, 8, 8, 632, 472);
     S_GetDC(&tmp->itf, &dc); SetBkMode(dc, TRANSPARENT);
     title = CreateFontA(44, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_IMPACT)); rowf = CreateFontA(22, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, RrFont(RR_FONT_IMPACT));
@@ -228,12 +244,9 @@ static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
         IcBox(dc, x, y, RC_PW - 6, RC_PH - 6, RGB((v >> 16) & 255, (v >> 8) & 255, v & 255), RGB(20, 20, 30), 0); }
     /* preview: four of the rider's sprites in the colours chosen */
     IcBox(dc, 404, 58, 226, 330, RGB(28, 32, 56), RGB(90, 90, 130), 8);
-    if (g_rcTab && g_rcBob) { int k;   /* 2 x 2 cells, each sprite centred and scaled to fit (HD Rider: its HD picture) */
-        for (k = 0; k < 4; k++) { int w, h, cw = 107, ch = 160, cx = 408 + (k & 1) * 111, cy = 62 + (k >> 1) * 162, sc;
-            if (hd && RcDrawHd(dc, spr[k], row, cx, cy, cw, ch, 0x1c2038)) continue;
-            if (!RcSprite(spr[k], &w, &h)) continue;
-            sc = (cw / w < ch / h) ? cw / w : ch / h; if (sc < 1) sc = 1; if (sc > 2) sc = 2;
-            RcDrawSprite(dc, spr[k], cur, cx + (cw - w * sc) / 2, cy + (ch - h * sc) / 2, sc, 0x1c2038); } }
+    if (g_rcTab && g_rcBob) { int k;   /* each sprite centred and scaled to fit its cell (HD Rider: its HD picture) */
+        for (k = 0; k < 7; k++) { if (hd && RcDrawHd(dc, cell[k].spr, row, cell[k].x, cell[k].y, cell[k].w, cell[k].h, 0x1c2038)) continue;
+            RcDrawSprite(dc, cell[k].spr, cur, cell[k].x, cell[k].y, cell[k].w, cell[k].h, 0x1c2038); } }
     else { SelectObject(dc, fSm); IcText(dc, 516, RC_Y0 + 130, "no preview (game data not found)", RGB(200, 200, 225), TA_CENTER | TA_TOP); }
     SelectObject(dc, fSm); IcBox(dc, 18, 394, 614, 48, RGB(16, 16, 34), RGB(90, 90, 130), 8);
     IcText(dc, 28, 400, pc >= 0 ? "Palette: arrows try a colour on the rider, Enter keeps it, Esc goes back to what it was.  The shading of the clothes stays."
