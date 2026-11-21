@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stddef.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -110,9 +111,11 @@ static void AmbMix(float *acc,int frames)
             spA+=(wl-spA)*0.35f; spB+=(spA-spB)*0.08f; spC+=(wr-spC)*0.004f;
             { float v=((spA-spB)*0.9f+spC*2.5f)*spEnv; l+=v*(1.2f-spPan); r+=v*(0.2f+spPan); } spEnv*=0.99988f; }
         acc[i*2]+=(float)(l*mg); acc[i*2+1]+=(float)(r*mg); } }
+#include "engine_synth.inc"   /* Sound Mix > HD engine: the bikes' engines (RR_EngineVoice) */
 static void MixBlock(short *out,int frames)
 {   static float acc[BLOCK*2]; Buf *b; int i; memset(acc,0,sizeof(float)*frames*2);
     AmbMix(acc,frames);
+    EngMix(acc,frames);
     EnterCriticalSection(&g_cs);
     for(b=g_bufs;b;b=b->next){
         if(!b->playing||b->primary||!b->data||!b->bytes) continue;

@@ -8,13 +8,14 @@
  */
 typedef struct RRSoundMix { int vol[7]; int mute[7]; int swap; void (__stdcall *changed)(const struct RRSoundMix *d); } RRSoundMix;
 static const char *const g_smName[7]={ "Master volume","Interface volume","Player's engine","Sound effects","Game music","Other engines","Police siren" };
-#define SM_ROWS 11      /* 0..6 channels, 7 swap speakers, 8 music (songs: musicbox.inc, video.ini music_songs), 9 done, 10 cancel */
+#define SM_ROWS 12      /* 0..6 channels, 7 swap speakers, 8 music (songs: musicbox.inc, video.ini music_songs), 9 HD engine (video.ini hd_engine), 10 done, 11 cancel */
 #define SM_MUSIC 8
-#define SM_DONE 9
-#define SM_CANCEL 10
+#define SM_HDENG 9
+#define SM_DONE 10
+#define SM_CANCEL 11
 #define SM_X0 40
 #define SM_Y0 108
-#define SM_DY 30
+#define SM_DY 28
 #define SM_BAR_L 290
 #define SM_BAR_R 470
 
@@ -22,6 +23,7 @@ static void SmChanged(RRSoundMix *d){ if(d->changed) d->changed(d); }
 static void SmSetPct(RRSoundMix *d,int ch,int v){ if(v<0) v=0; if(v>100) v=100; if(d->vol[ch]!=v){ d->vol[ch]=v; SmChanged(d); } }
 static void SmToggle(RRSoundMix *d,int ch){ d->mute[ch]=!d->mute[ch]; SmChanged(d); }
 static void SmSongs(void){ g_vid.songs=!g_vid.songs; VidSave(); }   /* applied at once (musicbox.inc starts / stops the songs within a quarter second) */
+static void SmHdEngine(void){ g_vid.hdEngine=!g_vid.hdEngine; VidSave(); }   /* applied at once (src\audio\engine_sound.c asks RR_HdEngine every frame) */
 
 static void SmDraw(Surf *tmp,const Surf *base,const RRSoundMix *d,int sel)
 {   HDC dc; HFONT title,row,old; int i; RECT r; char t[96];
@@ -41,6 +43,7 @@ static void SmDraw(Surf *tmp,const Surf *base,const RRSoundMix *d,int sel)
             SetTextColor(dc,mu?RGB(255,80,60):(on?RGB(255,235,80):RGB(150,150,170))); TextOutA(dc,SM_BAR_R+78,y,mu?"MUTED":"mute",mu?5:4); }
         else if(i==7){ TextOutA(dc,SM_X0+20,y,"Swap speakers",13); SetTextColor(dc,d->swap?RGB(255,235,80):RGB(150,150,170)); TextOutA(dc,SM_BAR_L,y,d->swap?"ON":"OFF",d->swap?2:3); }
         else if(i==SM_MUSIC){ const char *v=g_vid.songs?"RANDOM SONGS":"OFF"; TextOutA(dc,SM_X0+20,y,"Music",5); SetTextColor(dc,g_vid.songs?RGB(255,235,80):RGB(150,150,170)); TextOutA(dc,SM_BAR_L,y,v,(int)strlen(v)); }
+        else if(i==SM_HDENG){ TextOutA(dc,SM_X0+20,y,"HD engine",9); SetTextColor(dc,g_vid.hdEngine?RGB(255,235,80):RGB(150,150,170)); TextOutA(dc,SM_BAR_L,y,g_vid.hdEngine?"ON":"OFF",g_vid.hdEngine?2:3); }
         else if(i==SM_DONE) TextOutA(dc,SM_X0+20,y,"Done",4);
         else TextOutA(dc,SM_X0+20,y,"Cancel",6); }
     SetTextColor(dc,RGB(170,170,200)); { HFONT sm=CreateFontA(15,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,ANTIALIASED_QUALITY,0,RrFont(RR_FONT_ARIAL)); SelectObject(dc,sm); TextOutA(dc,SM_X0+20,452,"Up/Down: choose   Left/Right: change (Shift: fine)   M: mute   Enter: done   Esc: cancel",84); SelectObject(dc,row); DeleteObject(sm); }
@@ -52,12 +55,13 @@ static int SmKey(RRSoundMix *d,int *sel,int vk,int *result)
 {   int shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
     if(vk==VK_UP){ *sel=(*sel+SM_ROWS-1)%SM_ROWS; return 0; } if(vk==VK_DOWN || vk==VK_TAB){ *sel=(*sel+1)%SM_ROWS; return 0; }
     if(vk==VK_ESCAPE){ *result=0; return 1; }
-    if(vk==VK_RETURN){ if(*sel==7) d->swap=!d->swap; else if(*sel==SM_MUSIC) SmSongs(); else { *result=(*sel!=SM_CANCEL); return 1; } return 0; }
+    if(vk==VK_RETURN){ if(*sel==7) d->swap=!d->swap; else if(*sel==SM_MUSIC) SmSongs(); else if(*sel==SM_HDENG) SmHdEngine(); else { *result=(*sel!=SM_CANCEL); return 1; } return 0; }
     if(vk=='M' && *sel<7){ SmToggle(d,*sel); return 0; }
-    if(vk==VK_SPACE){ if(*sel<7) SmToggle(d,*sel); else if(*sel==7) d->swap=!d->swap; else if(*sel==SM_MUSIC) SmSongs(); else { *result=(*sel==SM_DONE); return 1; } return 0; }
+    if(vk==VK_SPACE){ if(*sel<7) SmToggle(d,*sel); else if(*sel==7) d->swap=!d->swap; else if(*sel==SM_MUSIC) SmSongs(); else if(*sel==SM_HDENG) SmHdEngine(); else { *result=(*sel==SM_DONE); return 1; } return 0; }
     if((vk==VK_LEFT || vk==VK_RIGHT) && *sel<7){ SmSetPct(d,*sel,d->vol[*sel]+(shift?1:5)*(vk==VK_LEFT?-1:1)); return 0; }
     if((vk==VK_LEFT || vk==VK_RIGHT) && *sel==7){ d->swap=!d->swap; return 0; }
     if((vk==VK_LEFT || vk==VK_RIGHT) && *sel==SM_MUSIC){ SmSongs(); return 0; }
+    if((vk==VK_LEFT || vk==VK_RIGHT) && *sel==SM_HDENG){ SmHdEngine(); return 0; }
     return 0; }
 static int SmBarPct(int x){ return (x<SM_BAR_L?0:x>SM_BAR_R?SM_BAR_R-SM_BAR_L:x-SM_BAR_L)*100/(SM_BAR_R-SM_BAR_L); }
 /* a click (or the press of a drag) at frame pixel x, y; *drag = the row whose slider follows the mouse until the button is released.
@@ -65,12 +69,12 @@ static int SmBarPct(int x){ return (x<SM_BAR_L?0:x>SM_BAR_R?SM_BAR_R-SM_BAR_L:x-
 static int SmMouse(RRSoundMix *d,int *sel,int x,int y,int *drag,int *result)
 {   int r=SmRowAt(y); if(r<0) return 0; *sel=r;
     if(r<7){ if(x>=SM_BAR_L-6 && x<=SM_BAR_R+6){ SmSetPct(d,r,SmBarPct(x)); *drag=r; } else if(x>SM_BAR_R+70) SmToggle(d,r); }
-    else if(r==7) d->swap=!d->swap; else if(r==SM_MUSIC) SmSongs(); else { *result=(r==SM_DONE); return 1; }
+    else if(r==7) d->swap=!d->swap; else if(r==SM_MUSIC) SmSongs(); else if(r==SM_HDENG) SmHdEngine(); else { *result=(r==SM_DONE); return 1; }
     return 0; }
 
 /* returns 1 = Done (d holds the new values), 0 = Cancel */
 __declspec(dllexport) int __stdcall RR_SoundMix(RRSoundMix *d)
-{   Surf *tmp,base; MSG m; int sel=0, done=0, result=0, dirty=1, drag=-1; DWORD lastDraw=0; Surf *prevModal=g_modalSurf; int songs0=g_vid.songs;
+{   Surf *tmp,base; MSG m; int sel=0, done=0, result=0, dirty=1, drag=-1; DWORD lastDraw=0; Surf *prevModal=g_modalSurf; int songs0=g_vid.songs, hd0=g_vid.hdEngine;
     if(!g_primary || !(tmp=NewSurf(g_primary->w,g_primary->h,16))) return 0;
     base=*tmp; base.bits=(BYTE*)malloc((size_t)tmp->pitch*tmp->h); if(!base.bits){ FreeSurf(tmp); return 0; }
     { Surf *keep=g_modalSurf; g_modalSurf=NULL; SdBaseFrame(&base); g_modalSurf=keep; }
@@ -94,7 +98,7 @@ __declspec(dllexport) int __stdcall RR_SoundMix(RRSoundMix *d)
         Sleep(15); }
     if(drag>=0) ReleaseCapture();
     g_modalSurf=prevModal; g_lastShown=g_primary; free(base.bits); FreeSurf(tmp);
-    if(!result && g_vid.songs!=songs0){ g_vid.songs=songs0; VidSave(); }   /* Cancel: the Music setting back too */
+    if(!result && (g_vid.songs!=songs0 || g_vid.hdEngine!=hd0)){ g_vid.songs=songs0; g_vid.hdEngine=hd0; VidSave(); }   /* Cancel: the Music and HD engine settings back too */
     if(g_hwnd) InvalidateRect(g_hwnd,NULL,FALSE);
     if(g_primary && !prevModal) Present(g_primary);
     ModalEatClick(); LOG("soundmix: closed, result %d",result); return result; }

@@ -30,6 +30,7 @@ RR_DATA(int,      g_loopMuted);
 RR_DATA(int,      g_voiceSet);
 RR_DATA(int,      g_engineRevs);
 RR_DATA(int,      tbl_ringSlots);
+RR_DATA(unsigned char, g_mixSwapSpeakers);
 #define g_camDist_as_unsigned (*(unsigned *)&rec_featureAccum1.g_camDist)   /* the same variable with the type another part of this file uses */
 #define g_playerRider_as_intp (*(int * *)&g_playerRider)   /* the same variable with the type another part of this file uses */
 #define g_startJinglePlayed_as_uchar (*(unsigned char *)&g_startJinglePlayed)   /* the same variable with the type another part of this file uses */
@@ -47,6 +48,46 @@ static void stopEngine(void)
     (*(int (__stdcall ***)(void *))dsb)[0x48 / 4](dsb);
     g_engineOn = 0;
     *(int *)(rec_sndPlayerEngine.g_sfxStream + 0x10) = 0;
+}
+
+/* ---- HD engine ---- */
+/* Sound Mix > HD engine (the ddraw shim's RR_HdEngine: video.ini hd_engine, default on): the bikes' engines - the player's and the two nearest rivals' - are
+   made by the dsound shim (RR_EngineVoice, engine_synth.inc: the game's own engine loops rebuilt clean, tuned for each of the 15 bikes, with gear changes) instead of the
+   game's engine loops, which are kept stopped (the shim answers 0 when it has no HD engine: the loops play as before).  The cars keep their own sound.  Sound only: nothing here changes the game */
+static int (__stdcall *s_engVoice)(int voice, int bike, int gear, int revs, int dop, int volCb, int panCb, int flags, int id);
+static int hdEngine(void)
+{
+    static int (__stdcall *on)(void);
+    static int looked;
+    if (!looked) {
+        HMODULE d = GetModuleHandleA("rrddraw.dll"), s = GetModuleHandleA("rrdsound.dll");
+        on = d ? (int (__stdcall *)(void))GetProcAddress(d, "RR_HdEngine") : 0;
+        s_engVoice = s ? (int (__stdcall *)(int, int, int, int, int, int, int, int, int))GetProcAddress(s, "RR_EngineVoice") : 0;
+        looked = 1;
+    }
+    return on && s_engVoice && on();
+}
+
+/* stops a looping sound if it plays (SoundStop without the COM call every frame) */
+static void stopIfPlaying(int snd)
+{
+    if (snd && *(int *)(snd + 0x10)) SoundStop(snd);
+}
+
+/* hands bike object o's engine to synth voice `voice`: loudness x as SoundPlayAudible's (1/16384ths of full, linear in dB), pan in hundredths of dB;
+   the bike model 0..14 is the player's bike or the rider's (rider +0x2fc -> its kind parameters +0x1e0 -> byte 5, rider.c rr_RiderBikeCreate) */
+static int hdVoice(int voice, int o, int x, int pan, int flags)
+{
+    int bike = 0, rider = I32(o, 0x2fc), cb, v = x * 10000;
+    if (o == g_playerRider) bike = (unsigned char)rec_playerRecord.g_playerBike;
+    else if (rider && I32(rider, 0x1e0)) bike = *(unsigned char *)(I32(rider, 0x1e0) + 5);
+    cb = ((v + (v < 0 ? 0x3fff : 0)) >> 14) - 10000;
+    if (cb > 0) cb = 0;
+    if (cb < -10000) cb = -10000;
+    if (g_mixSwapSpeakers) pan = -pan;
+    if (pan < -10000) pan = -10000;
+    if (pan > 10000) pan = 10000;
+    return s_engVoice(voice, bike, I32(o, 0x23c), I32(o, 0x2dc), I32(o, 200), cb, pan, flags, o);
 }
 
 /* per-frame sound state of the player's bike: starts the engine / skid effect (SfxEventQueue with 0x10 or 0xc) or stops the loop, depending on the bike's mode (+0x2f4) */
@@ -124,6 +165,12 @@ void __fastcall rr_PlayerEngineVoices(int o)
     pitch = ((I32(o, 0x2e0) * I32(o, 0xcc)) / 0xef10) * g_engineLevel;
     vol = I32(o, 200) * I32(o, 0x2dc);
     vol = (vol + ((vol >> 31) & 0x1ff)) >> 9;
+    if (hdEngine() && hdVoice(0, o, pitch, 0, (g_startJinglePlayed != 0) | (g_playerOnSurface3 != 0) * 2)) {   /* (nitro: g_startJinglePlayed, the EngNitro loop; a tunnel: surface 3, the EngTunne loop) */
+        stopIfPlaying(rec_sndPlayerEngine.g_sndPlayerEngine);
+        stopIfPlaying(rec_sndPlayerEngine.g_sndPlayerEngineLoopFlag);
+        stopIfPlaying(rec_sndPlayerEngine.g_sndPlayerEngineSurface3);
+        return;
+    }
     if (g_startJinglePlayed != 0) {
         SoundPlayAudible(rec_sndPlayerEngine.g_sndPlayerEngineLoopFlag, vol, pitch, 0);
         SoundStop(rec_sndPlayerEngine.g_sndPlayerEngine);
@@ -232,6 +279,10 @@ RR_REPLACE_FAST(EngineVolumePan, rr_EngineVolumePan, 8);
 void __fastcall rr_EngineVolumePan(int obj, int idx)
 {
     int t = I32(obj, 200) * I32(obj, 0x2dc);
+    if (hdEngine() && hdVoice(idx == 3 ? 1 : 2, obj, ((I32(obj, 0xcc) * I32(obj, 0x2e0)) / 0xef10) * g_rivalEngineLevel, I32(obj, 0xd4), 0)) {   /* (idx 3 = the nearest rival: voice 1, 5 = the second: voice 2) */
+        stopIfPlaying((&rec_sndPlayerEngine.g_sndPlayerEngine)[idx]);
+        return;
+    }
     SoundPlayAudible((&rec_sndPlayerEngine.g_sndPlayerEngine)[idx], (t + ((t >> 31) & 0x1ff)) >> 9,
                  ((I32(obj, 0xcc) * I32(obj, 0x2e0)) / 0xef10) * g_rivalEngineLevel, I32(obj, 0xd4));
 }
