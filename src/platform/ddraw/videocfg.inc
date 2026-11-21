@@ -9,8 +9,8 @@
  *   (no scaling / race view rows (2026-11-11, user): widescreen is automatic - menus Keep 4:3 with the widescreen mod's side strips when it is installed, races
  *   widescreen whenever the window is wider than 4:3; winscale.inc VidScale, rrddraw.c RR_RaceBegin)
  *   (the race world is always drawn by the GPU at the window's resolution, gpuscene.inc)
- *   Race 3D             Pseudo 3D (default: the game's own view redrawn by the GPU, original distance, the game's road forks) / True 3D (the race world as a real
- *                       3D world, world3d.inc, Far distance, every split road its left road only - RR_ForkPick, race/physics.c).  Test switch RR_WORLD3D=0 / 1
+ *   (no Race 3D row: every race is True 3D - the race world as a real 3D world, world3d.inc, every split road its left road only (RR_ForkPick, race/physics.c);
+ *   Pseudo 3D is gone from the game, user 2026-11-21)
  *   (races show the traffic as its sprites - upscaled with the widescreen mod - and the HD sky picture where there is one, hdsky.inc - no rows; RR_CARS3D=1 = 3D car models, RR_HDSKY=0 = no HD sky)
  *   FPS counter         On / Off   (gpuscene.inc; the course map is on the Game Options screen, modscfg.inc)
  *   Smoothing           Sharp pixels / Smooth (bilinear)
@@ -273,7 +273,7 @@ static void VcAdjust(VcState *s,int row,int dir)
     case VC_VIDEOS: g_vid.videos=!g_vid.videos; break; }
     VidSave(); }
 static void VcReset(VcState *s)
-{   g_vid.mode=VM_WINDOW; g_vid.winW=g_vid.winH=0; g_vid.fsW=g_vid.fsH=g_vid.fsHz=0; g_vid.fps=1; g_vid.segpos=0; g_vid.true3d=1; g_vid.videos=0; g_vid.filter=0; g_vid.vsync=0; g_vid.fsPref=VM_BORDERLESS; VidGfxPreset(VidOnDeck()); VidApply(); VidSave(); VcMsg(s,"Defaults restored"); }
+{   g_vid.mode=VM_WINDOW; g_vid.winW=g_vid.winH=0; g_vid.fsW=g_vid.fsH=g_vid.fsHz=0; g_vid.fps=1; g_vid.segpos=0; g_vid.videos=0; g_vid.filter=0; g_vid.vsync=0; g_vid.fsPref=VM_BORDERLESS; VidGfxPreset(VidOnDeck()); VidApply(); VidSave(); VcMsg(s,"Defaults restored"); }
 
 /* ---- drawing ---- */
 static const char *const g_vcHelp[VC_ROWS][2] = {

@@ -37,6 +37,10 @@ static void RcSave(void)
     for (i = 0; i < RC_PARTS; i++) fprintf(f, "%s=%d\n%s_rgb=%06x\n", g_rcKey[i], g_rcPart[i], g_rcKey[i], g_rcRGB[i]);
     fprintf(f, "# the player's colour scheme in the last race (the editor's preview)\nlast_row=%d\n", g_rcRow);
     fclose(f); }
+static int RcPartPick(int part, unsigned *rgb)   /* hdrider.inc: the player's choice for a part (RC_OWN, 0..14 a scheme, RC_CUSTOM with *rgb) */
+{   if (!g_rcLoaded) RcLoad();
+    if (part < 0 || part >= RC_PARTS) return RC_OWN;
+    *rgb = g_rcRGB[part]; return g_rcPart[part]; }
 static int RcAny(void) { int i; for (i = 0; i < RC_PARTS; i++) if (g_rcPart[i] != RC_OWN) return 1; return 0; }
 static int RcAnyCustom(void) { int i; for (i = 0; i < RC_PARTS; i++) if (g_rcPart[i] == RC_CUSTOM) return 1; return 0; }
 static void RcCompose(int row, unsigned char *out)   /* the schemes only (custom parts keep the row's own: they are coloured in true colour, RcLut) */

@@ -260,8 +260,6 @@ unsigned * __fastcall rr_StringTableLoad(HINSTANCE hinst, UINT id, unsigned *poo
                             else if (!strcmp(t, "Select Character")) strcpy(t, "Game Options");   /* the Restroom's record 7 (options.c rr_RestroomMods) */
                             else if (!strncmp(t, "Choose the character you want to portray", 40)) strcpy(t, "Opponents, the course map and your rider's clothes.");
                             else if (!strcmp(t, "Mano-\xc0-Mano")) strcpy(t, "Load Game");   /* the Game Mode page's third item (game_mode.c rr_GameModeLoad) */
-                            else if (!strcmp(t, "Thrash Mode")) strcpy(t, "Custom Race");   /* the Game Mode page's Custom Race item (ui\custom_race.c; menutrim.c) */
-                            else if (!strncmp(t, "The arcade version of Road Rash", 31)) strcpy(t, "Build your own road: bend a straight line with control points, then race it.");
                             else if (!strncmp(t, "It's a fury of head-to-head mayhem", 34)) strcpy(t, "Load a saved Big Game and carry on.");
                             else if (!strncmp(t, "Toggle among Thrash Mode, Big Game Mode, and Mano", 49)) strcpy(t, "Start a new Big Game: pick your character."); }   /* the Restroom's New Game help (options.c rr_GameModePageOpen) */
                         if (base == 0 && modeHelp && table[modeHelp - 1] && !strcmp((char *)table[modeHelp - 1], "Game Mode")) {

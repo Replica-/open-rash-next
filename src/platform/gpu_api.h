@@ -36,6 +36,7 @@ typedef struct RrGpuQuad {
     unsigned objId;                         /* the object (its record address): the polygons of one object share it */
     int riderSprite;                        /* rider tile: the HiBob sprite it was made from (its tail lamp: ddraw\riderlamps.inc), -1 = none */
     unsigned objFlags;                      /* true-3D world: RRQ_* */
+    int riderRow;                           /* rider tile: its colour row (0..14, the rider's scheme in tbl_riderColourRemap), -1 = none */
 } RrGpuQuad;
 #define RRQ_SHADOW 1                        /* a bike's shadow pass (rider_sprites.c rr_PlayerSpriteDraw): the 3D world casts its own shadow instead */
 #define RRQ_BRAKE  2                        /* RRO_PLAYER: the brake is held (g_inputBits & 2) - its brake light */

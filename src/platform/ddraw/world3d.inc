@@ -5,7 +5,7 @@
  * Camera = the game's: the original's projection is a true perspective near the camera (1/scale = 2.07 * (depth - 1.02 segments), the scale table
  * tbl_perspectiveScale), so with the focal length F = 320 frame pixels a segment is W3_L = 2.07 * F lateral units long and the eye stands 1.02 segments past
  * the view's start, camX beside and camY above the road (heights relative to the road at the view's start, like the game's projector).
- * Test switch / setting: RR_WORLD3D=0 turns it off (default on in GPU races on Direct3D 11). */
+ * Every race is True 3D (Pseudo 3D is gone from the game, user 2026-11-21; the Course Editor keeps its own flat P3D view); the renderer must be Direct3D 11 (rrddraw.c). */
 #include "../world3d/course3d.h"
 #include "../world3d/ground_art.h"
 #include "../world3d/render3d.h"
@@ -32,8 +32,7 @@ static int g_w3compiled;   /* this race: 1 = the compiled mesh (cut each frame: 
 static int g_w3off, g_w3offB, g_w3camB;   /* g_w3camB: the camera follows B (W3Track; the game keeps its half flag on B long after B has rejoined A); the game's road position + g_w3off pieces = the file's piece on road A (g_w3offB: on road B) (W3Track) */
 static int g_w3On, g_w3Init; static int g_w3Piece0;
 /* the game asks which carriageway every rider must take at a split (race/physics.c): 1 = A, 0 = their own choice (the original) */
-static int g_crActive;   /* a custom race is being run (customrace.inc): every rider takes A, the race is Pseudo 3D (its bends come from the editor) */
-__declspec(dllexport) int __stdcall RR_ForkPick(void) { return g_crActive ? 1 : (g_w3On ? g_w3fork : 0); }
+__declspec(dllexport) int __stdcall RR_ForkPick(void) { return g_w3On ? g_w3fork : 0; }
 static int g_w3forkWant;   /* (the course has the Course Editor's forks: True 3D with forks on - road\course_edit.c CeForksTell, before RR_World3DLoad) */
 __declspec(dllexport) void __stdcall RR_SetForks(int on) { g_w3forkWant = on; }
 /* the game asks at the race start (road\road_build.c, before it builds the road): True 3D with forks off -> it builds ONE road, the course's splits never
@@ -49,10 +48,8 @@ static SDL_Texture *g_w3tex; static int g_w3tw, g_w3th;
 
 __declspec(dllexport) int __stdcall RR_World3DWanted(void)
 {   const char *nm;
-    g_w3fork = 0;   /* (until RR_World3DLoad: a Pseudo 3D race after a True 3D one shows its forks on the course map) */
-    if (g_crActive) return 0;   /* (a custom race: the 3D world is built from the course files, not the editor's road) */
-    if (!W3Setting()) return 0;   /* Video Options > Race 3D = True 3D, or the test switch RR_WORLD3D (winscale.inc) */
-    if (!g_gpuOn || !g_ren) return 0;
+    g_w3fork = 0;   /* (until RR_World3DLoad) */
+    if (!g_gpuOn || !g_ren) return 0;   /* (RR_HEADLESS=1: no renderer - the race runs, nothing is drawn) */
     nm = SDL_GetRendererName(g_ren); return nm && !strcmp(nm, "direct3d11"); }
 
 /* names of every texture of the track (the course file's sprite sets + globals): a polygon the game queued in a world pass (RrGpuQuad.world) with one of
@@ -933,7 +930,7 @@ static const W3Red *W3RedSpots(const GpuTex *tx)
 {   static W3Red cache[512], rl[RL_SPRITES]; static int nc; W3Red *e; int i, x, y, cols[512], c0, k; const PALETTEENTRY *pe;
     if (tx && tx->rspr >= 0 && tx->rspr < RL_SPRITES) {   /* a rider sprite (HiBob): its lamp hardcoded (riderlamps.inc), the middle of its box - no looking */
         const RlLamp *L = &g_rlLamp[tx->rspr]; e = &rl[tx->rspr];
-        e->n = L->w && L->x + L->w <= tx->w && L->y + L->h <= tx->h; e->u[0] = (L->x + L->w * 0.5f) / tx->w; e->v[0] = (L->y + L->h * 0.5f) / tx->h;
+        e->n = L->w && tx->lox + L->x + L->w <= tx->w && tx->loy + L->y + L->h <= tx->h; e->u[0] = (tx->lox + L->x + L->w * 0.5f) / tx->w; e->v[0] = (tx->loy + L->y + L->h * 0.5f) / tx->h;   /* (lox, loy: an HD Rider in-between, hdrider.inc) */
         return e; }
     if (!tx || !tx->bits || tx->w > 512 || tx->h > 512 || tx->w * 2 >= tx->h * 3 || !g_primary || !g_primary->pal) return NULL;   /* (the rest - a police rider, raw tiles - by colour: wide low pictures - the shadows under the bikes, a fallen rider - are left out; a bike from behind is taller than wide) */
     for (i = 0; i < nc; i++) if (cache[i].hash == tx->hash) return &cache[i];
@@ -1801,7 +1798,7 @@ static void W3Sprites(ID3D11Texture2D *target, int w, int h, int tw, int th, con
                     L->rgba = W3Rgba(1.0f, 0.10f + 0.12f * br, 0.05f + 0.05f * br, a); L->core = br > 0.05f ? W3Rgba(1.0f, 0.6f, 0.5f, br) : 0; L->tex = -1;
                     if (lj >= 0 && g_w3s[lj].tx->rspr >= 0 && (L->tex = W3LampTex(g_w3s[lj].tx->rspr)) >= 0) {   /* a rider sprite: exactly its lamp's pixels, where the sprite is drawn */
                         L->tex3 = W3LampTex3D(g_w3s[lj].tx->rspr, &L->texc); L->rgba3 = W3Rgba(1.0f, 1.0f, 1.0f, a);
-                        const W3Spr *t = &g_w3s[lj]; const RlLamp *rl = &g_rlLamp[t->tx->rspr]; float u0 = (rl->x - 1.0f) / t->tx->w, u1 = (rl->x + rl->w + 1.0f) / t->tx->w, v0 = (rl->y - 1.0f) / t->tx->h, v1 = (rl->y + rl->h + 1.0f) / t->tx->h; int c;
+                        const W3Spr *t = &g_w3s[lj]; const RlLamp *rl = &g_rlLamp[t->tx->rspr]; float u0 = (t->tx->lox + rl->x - 1.0f) / t->tx->w, u1 = (t->tx->lox + rl->x + rl->w + 1.0f) / t->tx->w, v0 = (t->tx->loy + rl->y - 1.0f) / t->tx->h, v1 = (t->tx->loy + rl->y + rl->h + 1.0f) / t->tx->h; int c;
                         for (c = 0; c < 4; c++) if (!W3TexToScreen(t->u, t->v, P + 8 * lj, P + 8 * lj + 4, c == 0 || c == 3 ? u0 : u1, c < 2 ? v0 : v1, &L->qx[c], &L->qy[c])) L->tex = -1; } }
                 if (nl && br > 0.05f && dark > 0.05f && nv + 18 <= 6 * cap + W3_HALOV) {   /* braking after dark: a strong red glow round it */
                     nv = (int)(W3ClipHalo(v + nv, lx, ly, bw * 1.15f, w, h, d, W3Rgba(1.0f, 0.06f, 0.03f, 1.0f * br * dark), wf) - v);

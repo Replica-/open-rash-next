@@ -9,7 +9,7 @@
  *                       slots 15 and up are this file's (RrRiders / RrRankRiders, RrKindParams, RrRecord); an extra rider borrows a computer
  *                       rider's character (RrSlotChar: specs, sprites, bike, record values) but gets a name of its own (RrRiderName) and a random
  *                       colour scheme of the 15 (RrSlotColour).  The original data is never written then, so 14 opponents is the original exactly.
- * The count comes from the shim (Game Options, RR_Opponents) or the test switch RR_OPPONENTS=<n>; a custom race uses it too. */
+ * The count comes from the shim (Game Options, RR_Opponents) or the test switch RR_OPPONENTS=<n>. */
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"

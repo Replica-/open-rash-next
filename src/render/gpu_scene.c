@@ -128,7 +128,7 @@ void rr_GpuFlat(const int *v, const double *hv, unsigned char colour, int world,
     g.levels = 0; g.w = g.h = 0; g.pitch = 0; g.flags = 0; g.colour = colour; g.world = world; g.depth = depth; g.objDepth = objDepth; memset(g.name, 0, sizeof g.name);
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
-    g.riderSprite = -1;
+    g.riderSprite = -1; g.riderRow = -1;
     g.objFlags = ObjFlags(&g);
     Clip(&g);
     g_gpuQuad(&g);
@@ -151,12 +151,12 @@ void rr_GpuTextured(const int *node, const int *v, const double *hv, const int *
     g.pitch = 0; g.flags = (obj[3] & 2) ? RRG_KEY : 0; g.colour = -1; g.world = world; g.depth = depth; g.objDepth = objDepth; memcpy(g.name, obj + 4, sizeof g.name);   /* name: texture object words 4..5 */
     g.objKind = objDepth >= 0 ? rr_World3DObjInfo(&g.objYaw, &g.objLat, &g.objId) : (g.objYaw = g.objLat = 0, g.objId = 0, RRO_NONE);   /* (W3_OBJ just looked this record up) */
     for (i = 0; i < RRG_MAXMIP; i++) g.bits[i] = 0;
-    g.riderSprite = -1;
+    g.riderSprite = -1; g.riderRow = -1;
     g.objFlags = ObjFlags(&g);
     if (obj[3] & 0x2000) {             /* rider tile: just composed into the object's 256-wide level-0 bitmap by TileCopy256, the next rider reuses it */
         g.bits[0] = *(const unsigned char **)((const char *)obj + 0x38);
         { extern const unsigned char *rr_tileSprDst; extern int rr_tileSpr;   /* (road_view.c: the HiBob sprite of that copy) */
-          if (g.bits[0] == rr_tileSprDst) g.riderSprite = rr_tileSpr; }
+          if (g.bits[0] == rr_tileSprDst) { g.riderSprite = rr_tileSpr; g.riderRow = *((const unsigned char *)node + 0x3c); } }
         g.w = node[4]; g.h = node[5]; g.pitch = 256; g.levels = 1; g.flags |= RRG_SNAP;
         { extern int rr_rcTrueRow; if (rr_rcTrueRow >= 0 && *((const unsigned char *)node + 0x3c) == (unsigned)rr_rcTrueRow) g.flags |= RRG_TRUECOL; }   /* (template indices: race/rider.c) */
         if (g.w <= 0 || g.h <= 0 || g.w > 256) return;

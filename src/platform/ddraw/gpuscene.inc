@@ -50,7 +50,7 @@ static void GpuAddTri(int a,int b,int c){ GpuBatch *bt=&g_gb[g_gnb-1]; int base=
 /* one entry per distinct picture: the bitmap's address, size, pitch, colour key and a hash of its contents (the game streams new sprite sets into the
    same memory, and the rider tiles are recomposed for every rider), with an RGBA mip chain of SDL textures */
 #define GPU_TEXSLOTS 8192
-typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with */
+typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg, lox, loy; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with; lox, loy = where the sprite's own pixel 0, 0 is in the picture (an HD Rider in-between: hdrider.inc), else 0 */
 static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
 static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
 static int HdCarVariants(const char *name8); static const DWORD *HdCarVariantPx(const char *name8, int w, int h, int var);   /* hdtex.inc: more traffic cars */
@@ -198,7 +198,7 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
       if(dt){ char fn[MAX_PATH+64]; FILE *f; _snprintf(fn,sizeof fn-1,"%s\\%s_%dx%d_%08lx.raw",dd,q->objDepth>=0?"object":(q->world?"world":"other"),w,h,(unsigned long)hs); fn[sizeof fn-1]=0;
           if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
     { static int wl=-1; if(wl<0) wl=getenv("RR_WPLOG")!=NULL; if(wl && q->riderSprite>=0) LOG("rider texture: HiBob sprite %d %dx%d key %d", q->riderSprite, w, h, key); }   /* (test switch RR_WPLOG=1, weapons.inc) */
-    e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen;
+    e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen; e->lox=e->loy=0;
     if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch), *hv=(hp && cv)?HdCarVariantPx(q->name,w,h,cv):NULL; DWORD *hx;   /* (hv: the variant's picture, coloured by the original picture's scale below) */   /* "slightly upscaled": the 4x picture (never the rider tiles) */
         if(getenv("RR_HDLOG")) LOG("hdtex scene %u: new '%.8s' %dx%d hash %08lx bits %p world %d -> %s", g_gpuFrame, q->name, w, h, (unsigned long)hs, q->bits[0], q->world, hp?"4x":"original");   /* test switch RR_HDLOG=1 */
         DWORD *rp=NULL;
@@ -304,6 +304,7 @@ __declspec(dllexport) void __stdcall RR_GpuSceneBegin(unsigned char *frame, int 
     ps=GpuPalSum(g_primary?g_primary->pal:NULL); if(ps!=g_gpuPal){ GpuTexDropAll(); g_gpuPal=ps; }   /* palette fades: the textures are rebuilt */
     { float sx=g_wsSx, sy=g_wsSy; g_gpuOutScale=(float)sqrt(sx*sy); if(g_gpuOutScale<0.25f) g_gpuOutScale=0.25f; } }
 static int W3Sprite(const RrGpuQuad *q, const GpuTex *tx);   /* world3d.inc: into the 3D pass (with depth) */
+static int HrQuad(const RrGpuQuad *q);   /* hdrider.inc: an HD Rider tile */
 __declspec(dllexport) void __stdcall RR_GpuQuad(const RrGpuQuad *q)
 {   GpuTex *tx;
     if(!g_gpuOn || !g_gpuScene || !q || W3Replaces(q)) return;
@@ -316,6 +317,10 @@ __declspec(dllexport) void __stdcall RR_GpuQuad(const RrGpuQuad *q)
     if(q->levels<=0){ if(!W3Sprite(q,NULL)) GpuEmitFlat(q); return; }
     if(!q->bits[0] || q->w<=0 || q->h<=0 || q->w>2048 || q->h>2048) return;
     if(q->flags&RRG_SNAP) g_gpuRiderQ++;
+    { static int rl=-1; if(rl<0) rl=getenv("RR_RIDERLOG")!=NULL;   /* test switch RR_RIDERLOG=1: every rider tile (scene, rider, HiBob sprite, size, corners, uv) */
+      if(rl && q->riderSprite>=0) LOG("riderlog %u %08x %d %d %d %d %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f", g_gpuFrame, q->objId, q->objKind, q->riderSprite, q->w, q->h,
+          q->x[0],q->y[0],q->x[1],q->y[1],q->x[2],q->y[2],q->x[3],q->y[3], q->u[0],q->v[0],q->u[2],q->v[2]); }
+    if(HrQuad(q)) return;
     if(!(tx=GpuTexFor(q))) return;
     if(!W3Sprite(q,tx)) GpuEmitQuad(q,tx); }
 

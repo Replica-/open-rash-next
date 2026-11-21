@@ -1,6 +1,6 @@
 /* Menu trimming: MenuEnableBuild is the "which menu items are enabled" builder (hand-converted from the disassembly): for the restroom / game-mode / pub pages it walks a
  * Y/N string and sets the enable flag (+0x28 from tbl_menuEnable, i.e. dword 3 of each 0x38-byte menu record) of one record per character.  The Game Mode page's old Mano-A-Mano
- * item is Load Game and its Thrash Mode item is gone (rr_MenuTrimInit); the Restroom's New Game starts a Big Game (options.c rr_GameModePageOpen). */
+ * item is Load Game, its Thrash Mode and Custom Race items are gone (rr_MenuTrimInit); the Restroom's New Game starts a Big Game (options.c rr_GameModePageOpen). */
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
@@ -91,14 +91,22 @@ void rr_MenuTrimInit(void)
     *(&tbl_menuEnable + 2 * 0x38 + 0x28) = 0;
     *(&tbl_gameModeMenu + 2 * 0x38 + 0x28) = 1;
     *(unsigned *)(&tbl_gameModeMenu + 2 * 0x38 + 0x2c) = (unsigned)rr_GameModeLoad;
-    {   /* the Game Mode row: Big Game Mode, Custom Race, Load Game, Restroom.  Thrash Mode is gone: record 0 (first, where the cursor starts) becomes
-           Big Game Mode (target +4 the character select, label +8, action +0x2c), record 1 Custom Race (ui\custom_race.c: the label / help strings were
-           Thrash Mode's, renamed in strings.c) */
+    {   /* the Game Mode row: Big Game Mode, Load Game, Restroom.  Thrash Mode is gone: record 0 (first, where the cursor starts) becomes
+           Big Game Mode (target +4 the character select, label +8, action +0x2c); record 1 (the original Big Game Mode; Custom Race until 2026-11-21, user:
+           every race is True 3D) is off, below the screen, and no link leads to it.  The three left are spread over the row: x +0x0c, width +0x14, keyboard
+           links +0x1c left, +0x1d right, +0x20 next, +0x21 previous */
+        static const int rec[3] = { 0, 2, 3 }, x[4] = { 0, 260, 480, 640 };   /* (the labels sit at the left of their box: Restroom stays where the original had it) */
         int __fastcall rr_BigGameModePick(int item);
-        int __fastcall rr_CustomRacePick(int *item);
         unsigned char *gm = &tbl_gameModeMenu;
+        int k;
         *(int *)(gm + 4) = 14; *(int *)(gm + 8) = 4; *(int *)(gm + 0x30) = 5; *(unsigned *)(gm + 0x2c) = (unsigned)rr_BigGameModePick; gm[0x28] = 1;   /* (+0x30: the help string) */
-        *(int *)(gm + 0x38 + 4) = 0; *(int *)(gm + 0x38 + 8) = 2; *(int *)(gm + 0x38 + 0x30) = 3; *(unsigned *)(gm + 0x38 + 0x2c) = (unsigned)rr_CustomRacePick; gm[0x38 + 0x28] = 1;
+        *(int *)(gm + 0x38 + 0x10) = 520; gm[0x38 + 0x28] = 0;
+        for (k = 0; k < 3; k++) {
+            unsigned char *r = gm + rec[k] * 0x38;
+            *(int *)(r + 0x0c) = x[k]; *(int *)(r + 0x14) = x[k + 1] - x[k];
+            r[0x1c] = r[0x21] = (unsigned char)rec[(k + 2) % 3];
+            r[0x1d] = r[0x20] = (unsigned char)rec[(k + 1) % 3];
+        }
     }
     *(unsigned *)(&tbl_menuEnable + 7 * 0x38 + 4) = 0;   /* (no target screen: the action returns it) */
     *(unsigned *)(&tbl_menuEnable + 7 * 0x38 + 0x2c) = (unsigned)rr_RestroomMods;

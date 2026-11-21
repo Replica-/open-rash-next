@@ -99,7 +99,7 @@ void __fastcall rr_Pixels16Lookup(unsigned short *dst, unsigned short *src, int 
 static int straightRoad(void) { static int init, on; if (!init) { char b[4]; init = 1; on = GetEnvironmentVariableA("RR_STRAIGHT", b, sizeof b) > 0 && b[0] == '1'; } return on; }
 
 /* read the two signed bytes at the current cursor row (cursor>>7 with the low flag bit dropped): the road's curve and its slope (the hill byte; RowCursorStep adds it up to the height).
-   The block's rows are { curve, slope } pairs from +0x10, so row = 2 x the piece within the block.  A custom race writes its road into these rows (ui\custom_race.c) */
+   The block's rows are { curve, slope } pairs from +0x10, so row = 2 x the piece within the block */
 RR_REPLACE_FAST(CursorRowBytes, rr_CursorRowBytes, 12);
 void __fastcall rr_CursorRowBytes(int *obj, int *outA, int *outB)
 {

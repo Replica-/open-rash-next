@@ -599,7 +599,7 @@ static void ViewerStart(void)
     o += sprintf(o, "RR_VIEWER=%s", name) + 1; o += sprintf(o, "RR_AUTORACE=%d", g_track) + 1; o += sprintf(o, "RR_LEVEL=%d", g_level) + 1; o += sprintf(o, "RR_CONFIG=%s", cfg) + 1;
     if (edited) o += sprintf(o, "RR_COURSEEDITFILE=%s", rrc) + 1; else o += sprintf(o, "RR_COURSEEDIT=0") + 1;
     o += sprintf(o, "RR_QUIET_SIZE=%dx%d", (int)r.right, (int)r.bottom) + 1;
-    { static const char *const fixed[] = { "RR_WORLD3D=1", "RR_HEADLESS=2", "RR_AUDIO=off", "RR_NOREGIMPORT=1", "RR_ONEROAD=0", "RR_SEED=1", "RR_NOCOPS=1", "RR_W3MESH=0",   /* (no compiled mesh: the live stretch takes the edits) */
+    { static const char *const fixed[] = { "RR_HEADLESS=2", "RR_AUDIO=off", "RR_NOREGIMPORT=1", "RR_ONEROAD=0", "RR_SEED=1", "RR_NOCOPS=1", "RR_W3MESH=0",   /* (no compiled mesh: the live stretch takes the edits) */
                                            "RR_WEATHER=0", "RR_TOD=2", "RR_FOG=1" };   /* (always sunny - clear, midday, no fog - whatever the game's settings: user, 2026-11-19; weather.inc WxEnv) */
       for (i = 0; i < (int)(sizeof fixed / sizeof fixed[0]); i++) o += sprintf(o, "%s", fixed[i]) + 1; }
     *o = 0;

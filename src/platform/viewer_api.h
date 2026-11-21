@@ -1,7 +1,7 @@
 /* viewer_api.h - the Course Editor's game viewer (src\editor\courseedit.c <-> the ddraw shim's viewer.inc).
  *
  * The editor shows a course with the game's own True 3D renderer by running the game: OpenRash.exe with RR_VIEWER=<name of this shared memory>
- * (+ RR_AUTORACE / RR_LEVEL / RR_COURSEEDITFILE = the edits, RR_WORLD3D=1, RR_HEADLESS=2) starts the race, holds it still once the 3D world is up and
+ * (+ RR_AUTORACE / RR_LEVEL / RR_COURSEEDITFILE = the edits, RR_HEADLESS=2) starts the race, holds it still once the 3D world is up and
  * puts its window into the editor's 3D panel (parent).  From then on it draws the course from the camera the editor writes here (orbiting the focus
  * piece) without the riders, the HUD or the countdown, and the chosen pieces framed.  A click in the panel comes here; the game answers with the piece.
  */

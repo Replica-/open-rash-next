@@ -128,7 +128,7 @@ static void WpClubSwap(DWORD *px, int w, int h, int spr, int wpn)
     if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > w - 1) x1 = w - 1; if (y1 > h - 1) y1 = h - 1;
     for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {   /* the club out */
         float dx = x + 0.5f - gx, dy = y + 0.5f - gy, t = dx * ax + dy * ay, s = dx * nx + dy * ny;
-        if (t > -1.0f && t < L + 2.0f && fabsf(s) <= 2.0f) px[y * w + x] = 0; }
+        if (t > -1.0f && t < L + 2.0f * sx && fabsf(s) <= 2.0f * sx) px[y * w + x] = 0; }   /* (sx: an HD rider's 4x picture, hdrider.inc) */
     for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {   /* the weapon in */
         int k, n = 0; float r = 0, g = 0, b = 0;
         for (k = 0; k < 9; k++) {

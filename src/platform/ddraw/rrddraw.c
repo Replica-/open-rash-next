@@ -205,6 +205,7 @@ static int RingLayout(int seg)   /* layout (1 single, 2 split) of the ring's pie
     if(!node || IsBadReadPtr(node,0x20) || (node[2]>>8)!=seg) return 0;
     return *((const unsigned char *)node+0x1c); }
 #include "hdtex.inc"      /* GPU: "slightly upscaled" sprites / textures (uses g_posTrack) */
+#include "hdrider.inc"    /* Game Options > HD Rider: the riders from 4x pictures, bright colours, in-between frames (True 3D) */
 #include "textup.inc"     /* the game's text replayed at the window's resolution (sharp text) */
 /* RR_DEMO_ALL=1 (launch.json "Demo: all tracks, level 5"; the game races every track in turn, src\system\shutdown.c): the game speed, RR_SPEED=<percent>
    to start with (default 300); Up / Down while the window has the focus step it through g_speedSteps.  The race clock runs that much faster
@@ -346,10 +347,9 @@ static void InitVideo(void)
        SDL3 learns the window's size and position only in its own procedure, so WinProc hands those messages to it (g_sdlProc, which then calls the game's) */
     g_sdlProc=(WNDPROC)GetWindowLongPtrA(g_hwnd,GWLP_WNDPROC); if(g_sdlProc==g_origProc) g_sdlProc=NULL;
     if (g_origProc) SetWindowLongPtrA(g_hwnd,GWLP_WNDPROC,(g_quiet && !getenv("RR_QUIET_WINPROC"))?(LONG_PTR)g_origProc:(LONG_PTR)WinProc);   /* (test switch RR_QUIET_WINPROC=1: a quiet run with the real window's procedure) */
-    /* an accelerated renderer only: the race world is always drawn by the GPU (gpuscene.inc) */
-    g_ren = SDL_CreateRenderer(g_win,NULL);
-    if (g_ren && !strcmp(SDL_GetRendererName(g_ren),"software")) { SDL_DestroyRenderer(g_ren); g_ren=NULL; }
-    if (!g_ren) { LOG("no accelerated SDL renderer: %s",SDL_GetError()); if (!g_quiet) MessageBoxA(NULL,"Open Rash needs a graphics card with Direct3D 11 (no accelerated renderer was found).","Open Rash",MB_OK|MB_ICONERROR); ExitProcess(1); }
+    /* Direct3D 11 only: every race is True 3D (world3d.inc, render3d.h on the renderer's own device) */
+    g_ren = SDL_CreateRenderer(g_win,"direct3d11");
+    if (!g_ren) { LOG("no Direct3D 11 SDL renderer: %s",SDL_GetError()); if (!g_quiet) MessageBoxA(NULL,"Open Rash needs a graphics card with Direct3D 11 (no Direct3D 11 renderer could be created).","Open Rash",MB_OK|MB_ICONERROR); ExitProcess(1); }
     if (g_ren){ SDL_SetRenderLogicalPresentation(g_ren,g_w,g_h,SDL_LOGICAL_PRESENTATION_LETTERBOX); g_tex = SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,g_w,g_h); }
     if (g_ren){ LOG("SDL %d.%d.%d renderer: %s",SDL_VERSIONNUM_MAJOR(SDL_GetVersion()),SDL_VERSIONNUM_MINOR(SDL_GetVersion()),SDL_VERSIONNUM_MICRO(SDL_GetVersion()),SDL_GetRendererName(g_ren)); }
     if (g_tex) SDL_SetTextureScaleMode(g_tex,SDL_SCALEMODE_NEAREST);   /* SDL3 textures default to linear filtering (SDL2: nearest); WinFit applies the Smoothing option */
@@ -554,7 +554,6 @@ HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *out, IUnknown *outer)
 #include "videocfg.inc"
 #include "modscfg.inc"      /* Restroom > Game Options: the widescreen mod and its options */
 #include "shop.inc"         /* The Street > Hurt Hardware: the weapon shop (src\race\arsenal.c) */
-#include "customrace.inc"   /* Game Mode > Custom Race: the road editor (src\ui\custom_race.c) */
 #include "campaign.inc"
 #include "crashlog.inc"
 #include "steps.inc"

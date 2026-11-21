@@ -111,7 +111,7 @@ static void MapFinishes(const CeMap *m)
 
 /* the race set-up (RoadRingBuild, before the game prepares the course): the edited course's pieces put in / taken out into the course `course` (its
    first block - the course is a chain of blocks { 0, ?, next, prev, header, length }, a split { 1, ?, A's first, B's first } / { 2, ?, A's last,
-   B's last, the block after }: ui\custom_race.c).  A course whose map does not fit its blocks is raced without the edits. */
+   B's last, the block after }).  A course whose map does not fit its blocks is raced without the edits. */
 /* a new fork (user, 2026-11-20: "forking the road ... allows the player and ai take it ... i should be able to join it back up again later"): pieces a .. b - 1 of
    normal block q of the main road (a >= 1) made a split road.  The block is cut in three, each part reading the same course data through its own piece map
    (rr_CourseEditSrc - as pieces put in / taken out; an edited block's own map composed in): X1 = q itself, pieces 0 .. a - 1 (the course's head stays its first

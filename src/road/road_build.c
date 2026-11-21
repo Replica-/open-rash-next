@@ -1415,7 +1415,6 @@ void __fastcall rr_RoadRingBuild(int *course, int start)
     unsigned i, next;
     int pos, n, t;
 
-    { void rr_CustomCoursePatch(int *course); rr_CustomCoursePatch(course); }   /* a custom race: the editor's road into the course (ui\custom_race.c) */
     { void rr_CourseEditLoad(int track, int level); rr_CourseEditLoad((*(int *)&rec_demoPage.g_raceTrack), (*(unsigned char *)&rec_playerRecord.g_playerLevel) + 1); }   /* an edited course of this track / level (road\course_edit.c) */
     { void rr_CourseEditMap(int *course); rr_CourseEditMap(course); }   /* its pieces put in / taken out: the course's blocks as edited (before the game prepares them) */
     g_courseLength = 0;

@@ -6,19 +6,21 @@
  *   Traffic             Default (the original) / More / Heavy / Rush hour: cars spawn 1.5 / 2 / 3 times as often - srcoadoad_features.c, RR_Traffic
  *   Police              Default (the original) / Sometimes / Often / Relentless: a police rider every 90 / 45 / 20 s while none is about - src\system\game_step.c, RR_Police
  *   Course map          On (default) / Off - races: a map of the course right of the race view (gpuscene.inc; was in Video Options)
+ *   HD Rider            On (default) / Off - True 3D races: the riders redrawn in high resolution, bright colours of their own, smoothed moves (hdrider.inc)
  *   Change clothes      opens the rider colour editor (ridercol.inc RR_RiderColours) - was a Restroom item
  *
  * Same look and keys as Video Options (videocfg.inc: VcState, VcMsg, the Ic* drawing helpers); saved to video.ini (winscale.inc).
  * RR_TEST_MODSCFG=<row> + RR_DUMP_DIR: that row selected, the screen saved as <RR_DUMP_DIR>\modscfg.bmp and closed (a picture for layout checks); with RR_DUMP_GPU
  * also the window as shown (gpu903.bmp: the readme picture).  RR_TEST_MODSCFG_OPEN=1 opens the screen by itself, like RR_TEST_VIDEOCFG=1 (McTestHook).
  */
-#define MC_ROWS 7
-#define MC_NVAL 5                                           /* rows with a value; then Reset to defaults, Done */
+static int HrInstalled(void);   /* hdrider.inc */
+#define MC_ROWS 8
+#define MC_NVAL 6                                           /* rows with a value; then Reset to defaults, Done */
 #define MC_Y0 104
 #define MC_DY 26
 #define MC_VX 236
-enum { MC_OPP, MC_TRAFFIC, MC_POLICE, MC_MAP, MC_CLOTHES, MC_RESET, MC_DONE };
-static const char *const g_mcLabel[MC_ROWS] = { "Opponents","Traffic","Police","Course map","Change clothes","Reset to defaults","Done" };
+enum { MC_OPP, MC_TRAFFIC, MC_POLICE, MC_MAP, MC_HDRIDER, MC_CLOTHES, MC_RESET, MC_DONE };
+static const char *const g_mcLabel[MC_ROWS] = { "Opponents","Traffic","Police","Course map","HD Rider","Change clothes","Reset to defaults","Done" };
 static int McRowY(int i){ return MC_Y0+i*MC_DY+(i>=MC_RESET?12:0); }
 static int McIndent(int i){ (void)i; return 36; }
 
@@ -28,6 +30,7 @@ static void McValue(int row,char *b,size_t n)
     case MC_TRAFFIC: _snprintf(b,n,g_vid.traffic?"%s  (cars %s as often)":"%s  (the original)",g_trafficName[VidClamp(g_vid.traffic,0,3)],g_vid.traffic==1?"1.5 times":g_vid.traffic==2?"twice":"3 times"); break;
     case MC_POLICE: _snprintf(b,n,g_vid.police?"%s  (one every %d s)":"%s  (the original)",g_policeName[VidClamp(g_vid.police,0,3)],g_policeSecs[VidClamp(g_vid.police,0,3)]); break;
     case MC_MAP: _snprintf(b,n,"%s",g_vid.map?"On  (right of the race view)":"Off"); break;
+    case MC_HDRIDER: _snprintf(b,n,"%s",!HrInstalled()?"Not installed  (mod\\hdrider)":g_vid.hdRider?"On  (high resolution, bright colours, smooth moves)":"Off"); break;
     case MC_CLOTHES: _snprintf(b,n,"Press Enter  (your rider's colours)"); break;
     default: b[0]=0; }
     b[n-1]=0; }
@@ -38,10 +41,11 @@ static void McAdjust(VcState *s,int row,int dir)
         VcMsg(s,g_vid.opp>14?"More riders than the original: extra ones get new names and random colours (from the next race)":"Applies from the next race"); VidSave(); return; }
     if(row==MC_POLICE){ g_vid.police=(g_vid.police+dir+4)%4; VcMsg(s,"Applies from the next race"); VidSave(); return; }   /* (wraps round) */
     if(row==MC_TRAFFIC){ g_vid.traffic=(g_vid.traffic+dir+4)%4; VcMsg(s,"Applies from the next race"); VidSave(); return; }   /* (wraps round) */
+    if(row==MC_HDRIDER){ g_vid.hdRider=!g_vid.hdRider; VcMsg(s,HrInstalled()?"Applies from the next race":"The HD rider pictures are not installed (mod\\hdrider)"); VidSave(); return; }
     if(row!=MC_MAP) return;   /* (Change clothes: Enter opens it, McActivate) */
     g_vid.map=!g_vid.map; VcMsg(s,"Applies from the next race");
     VidSave(); }
-static void McReset(VcState *s){ g_vid.opp=14; g_vid.traffic=0; g_vid.police=0; g_vid.map=1; VidSave(); VcMsg(s,"Defaults restored"); }
+static void McReset(VcState *s){ g_vid.opp=14; g_vid.traffic=0; g_vid.police=0; g_vid.map=1; g_vid.hdRider=1; VidSave(); VcMsg(s,"Defaults restored"); }
 
 static const char *const g_mcHelp[MC_ROWS][2] = {
     [MC_OPP]={ "How many computer riders race against you: 1 to 50 (Left / Right, Shift: 5 at a time).  14 is the original field;",
@@ -52,9 +56,11 @@ static const char *const g_mcHelp[MC_ROWS][2] = {
       "90, 45 or 20 seconds while there is none about (one at a time).  Applies from the next race." },
     [MC_MAP]={ "A map of the whole course on the right of the race view: your place, the other riders,",
       "split roads, the finish line and how far it is.  Applies from the next race." },
+    [MC_HDRIDER]={ "True 3D races: every rider redrawn in high resolution, each in bright colours of its own (yours from Change clothes),",
+      "and their moves smoothed - steering, punches, crashes, getting back on.  Needs the mod\\hdrider pictures." },
     [MC_CLOTHES]={ "Your rider's colours: helmet, jacket, stripes, trousers and bike, each from the game's colour schemes or any colour",
       "(from the next race).  Enter opens the editor." },
-    [MC_RESET]={ "Puts the options back to their defaults: 14 opponents, Default traffic and police, the course map on.", "" },
+    [MC_RESET]={ "Puts the options back to their defaults: 14 opponents, Default traffic and police, the course map and HD Rider on.", "" },
     [MC_DONE]={ "Saves everything and returns to the Restroom.", "" } };
 static void McDraw(Surf *tmp,const Surf *base,const VcState *s,DWORD now)
 {   HDC dc; HFONT title,row,fSm,fMid,old; int i; char t[128];

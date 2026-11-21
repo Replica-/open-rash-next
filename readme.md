@@ -126,9 +126,6 @@ settings (window, video, controls, sound) are not in it. Saves from older versio
   option is gone too: you move up a level by winning.
 - Opponents (Game Options): race against 1 to 50 computer riders (14 is the original field); the extra riders get names of their own
   and random colours.
-- Custom Race (Game Mode page): draw your own road - a straight line you bend with control points (drag from the road to add, drag, right-click to
-  remove), give each segment a ramp (uphill / downhill) and a type (smooth, rolling hills, jumps, chicanes), see its elevation profile, zoom in
-  (mouse wheel) - and race it on a level 1 track's scenery.
 - Settings live in `RoadRash.cfg` and `video.ini` next to the exe (an existing Road Rash registry entry is imported once).
 - Game controllers work out of the box.
 

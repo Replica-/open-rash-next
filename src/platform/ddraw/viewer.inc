@@ -1,6 +1,6 @@
 /* viewer.inc - the Course Editor's game viewer (src\platform\viewer_api.h; the editor: src\editor\courseedit.c).
  *
- * RR_VIEWER=<name> (with RR_AUTORACE / RR_LEVEL / RR_WORLD3D=1 / RR_HEADLESS=2 and the edits in RR_COURSEEDITFILE): the race starts as usual, off-screen.
+ * RR_VIEWER=<name> (with RR_AUTORACE / RR_LEVEL / RR_HEADLESS=2 and the edits in RR_COURSEEDITFILE): the race starts as usual, off-screen.
  * Once its 3D world has been drawn for a second the race is held still (RR_GameSpeed 0: mainloop.c waits) and the window goes into the editor's 3D panel.
  * From then on the paused loop calls ViewerIdle: the last race frame composed again (GpuCompose) with the editor's camera (W3Draw: ViewerCamera), without
  * the game's polygons, its overlay, the HUD or the countdown; the chosen pieces framed and the piece numbers on top (ViewerOverlay).  The renderer is the
