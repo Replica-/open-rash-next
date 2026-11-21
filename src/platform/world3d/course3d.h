@@ -35,6 +35,7 @@ typedef struct C3Course {
     int hide;                   /* C3_BuildRange: 1 + the split-road half left out where it is far from the other one (0 = both; C3_HideHalf) */
     int darkStrip;              /* C3_Strip: this cross-section span is drawn darker (-1 none): the median wedge under the rails at a fork */
     int skOn, skind[2];         /* C3_BuildRange: skOn = the piece's sides' own kinds (C3_SideKind) in skind[left / right] for C3_Strip / C3_Skirt */
+    int skNo;                   /* C3_Skirt: no skirt on this side (bit 0 left, 1 right) - the inner side of a bfit fork's half (C3_FitInner) */
     RxAssets *skRa;             /* C3_BuildRange: the assets (their CEXT: the sides' kinds) for C3_GroundAt */
     int bldKind;                /* the buildings C3_Building is putting up: 0 a street's (C3_Roadside), 1 / 2 on a terrain side from that band (C3_BandBuildings) */
     int skirts;                 /* C3_BuildRange: build the skirts (C3_Skirt) - only the live stretch round the camera, never the whole course */
@@ -42,6 +43,8 @@ typedef struct C3Course {
     int forkPick;               /* 1 = forks off: a split is only its left road A, built as an ordinary road (no B / rails / median); 0 = both */
     int noGround;               /* 1 = no rocks, fallen leaves (Video Options > True 3D detail > Ground detail off: C3_Leaves, C3_DirtRocks) */
     unsigned char *bdead;       /* per piece: 1 = carriageway B has already rejoined A (its real end is earlier than A's: C3_BTail); not built */
+    unsigned char *bfit;        /* per piece: 1 = a fork whose B was made to come back beside A (the Course Editor's: C3_FramesB fit) - not pushed apart (C3_PushB): the
+                                   two halves share the ground, each ending at the line half way between them (C3_InnerClamp) */
     int *pairA, *pairB;         /* per piece: the A piece beside B piece k / the B piece beside A piece k (they drift apart when B is shorter: C3_FramesB) */
     int soft;                   /* forks on, the original's way (C3_SoftFrames): hide = 1 + the carriageway the camera is not on, built round the camera each frame */
     unsigned char *other;       /* soft: per piece, 1 = that other carriageway is built (the game's view has the split there and it is near) */
@@ -178,20 +181,32 @@ static void C3_PushB(C3Course *c, int ks, int kb, int tail)
     free(need); free(push);
 }
 
+static int C3_FitAll(const C3Course *c, int ks, int kj)   /* B over all of ks .. kj - 1 comes back beside A at the join, in its own bends (the fit test of C3_FramesB) */
+{
+    int k; double vx = 0, vz = 0, x0, z0, tx, tz, r0, rot, sl; float p0[3];
+    if (kj - ks <= 50) return 0;
+    C3_PointF(c, c->frame, ks, c->piece[ks].splitX, 0, p0); x0 = p0[0]; z0 = p0[2]; tx = c->frame[kj].x - x0; tz = c->frame[kj].z - z0;
+    for (k = ks; k < kj; k++) { double h = c->frame[k].heading + c->piece[k].splitSlope / c->L; vx += c->L * sin(h); vz += c->L * cos(h); }
+    r0 = c->frame[kj].heading - (c->frame[kj - 1].heading + c->piece[kj - 1].splitSlope / c->L); r0 -= floor(r0 / (2 * C3_PI) + 0.5) * 2 * C3_PI;
+    rot = atan2(tx, tz) - atan2(vx, vz); rot -= floor(rot / (2 * C3_PI) + 0.5) * 2 * C3_PI;
+    sl = vx * vx + vz * vz > 1 ? sqrt((tx * tx + tz * tz) / (vx * vx + vz * vz)) : 0;
+    return fabs(r0) < 0.05 && fabs(rot) < 0.05 && sl > 0.995 && sl < 1.06;
+}
 static void C3_FramesB(C3Course *c)
 {
     int k, ks, kj, kb, j;
     c->frameB = (C3Frame *)realloc(c->frameB, sizeof(C3Frame) * (c->n + 1));
     memcpy(c->frameB, c->frame, sizeof(C3Frame) * (c->n + 1));
-    c->bdead = (unsigned char *)realloc(c->bdead, c->n + 1); c->pairA = (int *)realloc(c->pairA, sizeof(int) * (c->n + 1)); c->pairB = (int *)realloc(c->pairB, sizeof(int) * (c->n + 1));
-    if (!c->bdead || !c->pairA || !c->pairB) return;
-    for (k = 0; k <= c->n; k++) { c->bdead[k] = 0; c->pairA[k] = c->pairB[k] = k; }
+    c->bdead = (unsigned char *)realloc(c->bdead, c->n + 1); c->bfit = (unsigned char *)realloc(c->bfit, c->n + 1); c->pairA = (int *)realloc(c->pairA, sizeof(int) * (c->n + 1)); c->pairB = (int *)realloc(c->pairB, sizeof(int) * (c->n + 1));
+    if (!c->bdead || !c->bfit || !c->pairA || !c->pairB) return;
+    for (k = 0; k <= c->n; k++) { c->bdead[k] = c->bfit[k] = 0; c->pairA[k] = c->pairB[k] = k; }
     for (ks = 0; ks < c->n; ks = kj) {
-        double dth, raw, turn = 0, best = 1e30, cbest[C3_NB] = { 0 }, ex, ey, ez, *h0; float p0[3]; C3Frame *b = c->frameB; int m, n, tail;
+        double dth, raw, turn = 0, best = 1e30, cbest[C3_NB] = { 0 }, ex, ey, ez, *h0, lb = c->L; float p0[3]; C3Frame *b = c->frameB; int m, n, tail, fit = 0;
         if (c->piece[ks].layout != 2) { kj = ks + 1; continue; }
         for (kj = ks; kj < c->n && c->piece[kj].layout == 2; kj++) {}
         if (kj >= c->n) break;   /* (no join: B as far as A goes) */
-        tail = C3_BTail(c, ks, kj); kb = kj - tail;   /* B's pieces ks .. kb - 1; B piece kb's start = A's join (piece kj) */
+        tail = C3_FitAll(c, ks, kj) ? 0 : C3_BTail(c, ks, kj); kb = kj - tail;   /* B's pieces ks .. kb - 1; B piece kb's start = A's join (piece kj) - all of them on a fork
+                                                                                  made to come back beside A (its last pieces A's bends: no early end - the join's ground was cut) */
         for (k = kb; k < kj; k++) c->bdead[k] = 1;
         for (k = ks + (kb - ks) / 2; k < kb; k++) { c->pairA[k] = k + tail; c->pairB[k + tail] = k; }   /* (second half: B beside A + tail; first half beside the same index) */
         n = kb - ks;
@@ -199,8 +214,19 @@ static void C3_FramesB(C3Course *c)
         for (k = ks; k < kb; k++) b[k].heading += c->piece[k].splitSlope / c->L;   /* (b = A's frames, headings shifted by the earlier stretches' whole turns) */
         C3_PointF(c, c->frame, ks, c->piece[ks].splitX, 0, p0);
         b[ks].x = p0[0]; b[ks].y = p0[1]; b[ks].z = p0[2];
+        {   /* B made to come back beside A in its own bends (the Course Editor's forks: courseedit.c PlanForkShape - user, 2026-11-21, a fork as the originals'):
+               it ends at A's direction and nearly at the join, only a little short of it (a road out and back is longer than A beside it, and B has A's pieces) -
+               turned and stretched as a whole to meet it (its pieces up to 6 % longer), not bent straight by the solver (that took its swing out away) */
+            double vx = 0, vz = 0, tx = c->frame[kj].x - b[ks].x, tz = c->frame[kj].z - b[ks].z, r0 = b[kj].heading - b[kb - 1].heading, sl, rot;
+            for (k = ks; k < kb; k++) { vx += c->L * sin(b[k].heading); vz += c->L * cos(b[k].heading); }
+            r0 -= floor(r0 / (2 * C3_PI) + 0.5) * 2 * C3_PI;
+            rot = atan2(tx, tz) - atan2(vx, vz); rot -= floor(rot / (2 * C3_PI) + 0.5) * 2 * C3_PI;
+            sl = vx * vx + vz * vz > 1 ? sqrt((tx * tx + tz * tz) / (vx * vx + vz * vz)) : 0;
+            if (n > 50 && fabs(r0) < 0.05 && fabs(rot) < 0.05 && sl > 0.995 && sl < 1.06) { fit = 1; lb = c->L * sl; for (k = ks; k < kb; k++) b[k].heading += rot; for (k = ks; k <= kj; k++) c->bfit[k] = 1; }
+        }
         raw = b[kj].heading - b[kb - 1].heading;
-        for (m = -1; m <= 1; m++) {   /* the whole-turn choices around the nearest: the one with the smaller bend (residual first, then |c1| + |c2|) */
+        if (fit) turn = floor(raw / (2 * C3_PI) + 0.5) * 2 * C3_PI;   /* (no bend: cbest stays 0) */
+        else for (m = -1; m <= 1; m++) {   /* the whole-turn choices around the nearest: the one with the smaller bend (residual first, then |c1| + |c2|) */
             double tn = (floor(raw / (2 * C3_PI) + 0.5) + m) * 2 * C3_PI, cb[C3_NB], e, cost = 0; int j2;
             for (k = ks; k < kb; k++) h0[k - ks] = b[k].heading + (raw - tn) * C3_S((double)(k - ks + 1) / n, n);
             e = C3_SolveB(c, ks, kb, h0, b[ks].x, b[ks].z, c->frame[kj].x, c->frame[kj].z, cb);
@@ -215,13 +241,14 @@ static void C3_FramesB(C3Course *c)
         for (k = ks; k < kb; k++) b[k].heading += dth * C3_S((double)(k - ks + 1) / n, n) + C3_Bend(cbest, C3_W((k - ks + 0.5) / n, n));
         for (j = kj; j <= c->n; j++) b[j].heading -= turn;   /* from the join on: the same directions, continuous with B's (interpolation) */
         for (k = ks; k < kb; k++) {
-            b[k + 1].x = b[k].x + c->L * sin(b[k].heading); b[k + 1].z = b[k].z + c->L * cos(b[k].heading);
+            b[k + 1].x = b[k].x + lb * sin(b[k].heading); b[k + 1].z = b[k].z + lb * cos(b[k].heading);
             b[k + 1].y = b[k].y + c->piece[k].halfB.hill;
         }
         ex = c->frame[kj].x - b[kb].x; ey = c->frame[kj].y - b[kb].y; ez = c->frame[kj].z - b[kb].z;   /* (x / z: what the solver left - up to ~20000 units on Peninsula) */
         for (j = ks + 1; j <= kb; j++) { double t = (double)(j - ks) / n, s = C3_S(t, n); b[j].x += ex * s; b[j].y += ey * t; b[j].z += ez * s; }   /* (x / z: smooth, none added at either end) */
         if (kb < kj) b[kb].heading = b[kj].heading;   /* B's end = A's join (position from the spread above, heading A's) */
-        if (!c->forkPick && !c->soft) C3_PushB(c, ks, kb, kj - kb);   /* (forks off: nothing to keep apart; the original's way: B is the camera's path, on its own curves) */
+        if (!c->forkPick && !c->soft && !fit) C3_PushB(c, ks, kb, kj - kb);   /* (fit: B leaves A gradually in its own bends - user, 2026-11-21 "this angle ... is way too
+                                                                                  extreme ... it should be a gradual fork": pushed, B's first piece crossed a road's width) */   /* (forks off: nothing to keep apart; the original's way: B is the camera's path, on its own curves) */
         for (j = kb + 1; j < kj; j++) b[j] = b[kb];   /* (B's phantom tail: not built) */
         free(h0);
     }
@@ -564,9 +591,14 @@ static void C3_Span(C3Course *c, int k, double u0, double h0, double u1, double 
 #define C3_GUTD 6.0
 #define C3_BUMPH 22.0   /* (a speed bump: its height, and its length along the road - SPDBUMP, C3_Lanes) */
 #define C3_BUMPW 90.0
+static double C3_FitMid(const C3Course *c, int k, int h); static int C3_FitInner(const C3Course *c, int k, int h);   /* (below) */
 static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const RoadSection *s1, double o1, const RxAssets *ra, double gut)
 {
-    int nl = (int)s0->lanesL + (int)s0->lanesR, j;
+    int nl = (int)s0->lanesL + (int)s0->lanesR, j, fh = s0 == &c->piece[k].halfB, fs = c->piece[k].layout == 2 ? C3_FitInner(c, k, fh) : -1;   /* (split pieces only: the join's row is the
+                                                                     first single piece's start - its lanes whole) */
+    double fm0 = 0, fm1 = 0;   /* (a bfit fork: the lanes end at the line half way to the other half too - user, 2026-11-21 "these are overlapping awkwardsly and clipping ...
+                                  the original does not do this": both roads' lanes lay over each other where they part, each with all its lines) */
+    if (fs >= 0) { fm0 = C3_FitMid(c, k, fh) - o0; fm1 = C3_FitMid(c, k + 1 <= c->n ? k + 1 : k, fh) - o1; }
     double l0 = -250.0 * s0->lanesL, w0 = 250;   /* rr_RoadsideStripDraw: lanes of a fixed 250 units (lane record +0x24 = scale * 0xfa); one grid for the whole piece */
     l0 += s0->laneEdgeL + s0->laneL * (250.0 / 256);   /* the centre line = left lane edge + laneL (8.8 lanes): 0 on carriageway A, but a split road's B lies off its own
                                                         centre (Sierra: lanes 250..750, laneL 0; Peninsula: 0..750, laneL 1) - its centre line is 250 */
@@ -584,6 +616,8 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
         double n0 = x0 > el0 ? x0 : el0, n1 = x1 < er0 ? x1 : er0;   /* near end (piece k), clipped */
         double f0 = x0 > el1 ? x0 : el1, f1 = x1 < er1 ? x1 : er1;   /* far end (piece k + 1) */
         int tex = -1, cob = 0, m0 = c->nv;
+        if (fs >= 0) {   /* (the gutter tests below keep the road's own edges: no gutter at the cut) */
+            if (fs) { if (n1 > fm0) n1 = fm0; if (f1 > fm1) f1 = fm1; } else { if (n0 < fm0) n0 = fm0; if (f0 < fm1) f0 = fm1; } }
         if (ra) {   /* PieceTablePick: finish line (half flag 0x20) -> g_roadTexFinish; start grid (kind flags 8 / 0x10) -> tbl_roadTexStart[v]; cross street
                        (0x20) -> tbl_roadTexPlain (plain); else tbl_roadTexLanes[v] (TEXG index = (address - 0x4c3c9c) / 4).  v: lane 0 plain, lane lanesL
                        yellow; while the left side is fractional lanes 0..1 plain (the line of the lane being added is not drawn yet); the lanes past
@@ -637,6 +671,12 @@ static void C3_Lanes(C3Course *c, int k, const RoadSection *s0, double o0, const
                 uv[0] = 0; uv[1] = 0.42f; uv[2] = 1; uv[3] = 0.42f; uv[4] = 1; uv[5] = 0.58f; uv[6] = 0; uv[7] = 0.58f;
                 C3_QuadT(c, q[0][0], q[0][1], q[1][1], q[1][0], C3_Colour(M_ROAD, 0, k), tex, uv); C3_QuadT(c, q[1][0], q[1][1], q[2][1], q[2][0], C3_Colour(M_ROAD, 0, k), tex, uv); }   /* (cobbles: vertex alpha 240 - render3d.h, each stone bumped and glossy; the rainbow road: 235, animated) */
         }
+    }
+    if (fs == 1 && !fh) {   /* (a bfit fork's A: a strip of road just under the edge it shares with B - two meshes side by side, B's pieces a little along A's: sky showed
+                               through the seam between them) */
+        double e0 = s0->laneEdgeR < s0->edgeR ? s0->laneEdgeR : s0->edgeR, e1 = s1->laneEdgeR < s1->edgeR ? s1->laneEdgeR : s1->edgeR; float a[3], b[3], cc[3], d[3];
+        C3_Point(c, k, e0 - 60 + o0, -3, a); C3_Point(c, k, e0 + 60 + o0, -3, b); C3_Point(c, k + 1, e1 + 60 + o1, -3, cc); C3_Point(c, k + 1, e1 - 60 + o1, -3, d);
+        C3_Quad(c, a, b, cc, d, C3_Colour(M_ROAD, 0, k));
     }
 }
 
@@ -1085,6 +1125,7 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
     for (side = 0; side < 2; side++) {
         int i = side ? C3_NP - 1 : 0, sp = side ? C3_NP - 2 : 0, t = tex ? tex[sp] : -1, j; float a[3], b[3], cc[3], d[3], uv[8]; unsigned col;
         double per = C3_TOP, q;
+        if (c->skNo & (1 << side)) continue;   /* (the inner side of a fork's half: the other half's ground is there) */
         kind = c->skOn ? c->skind[side] : kind0;
         if (kind >= SEC_WALL1 && kind <= SEC_WALL_SPLIT && s0->wall[side * 3 + 2] < 0) continue;   /* (drop to the sea) */
         if (side) { C3_Point(c, k, r0->u[i], r0->h[i], a); C3_Point(c, k, r0->u[i] + C3_SKIRT, r0->h[i], b); C3_Point(c, k + 1, r1->u[i] + C3_SKIRT, r1->h[i], cc); C3_Point(c, k + 1, r1->u[i], r1->h[i], d); }
@@ -1518,7 +1559,7 @@ static double C3_GroundAt(C3Course *c, int k, int h, double x)
     const RoadPiece *p0 = &c->piece[k], *p1 = &c->piece[k1];
     const RoadSection *s0 = h ? &p0->halfB : &p0->halfA, *s1 = h ? (p1->layout == 2 ? &p1->halfB : &p1->halfA) : &p1->halfA;
     C3_SectionAt(c->skRa, s0, k, h, 0, &r0); C3_SectionAt(c->skRa, s1, k1, h, 0, &r1);   /* (half B: in its own frames; each side its own kind) */
-    if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2) C3_InnerClamp(c, k1, h, &r1); }   /* (as the mesh: beside a fork / join the inner side is
+    if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2 || (c->bfit && c->bfit[k1])) C3_InnerClamp(c, k1, h, &r1); }   /* (as the mesh: beside a fork / join the inner side is
                                                                                                          the flat median, not the hillside - objects there stood in it) */
     return (C3_RowHeight(&r0, x) + C3_RowHeight(&r1, x)) * 0.5;
 }
@@ -1762,9 +1803,45 @@ static int C3_HideHalf(const C3Course *c, int k, int h)
 /* where both carriageways are shown, each one's inner side (A's right, B's left: B always lies right of A, its lanes 250..750 of its own centre)
    would run across the other road (Sierra 900..905: A's verge and hillside over B's lanes and B's over A's - driving through them on A).  The inner
    side ends at the road's own outer edge (verge kept, terrain collapsed onto it); the ground between the two carriageways is one surface, C3_Median */
+static double C3_FitD(const C3Course *c, int k)   /* B's road right of A's at piece k (a bfit fork): between the middles of their road surfaces - a road need not lie
+                                                     round its centre line (City: 4 lanes, all right of it) */
+{
+    double th = c->frame[k].heading; const RoadPiece *p = &c->piece[k < c->n ? k : c->n - 1]; const RoadSection *b = p->layout == 2 ? &p->halfB : &p->halfA;   /* (the join's row: one road) */
+    return (c->frameB[k].x - c->frame[k].x) * cos(th) - (c->frameB[k].z - c->frame[k].z) * sin(th) + (b->edgeL + b->edgeR) * 0.5 - (p->halfA.edgeL + p->halfA.edgeR) * 0.5;
+}
+#define C3_FITLAP 0.0    /* each half reaching past the line between them (it was 40, while both roads had all the lanes: sky showed between them just past the fork) -
+                            0 since the lanes are divided (courseedit.c PlanForkLanes; the seam underlaid, C3_Lanes): 40 put each one's grass on the other's lanes */
+static double C3_FitMid(const C3Course *c, int k, int h)   /* where half h ends: the line half way between the two roads (C3_FITLAP past it), across half h's own frame */
+{
+    const RoadPiece *p = &c->piece[k < c->n ? k : c->n - 1]; const RoadSection *b = p->layout == 2 ? &p->halfB : &p->halfA;
+    double D = C3_FitD(c, k), lap = C3_FitInner(c, k, h) == 1 ? C3_FITLAP : -C3_FITLAP;   /* (the side: C3_FitInner - at the fork the two lie on one line) */
+    return (h ? (b->edgeL + b->edgeR) * 0.5 - D * 0.5 : (p->halfA.edgeL + p->halfA.edgeR) * 0.5 + D * 0.5) + lap;
+}
+static int C3_FitInner(const C3Course *c, int k, int h)   /* the side of half h facing the other half on a bfit fork (0 left, 1 right), -1 none */
+{
+    int j; double d;
+    if (k < 0 || k > c->n || !c->bfit || !c->bfit[k] || !c->frameB || (c->piece[k < c->n ? k : c->n - 1].layout != 2 && (k < 1 || c->piece[k - 1].layout != 2))) return -1;   /* (the join's
+                                                                                     row too: the last split piece's end) */
+    for (j = k, d = C3_FitD(c, k); fabs(d) < 50 && j < c->n && c->bfit[j + 1] && j < k + 200; j++) d = C3_FitD(c, j + 1);   /* (at the fork the two lie on one line:
+                                                                                     the side B parts to, a few pieces on - not the rounding's sign there) */
+    if (fabs(d) < 50) for (j = k, d = C3_FitD(c, k); fabs(d) < 50 && j > 0 && c->bfit[j - 1] && j > k - 200; j--) d = C3_FitD(c, j - 1);   /* (at the join: a few pieces back) */
+    return (d >= 0) != (h != 0);
+}
 static void C3_InnerClamp(const C3Course *c, int k, int h, C3Row *r)
 {
     int i;
+    if (c->bfit && c->bfit[k] && c->frameB && k <= c->n) {   /* (B's lanes beside A's - courseedit.c PlanForkLanes: the roads touch at the fork, each one's inner side opening
+                                                               out to the line between them as they part - no median: a filler strip near the ends only left a wedge where it began) */   /* (a fork made to come back beside A: the halves meet half way - user, 2026-11-21 "the forks need to be able to work
+                                                               together so they dont produce this type of artifacting".  At the fork both lie on one line: A keeps the road's left
+                                                               half, B its right; as they part, each one's inner side opens out to the line between them, at its height there) */
+        double m = C3_FitMid(c, k, h), hm;
+        int right = C3_FitInner(c, k, h) == 1;   /* (the inner side: A's right when B is right of it, B's left) */
+        hm = C3_RowHeight(r, m);
+        for (i = 0; i < C3_NP; i++) if (right ? r->u[i] > m : r->u[i] < m) { r->u[i] = m; r->h[i] = hm; }
+        if (right ? r->u[C3_NP - 1] < m : r->u[0] > m) { if (right) r->u[C3_NP - 1] = m; else r->u[0] = m; }   /* (the halves far apart: the inner side's last
+                                                                 edge stretched out to the line - user, 2026-11-21 "Can these not be joined up just vertex to vertex?": sky showed between) */
+        return;
+    }
     if (!C3_NearForkJoin(c, k, h) || !c->frameB) return;
     if (!h) { for (i = 11; i < C3_NP; i++) { r->u[i] = r->u[10]; r->h[i] = r->h[10]; } }   /* (row 10 = A's right outer edge) */
     else { for (i = 0; i < 4; i++) { r->u[i] = r->u[4]; r->h[i] = r->h[4]; } }             /* (row 4 = B's left outer edge) */
@@ -1775,7 +1852,7 @@ static void C3_InnerClamp(const C3Course *c, int k, int h, C3Row *r)
 static void C3_Median(C3Course *c, int k, RxAssets *ra)
 {
     int k1 = k + 1, b0, b1, tex[C3_NP - 1], t; C3Row a0, a1, r0, r1; float p[4][3], uv[8]; double per = 1024, wa, wb;
-    if (!c->pairB || k1 >= c->n || c->piece[k1].layout != 2) return;
+    if (!c->pairB || k1 >= c->n || c->piece[k1].layout != 2 || (c->bfit && c->bfit[k])) return;   /* (bfit: the halves meet half way, C3_InnerClamp) */
     b0 = c->pairB[k]; b1 = c->pairB[k1];
     if (b0 > c->n || b1 > c->n || (c->bdead && (c->bdead[b0] || c->bdead[b1]))) return;
     C3_Section(&c->piece[k].halfA, 0, &a0); C3_Section(&c->piece[k1].halfA, 0, &a1);
@@ -1783,7 +1860,8 @@ static void C3_Median(C3Course *c, int k, RxAssets *ra)
     C3_PointF(c, c->frame, k, a0.u[10], a0.h[10], p[0]); C3_PointF(c, c->frameB, b0, r0.u[4], r0.h[4], p[1]);
     C3_PointF(c, c->frameB, b1, r1.u[4], r1.h[4], p[2]); C3_PointF(c, c->frame, k1, a1.u[10], a1.h[10], p[3]);
     {   double th0 = c->frame[k].heading, th1 = c->frame[k1].heading;   /* the carriageways overlap (at the join, forks on: C3_SoftFrames): no ground between them */
-        if ((p[1][0] - p[0][0]) * cos(th0) - (p[1][2] - p[0][2]) * sin(th0) <= 0 || (p[2][0] - p[3][0]) * cos(th1) - (p[2][2] - p[3][2]) * sin(th1) <= 0) return; }
+        int o0 = (p[1][0] - p[0][0]) * cos(th0) - (p[1][2] - p[0][2]) * sin(th0) <= 0, o1 = (p[2][0] - p[3][0]) * cos(th1) - (p[2][2] - p[3][2]) * sin(th1) <= 0;
+        if (c->bfit && c->bfit[k] ? o0 && o1 : o0 || o1) return; }   /* (bfit: only where they meet at both ends - at the join they touch at one end: the strip left out, sky showed) */
     C3_ProfileTex(ra, &c->piece[k].halfA, k, 0, tex);
     t = tex[11] >= 0 ? tex[11] : tex[10];
     {   const RoadSection *sa = &c->piece[k].halfA, *sb = &c->piece[b0].halfB;   /* a rail on either inner side (GroundMarkQueue, kindArg[0] 5): the dark grey wedge between the
@@ -2043,7 +2121,8 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                     for (i = 0; i < 6; i++) r1.mat[sd ? 8 + i : i] = t.mat[sd ? 8 + i : i];
                     nbrk++; } }
             c->skRa = ra; c->skOn = 1; c->skind[0] = C3_SideKind(ra, s0, k, h, 0); c->skind[1] = C3_SideKind(ra, s0, k, h, 1);
-            if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2) C3_InnerClamp(c, c->soft ? k : k + 1, h, &r1); }   /* (forks on: the piece's end as its start -
+            if (p0->layout == 2) { C3_InnerClamp(c, k, h, &r0); if (p1->layout == 2 || (c->bfit && c->bfit[k + 1])) C3_InnerClamp(c, c->soft ? k : k + 1, h, &r1); }   /* (bfit: the join's row
+                                                                                     cut too - its inner side fanned out across the other half in the last piece) */   /* (forks on: the piece's end as its start -
                                                                                      the other road's last piece clamped at one end only fanned its hillside across the road) */
             C3_PieceTex(ra, s0, k, h, tex);
             c->darkStrip = -1;
@@ -2102,7 +2181,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 C3_Point(c, k, e0, 1, a); C3_Point(c, k, e0 + w, 1, b); C3_Point(c, k + 1, e1 + w, 1, cc); C3_Point(c, k + 1, e1, 1, d);
                 C3_Quad(c, a, b, cc, d, 0xffe8e8e8u); }
             if (ra && !h && p0->layout == 2 && C3_NearForkJoin(c, k, 0)) C3_Median(c, k, ra);   /* the ground between the carriageways (built once, with A) */
-            if (ra && c->skirts && (c->skirtEnd <= 0 || k < c->skirtEnd) && !(p0->layout == 2 && c->hide == 1 + h)) C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra);   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
+            if (ra && c->skirts && (c->skirtEnd <= 0 || k < c->skirtEnd) && !(p0->layout == 2 && c->hide == 1 + h)) { int fi = p0->layout == 2 ? C3_FitInner(c, k, h) : -1; c->skNo = fi < 0 ? 0 : 1 << fi; C3_Skirt(   /* (split roads: only the camera's carriageway - the other one's, at its own height, roofed the join) */c, k, &r0, &r1, s0->kind, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, s0, ra); c->skNo = 0; }   /* town ground beyond the sidewalk: the flat colour 0xfd of WheelTrackPolyDraw */   /* (cross street: C3_Roadside covers both sides) */
             c->skOn = 0;
             if (ra && s0->kind >= SEC_WALL1 && s0->kind <= SEC_WALL_SPLIT) C3_Sea(c, k, s0, o0, s1, o1, ra);
             if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) C3_Tunnel(c, k, h, s0, o0, s1, o1, ra, tex[2]);   /* (Peninsula 385..413, 475..499; the rock: the left cliff face's texture) */

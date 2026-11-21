@@ -120,8 +120,8 @@ static void MapFinishes(const CeMap *m)
    and closing nodes { 1 / 2, 6, A, B, the block before / after, 0x3c00, 0x10000, 0 } (as the game's own: test switch RR_CHAINLOG).  Every part has its own header
    and road rows (their heights at its ends: rows +0xc / +0xe), scenery tables (shared by two parts in sight at once, the draw state's caches went
    stale: ScenerySpriteDraw > OwnerEntriesInRange) and finish table (header +0x24, as MapFinishes: the finishes on its pieces, as offsets from its
-   first).  Undone (CeForkUndo) before the course is set up again.  Both roads alike for the SPLIT_SAME pieces at each end of the fork (ui\custom_race.c:
-   TreePrepare copies them) */
+   first).  Undone (CeForkUndo) before the course is set up again.  B's bends from the fork's first piece to its last (as the original's: B turns off at
+   once); only the heights are alike for the SPLIT_SAME pieces at each end (TreePrepare copies A's slopes onto B there: SpriteColumnsCopy, row +0x11) */
 #define CE_SPLIT_SAME 0x51
 static struct { int *p, v; } g_fkw[1024]; static int g_nfkw;   /* (every word the forks changed - in the chain's nodes, the maps: as it was) */
 static void CeW(int *p, int v) { if (g_nfkw < 1024) { g_fkw[g_nfkw].p = p; g_fkw[g_nfkw].v = *p; g_nfkw++; } *p = v; }
@@ -182,7 +182,7 @@ static int CeForkSpan(int *q, int a, int nb, int b, const signed char *curveB)
         if (i == 0 && !(nA[0][4] = (int)CeHdr(ha, K->Lo, CeFkH(K, p0), CeFkH(K, p1), K->src[p0], K->src[p1], 1))) { ok = 0; break; }
         for (base = i == 0 ? -a : k[0].L - a, j = 1; j < i; j++) base += k[j].L;   /* (piece j of this block: the fork's piece base + j) */
         if (curveB) { unsigned char *rb = (unsigned char *)((int *)nB[i][4])[1];
-            for (j = p0; j < p1; j++) { int f = base + j; if (f >= CE_SPLIT_SAME && f < n - CE_SPLIT_SAME && K->src[j] < K->Lo) rb[0x10 + 2 * K->src[j]] = (unsigned char)curveB[f]; } } }
+            for (j = p0; j < p1; j++) { int f = base + j; if (f >= 0 && f < n && K->src[j] < K->Lo) rb[0x10 + 2 * K->src[j]] = (unsigned char)curveB[f]; } } }
     if (ok && n3) { CeFkBlk *E = &k[nb - 1]; if (!(n3[4] = (int)CeHdr((int *)E->q[4], E->Lo, CeFkH(E, b), CeFkH(E, E->L), E->src[b], E->Lo, 1))) ok = 0; }
     if (!ok) { for (i = 0; i < nb; i++) { if (k[i].src) HeapFree(GetProcessHeap(), 0, k[i].src); if (k[i].hs) HeapFree(GetProcessHeap(), 0, k[i].hs); } return 0; }
     /* the maps: A's first part, B's parts, X3 - each part's pieces' course data */

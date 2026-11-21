@@ -100,7 +100,7 @@ static void W3FreeSoft(void)   /* the live copy's own arrays (forks on) */
     g_w3l.frame = g_w3l.frameB = NULL; g_w3l.pairA = g_w3l.pairB = NULL; g_w3l.other = NULL; g_w3l.soft = 0; }
 static void W3Free(void)
 {   W3FreeSoft(); free(g_w3l.piece); free(g_w3l.v); free(g_w3l.vpiece); memset(&g_w3l, 0, sizeof g_w3l); g_w3lnb = 0; g_w3lo = g_w3hi = -1;   /* (its frames / frameB are g_w3c's) */
-    free(g_w3c.piece); free(g_w3c.frame); free(g_w3c.frameB); free(g_w3c.v); free(g_w3c.vpiece); free(g_w3c.bdead); free(g_w3c.pairA); free(g_w3c.pairB); free(g_w3c.bldg); memset(&g_w3c, 0, sizeof g_w3c);
+    free(g_w3c.piece); free(g_w3c.frame); free(g_w3c.frameB); free(g_w3c.v); free(g_w3c.vpiece); free(g_w3c.bdead); free(g_w3c.bfit); free(g_w3c.pairA); free(g_w3c.pairB); free(g_w3c.bldg); memset(&g_w3c, 0, sizeof g_w3c);
     free(g_w3a.file); free(g_w3a.bind); free(g_w3a.ext); memset(&g_w3a, 0, sizeof g_w3a); }
 
 /* ---- new buildings (urban tracks): generated facades in place of the course's (course3d.h C3_FacadeVary) - six kinds of wall (brick, stucco, concrete
@@ -1174,7 +1174,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     memset(&g_w3l, 0, sizeof g_w3l);   /* the live copy: the file's pieces, g_w3c's frames */
     g_w3l.skirts = 1;   /* (the skirts round the camera only: course3d.h C3_Skirt) */
     g_w3l.forkPick = g_w3c.forkPick; g_w3l.noGround = g_w3c.noGround;
-    g_w3l.bdead = g_w3c.bdead; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB;   /* (shared, g_w3c's) */
+    g_w3l.bdead = g_w3c.bdead; g_w3l.bfit = g_w3c.bfit; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB;   /* (shared, g_w3c's) */
     g_w3l.n = g_w3c.n; g_w3l.start = g_w3c.start; g_w3l.finish = g_w3c.finish; g_w3l.L = g_w3c.L; g_w3l.frame = g_w3c.frame; g_w3l.frameB = g_w3c.frameB; g_w3l.fr = g_w3l.frame;
     if ((g_w3l.piece = (RoadPiece *)malloc(sizeof(RoadPiece) * g_w3c.n)) != NULL) memcpy(g_w3l.piece, g_w3c.piece, sizeof(RoadPiece) * g_w3c.n);
     if (!g_w3fork && g_w3c.frameB) {   /* forks on: the live copy's own frames (C3_SoftFrames), side by side pairing, the game's ring per piece */

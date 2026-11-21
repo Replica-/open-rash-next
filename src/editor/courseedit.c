@@ -264,10 +264,10 @@ static void Extract(const char *rrx, const char *edits)
     { char live[MAX_PATH + 8]; sprintf(live, "%s.live", rrx); DeleteFileA(live); } }
 static int g_meshLo = -1, g_meshHi = -1, g_meshDirty = 1, g_texReady;
 static void FreeGame(void)
-{   free(g_gameDiff); g_gameDiff = NULL; free(g_gc.piece); free(g_gc.frame); free(g_gc.frameB); free(g_gc.v); free(g_gc.vpiece); free(g_gc.bdead); free(g_gc.pairA); free(g_gc.pairB); free(g_gc.bldg); memset(&g_gc, 0, sizeof g_gc);
+{   free(g_gameDiff); g_gameDiff = NULL; free(g_gc.piece); free(g_gc.frame); free(g_gc.frameB); free(g_gc.v); free(g_gc.vpiece); free(g_gc.bdead); free(g_gc.bfit); free(g_gc.pairA); free(g_gc.pairB); free(g_gc.bldg); memset(&g_gc, 0, sizeof g_gc);
     free(g_gra.file); free(g_gra.bind); free(g_gra.ext); memset(&g_gra, 0, sizeof g_gra); g_haveGame = 0; }   /* (pcur points into file: rrx_assets.h RX_Load) */
 static void FreeCourse(void)
-{   FreeGame(); free(g_c.piece); free(g_c.frame); free(g_c.frameB); free(g_c.v); free(g_c.vpiece); free(g_c.bdead); free(g_c.pairA); free(g_c.pairB); free(g_c.bldg); memset(&g_c, 0, sizeof g_c);
+{   FreeGame(); free(g_c.piece); free(g_c.frame); free(g_c.frameB); free(g_c.v); free(g_c.vpiece); free(g_c.bdead); free(g_c.bfit); free(g_c.pairA); free(g_c.pairB); free(g_c.bldg); memset(&g_c, 0, sizeof g_c);
     if (g_pcurOwn) free(g_ra.pcur); if (g_bind0 != g_ra.bind) free(g_bind0); g_pcurOwn = 0; g_pcur0 = NULL; g_bind0 = NULL;
     free(g_ra.file); free(g_ra.bind); free(g_ra.ext); memset(&g_ra, 0, sizeof g_ra);   /* (pcur points into file) */ free(g_orig); g_orig = NULL; free(g_ext); g_ext = NULL; free(g_src); g_src = NULL; g_n0 = 0; g_open = 0; g_pvSel = -1; g_nmv = 0; g_pEnd = -1; g_forkFrom = -1; g_lock[0] = g_lock[1] = -1; }
 static void CourseSet(int n, RoadPiece *pc, int *src)   /* the course now: n pieces pc, piece i made from original piece src[i] (both taken over) */
@@ -325,7 +325,7 @@ static int OpenCourse(int track, int level)
     return 1; }
 
 /* ---------------------------------------------------------------- windows */
-enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE };
+enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_TEXTCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE };
 static HWND g_partWin, g_blocks, g_blkHint, g_partBtn, g_gridChk, g_stopBtn; static int g_grid = 1, g_hx = -1, g_hy = -1;   /* g_grid: the blocks' grid shown (Show grid); g_hx, g_hy: the mouse over the 3D view (window points, -1 away) */   /* the Edit Part window (the fields list), the blocks (right panel) */
 static HWND g_main, g_list, g_props, g_plan, g_prof, g_view, g_statusw, g_edit, g_cbTrack, g_cbLevel, g_half2, g_gameChk, g_p3dBtn; static HFONT g_font; static int g_editRow = -1;
 static void ModeSwitch(int t3d) { SendMessageA(g_p3dBtn, BM_SETCHECK, t3d ? BST_UNCHECKED : BST_CHECKED, 0); SendMessageA(g_gameChk, BM_SETCHECK, t3d ? BST_CHECKED : BST_UNCHECKED, 0); }   /* (the P3D / T3D switch) */
@@ -495,7 +495,8 @@ static unsigned g_facVal[512]; static unsigned short g_facSet[512]; static int g
 /* Raise / Lower / Level (user, 2026-11-18: "can you give me 3 buttons, raise, level and lower - when i use level the first part is the start of the leveller and i drag it to
    other parts to level them too"): g_bpaint 5 / 6 / 7 - a ground cell's height is its outer terrain point's (P0, P1, P2; beyond: P2's), on terrain sides */
 static HWND g_hBtn[4], g_hBar, g_hStepCb; static double g_lvlH;   /* (g_hBtn: Raise / Lower / Level on the Heights toolbar g_hBar, Heights... on the panel; g_noteBtn: Note) */
-static HWND g_noteBtn, g_hFlat, g_vtxChk; static int g_showVtx = 1;   /* (Show vertex points) */
+static HWND g_noteBtn, g_hFlat, g_vtxChk, g_textChk; static int g_showVtx = 1, g_showText = 1;   /* (Show vertex points; Show labels - user, 2026-11-21 "allow the grid and overlay
+                                                                                                  text to be turned off using a checkbox": the piece numbers, finishes and the line along the top) */
 static HWND g_fpRaiseChk; static int g_fpFlat;   /* (the Footpaths list's "Raised" switch - user, 2026-11-19 "under footpaths can you put a switch at the top": its pictures listed once, raised or flush as it says) */
 static int g_lvK0, g_lvK1, g_lvV0, g_lvV1, g_lvSide;   /* (Level: the vertex pressed, the one the drag is over - piece, vertex; their side) */
 static int VtxOk(int k, int side, int v); static void ClearCourse(int fresh); static int EnsureTerrain(int k, int side); static void FlattenAt(int k, int side, int cell); static int g_lcMode, g_lcHas; static double g_lcH; static void LevelCell(int k, int side, int cell);   /* (Level a stroke: 0 not yet, 1 cell by cell, 2 a vertex join; the cells' height) */
@@ -810,7 +811,7 @@ typedef struct PlanXf { double sc, cx, cz; int W, H; } PlanXf;
 static int PlanLast(void);
 static void PlanView(RECT rc, PlanXf *t)   /* (fitted to the road the plan shows: PlanLast) */
 {   double minx = 1e30, maxx = -1e30, minz = 1e30, maxz = -1e30, sc0; int i;
-    for (i = 0; i <= PlanLast(); i++) { const C3Frame *F = &g_c.frame[i]; if (F->x < minx) minx = F->x; if (F->x > maxx) maxx = F->x; if (F->z < minz) minz = F->z; if (F->z > maxz) maxz = F->z; }
+    int last = PlanLast(); for (i = 0; i <= last; i++) { const C3Frame *F = &g_c.frame[i]; if (F->x < minx) minx = F->x; if (F->x > maxx) maxx = F->x; if (F->z < minz) minz = F->z; if (F->z > maxz) maxz = F->z; }
     sc0 = (rc.right - 30) / (maxx - minx + 1); if ((rc.bottom - 40) / (maxz - minz + 1) < sc0) sc0 = (rc.bottom - 40) / (maxz - minz + 1);
     if (g_pFit) { g_pCx = (minx + maxx) * 0.5; g_pCz = (minz + maxz) * 0.5; }
     t->sc = sc0 * g_pZoom; t->cx = g_pCx; t->cz = g_pCz; t->W = rc.right; t->H = rc.bottom; }
@@ -818,14 +819,18 @@ static double PX2(const PlanXf *t, double x) { return t->W * 0.5 + (x - t->cx) *
 static double PZ2(const PlanXf *t, double z) { return t->H * 0.5 + 8 - (z - t->cz) * t->sc; }
 #define PLAN_MINSTEP 8   /* (zoomed far in the points were a piece or two apart: a point bends only the road between its neighbours - the course's pieces fixed - so a move
                             went nowhere, its green dots on the point itself: user, 2026-11-19 "i can no longer manipulate the points") */
-static int PlanLast(void) { return g_pEnd >= 0 && g_pEnd < g_c.n ? g_pEnd : g_c.n; }   /* (the last piece the plan shows: g_pEnd) */
+static int PlanLast(void)   /* (the last piece the plan shows: g_pEnd - or on to the end of a fork made past it (user, 2026-11-21 "the plan stops here yet i can see a fork
+                               further up at 700": made before New track; the road on to it drawn dim)) */
+{   int k, e; if (g_pEnd < 0 || g_pEnd >= g_c.n) return g_c.n;
+    for (e = k = g_pEnd; k < g_c.n; k++) if (PlanNewFork(k)) e = k + 1;
+    return e; }
 static int PlanIsAdded(int k);
 static int PlanStep(const PlanXf *t)   /* pieces between the points: about 40 pixels apart, PLAN_MINSTEP at least */
 {   int st = (int)floor(40 / (CE_L * t->sc) + 0.5); return st < PLAN_MINSTEP ? PLAN_MINSTEP : st; }
 static int PlanVerts(const PlanXf *t, int *out, int max)   /* the points: every PlanStep pieces, the ends, the chosen one - sorted */
 {   int st = PlanStep(t), n = 0, k, last = PlanLast();
     for (k = 0; k <= last && n < max; k++) { int i, mv = 0; for (i = 0; i < g_nmv && !mv; i++) mv = g_mv[i].k == k;
-        if (k == 0 || k == last || k % st == 0 || k == g_pvSel || mv || (g_pEnd >= 0 && k == g_c.start)) out[n++] = k; }   /* (evenly along all of it - a course
+        if (k == 0 || k == last || k % st == 0 || k == g_pvSel || mv || (g_pEnd >= 0 && (k == g_c.start || k == g_pEnd))) out[n++] = k; }   /* (evenly along all of it - a course
                                                                      being built too: only the points added after its start left the road between without any - user, 2026-11-20 "The vertex points have
                                                                      to be spaced out uniformally across the track") */
     return n; }
@@ -842,18 +847,19 @@ static void PlanMoves(HDC dc, const PlanXf *t); static int PlanMoveAt(int k, int
 static void PlanConformPaint(HDC dc, const PlanXf *t);   /* (a right-drag: PlanConformDrag) */
 
 static void PaintPlan(HWND w, HDC dc, RECT rc)
-{   PlanXf t; int i, nv, *vs; HPEN pens[7], pv; HBRUSH bv, ba; POINT pt;
+{   PlanXf t; int i, nv, *vs, last; HPEN pens[8], pv; HBRUSH bv, ba; POINT pt;
     FillRect(dc, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH)); (void)w;
     if (!g_open || !g_c.frame) return;
     PlanView(rc, &t);
     { static const COLORREF kc[7] = { RGB(150, 150, 150), RGB(190, 140, 90), RGB(190, 140, 90), RGB(220, 110, 60), RGB(110, 180, 90), RGB(120, 140, 210), RGB(255, 230, 60) };
-      for (i = 0; i < 7; i++) pens[i] = CreatePen(PS_SOLID, i == 6 ? 4 : 2, kc[i]); }
-    for (i = 0; i < PlanLast(); i++) { const C3Frame *a = &g_c.frame[i], *b = &g_c.frame[i + 1]; int kd = g_c.piece[i].halfA.kind;
+      for (i = 0; i < 7; i++) pens[i] = CreatePen(PS_SOLID, i == 6 ? 4 : 2, kc[i]); pens[7] = CreatePen(PS_SOLID, 1, RGB(80, 80, 80)); }   /* (7: past a course being built's end) */
+    last = PlanLast();
+    for (i = 0; i < last; i++) { const C3Frame *a = &g_c.frame[i], *b = &g_c.frame[i + 1]; int kd = g_c.piece[i].halfA.kind;
         double x0 = PX2(&t, a->x), y0 = PZ2(&t, a->z), x1 = PX2(&t, b->x), y1 = PZ2(&t, b->z);
         if ((x0 < -50 && x1 < -50) || (x0 > t.W + 50 && x1 > t.W + 50) || (y0 < -50 && y1 < -50) || (y0 > t.H + 50 && y1 > t.H + 50)) continue;
-        SelectObject(dc, pens[IsSelK(i) ? 6 : (kd >= 0 && kd < 6 ? kd : 0)]); MoveToEx(dc, (int)x0, (int)y0, &pt); LineTo(dc, (int)x1, (int)y1); }
+        SelectObject(dc, pens[IsSelK(i) ? 6 : g_pEnd >= 0 && i >= g_pEnd ? 7 : (kd >= 0 && kd < 6 ? kd : 0)]); MoveToEx(dc, (int)x0, (int)y0, &pt); LineTo(dc, (int)x1, (int)y1); }
     if (g_c.frameB) { HPEN pb = CreatePen(PS_SOLID, 2, RGB(90, 200, 230)), ps2 = CreatePen(PS_SOLID, 4, RGB(255, 230, 60));   /* the forks: carriageway B */
-        for (i = 0; i < PlanLast(); i++) { const C3Frame *a, *b; double x0, y0, x1, y1;
+        for (i = 0; i < last; i++) { const C3Frame *a, *b; double x0, y0, x1, y1;
             if (g_c.piece[i].layout != 2 || (g_c.bdead && g_c.bdead[i])) continue;
             a = &g_c.frameB[i]; b = &g_c.frameB[i + 1]; x0 = PX2(&t, a->x); y0 = PZ2(&t, a->z); x1 = PX2(&t, b->x); y1 = PZ2(&t, b->z);
             if ((x0 < -50 && x1 < -50) || (x0 > t.W + 50 && x1 > t.W + 50) || (y0 < -50 && y1 < -50) || (y0 > t.H + 50 && y1 > t.H + 50)) continue;
@@ -894,7 +900,7 @@ static void PaintPlan(HWND w, HDC dc, RECT rc)
         else if (g_pEnd >= 0) sprintf(h, "Plan x%.1f   building: Shift+click lays the road on to there  |  drag a point: move it (Enter applies)  |  right-drag a point: bend the road before it to meet it  |  right-click a point: start / finishes  |  wheel: zoom%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
         else sprintf(h, "Plan x%.1f   click a point: choose (the 3D view goes there)  |  drag a point: move it (Enter applies)  |  right-drag: bend the road before it to meet it  |  wheel: zoom (more points), drag the ground: move, Home: all, Esc: none%s", g_pZoom, w == g_plan ? "  |  F7: big" : "");
         TextOutA(dc, 6, 3, h, (int)strlen(h)); }
-    for (i = 0; i < 7; i++) DeleteObject(pens[i]); }
+    for (i = 0; i < 8; i++) DeleteObject(pens[i]); }
 static int PlanVertAt(const PlanXf *t, int mx, int my, int *half)   /* the point under the pixel (its piece; -1 none), on A or B (*half) */
 {   int i, nv, *vs = (int *)malloc(sizeof(int) * (g_c.n + 2)), k = -1; double best = 8 * 8; *half = 0;
     nv = vs ? PlanVerts(t, vs, g_c.n + 2) : 0;
@@ -1457,7 +1463,7 @@ static int PlanStartAt(int k)
 /* a fork (user, 2026-11-20: "forking the road ... place an offshoot off the road and allows the player and ai take it ... the vertex will appear in a different colour so
    then i can start drawing off it. and i should be able to join it back up again later"): right-click a point - "Fork from here" (the point shown magenta: g_forkFrom), then
    on a point further on "Join here": pieces from .. join - 1 become a split road too (layout 2: carriageway B), B a copy of A swinging out to the side and back in its
-   middle (both roads alike for CE_SAME pieces at each end, as the game's splits).  B's points (blue) are dragged as any other's.  Saved: RrcPiece.spare[1] bit 0 on its
+   middle (PlanForkShape).  B's points (blue) are dragged as any other's.  Saved: RrcPiece.spare[1] bit 0 on its
    pieces, B in their b halves; the game cuts the course blocks it lies in at the race start (road\course_edit.c CeForkSpan: up to CE_FORKBLK of them - user,
    2026-11-20 "go for it": forks across course blocks) - so not from a course block's first piece, not over a split there already or the race's start */
 #define CE_FORKBLK 16
@@ -1476,23 +1482,85 @@ static int PlanBlockRange(int k, int *ks, int *ke)   /* the course block piece k
     while (*ks > 0 && g_src[*ks - 1] >= 0 && g_pcur0[g_src[*ks - 1]][0] == id) (*ks)--;
     while (*ke < g_c.n && g_src[*ke] >= 0 && g_pcur0[g_src[*ke]][0] == id) (*ke)++;
     return 1; }
+/* B's road, as an original fork's (user, 2026-11-21 "look at an existing fork on another map please and copy its characteristics and when it joins"): Pacific
+   Highway's second split (pieces 3053..3353, 301 of B) as True 3D builds it - B's direction off A's every 1 % of the way (k_forkDh, tenths of a degree:
+   CE_TESTFORKLOG on track 5, analysis\forkshape\orig_t5.csv).  It turns off at once (13 degrees a twentieth of the way on, 49 a tenth), stays on its side
+   (7000 .. 27500 units off A beyond the first 15 %), wanders, and comes in at 30 degrees, lined up with A over the last few pieces - at the join.
+   Stretched to the fork's length (so a longer fork goes further off, as the originals: Sierra's 630 pieces 54000 units), every piece turning at most
+   CE_MAXCURVE with A's own bend, its angles scaled down to keep B's way near A's length (PlanForkShape); the rounding carried on.  Earlier (2026-11-21): B lay on A
+   for CE_SAME pieces at each end ("you forked a road and overlapped them which is physically impossible?" - the game copies only the heights there,
+   not the bends: road\course_edit.c CeForkSpan) */
+static const short k_forkDh[101] = { 0, -1, 5, 42, 92, 135, 184, 261, 365, 452, 492, 491, 486, 453, 423, 409, 431, 448, 441, 415, 394, 397, 408, 402, 351, 226, 87, -44,
+    -119, -142, -131, -116, -117, -150, -185, -198, -190, -188, -211, -245, -271, -283, -261, -214, -185, -198, -218, -193, -128, -52, 28, 83, 84, 93, 126, 163, 182, 189,
+    199, 222, 269, 325, 378, 384, 307, 131, -69, -275, -459, -568, -607, -593, -574, -552, -519, -440, -337, -218, -99, 33, 115, 130, 109, 61, 5, -46, -96, -167, -249,
+    -278, -302, -328, -346, -328, -248, -134, -57, -16, 0, 2, 0 };
+#define CE_FORKLONG 0.02   /* B's way at most this much longer than A's (a fifth of a piece on each 10) */
+static double PlanForkCurves(int ks, int ke, double sc, int set)   /* B's curves off A as k_forkDh x sc (set: put them in); returns how much further B goes than A (units) */
+{   int n = ke - ks, i, acc = 0; double along = 0;   /* (acc: B's slope off A so far - splitSlope, curve units) */
+    for (i = ks; i < ke; i++) { RoadPiece *pc = &g_c.piece[i]; double t = (double)(i - ks + 1) * 100 / n, f, want; int a, dc, ca = pc->halfA.curve;
+        a = (int)t; if (a > 99) a = 99; f = t - a; want = sc * (k_forkDh[a] * (1 - f) + k_forkDh[a + 1] * f) * 0.1 * 3.14159265358979 / 180 * CE_L;   /* (B's slope off A at this piece's end) */
+        dc = (int)floor(want - acc + 0.5);
+        if (ca + dc > CE_MAXCURVE) dc = CE_MAXCURVE - ca; if (ca + dc < -CE_MAXCURVE) dc = -CE_MAXCURVE - ca;
+        acc += dc; along += CE_L * cos(acc / CE_L);
+        if (set) { pc->layout = 2; pc->halfB = pc->halfA; if (dc) { pc->halfB.curve += dc; Derive(&pc->halfB, 0xb8); } } }
+    return n * CE_L - along; }
+/* the lanes divided at a fork, as the originals' (user, 2026-11-21 "if there is 2 lanes per fork ... the lead up to the fork is 4 ... dont try to overlap the roads ...
+   put in a divider and triangle cell to handle where they split ... the original game ... dividers and side barriers"; every original split: A keeps the
+   road's left lanes - Pacific Highway 1400: -500..250 - and B the right ones beside them, its lane grid from there, 250..750, its frame A's at the fork):
+   the split line from the fork's first piece (A the left half of its lanes, the odd one too), the same over the whole fork; the shoulders between the two
+   each half the room B has made beside A so far (its bends: splitX), CE_FORKGORE at most (the originals: A's outer edge 250 -> 474, B's 250 -> 26 - their B
+   pushed out to make room, True 3D's C3_PushB; this B only parts by its bends: grown faster, the two shoulders lay over each other) - the filler between the
+   roads, the ground past them one strip (True 3D: C3_Median) */
+#define CE_FORKGORE 224
+#define CE_FORKOUT 40   /* the pieces after the join given both roads' lanes (user, 2026-11-21 "This should definitely merge into 4 lanes please and then i can reduce it to 2
+                           after the join is finished") */
+static void PlanForkMerge(RoadPiece *pc)   /* a fork's piece: A's lanes and right shoulder as before it was divided (B's right lanes back on A) - PlanForkLanes undone */
+{   RoadSection *a = &pc->halfA; const RoadSection *b = &pc->halfB; double re = b->offset + b->laneR * 250.0 / 256;
+    if (pc->layout != 2 || re <= a->offset + a->laneR * 250.0 / 256 + 1) return;
+    a->laneR = (int)floor((re - a->offset) * 256 / 250 + 0.5); a->shoulderW[1] = b->shoulderW[1];
+    if (g_orig && pc >= g_c.piece && pc < g_c.piece + g_c.n) a->laneL = g_orig[pc - g_c.piece].halfA.laneL;   /* (its left lanes: the course's own - PlanForkLanes set them to A's share) */
+    Derive(a, 0x2c); }
+static void PlanForkExtB(RrcExtra *x, int nA)   /* a fork's piece: B's painting A's when B has none (user, 2026-11-21 "it looks like you've gone back to a plain green
+                                                   texture": the course painted before the fork - B's half empty, its ground the flat colour); B's lanes A's from nA on */
+{   int j; static const RrcExtra z;
+    if (memcmp(x->band[1], z.band[1], sizeof x->band[1]) || memcmp(x->cell[1], z.cell[1], sizeof x->cell[1]) || x->forest[1] || memcmp(x->bld[1], z.bld[1], sizeof x->bld[1])) return;   /* (painted) */
+#define CPB(f) memcpy(&x->f[1], &x->f[0], sizeof x->f[0])
+    CPB(band); CPB(forest); CPB(forestCode); CPB(sideKind); CPB(bld); CPB(bldCode); CPB(walk); CPB(bandSet); CPB(cell); CPB(cellSet); CPB(edge); CPB(edgeSet); CPB(gutter); CPB(road); CPB(fac); CPB(facSet); CPB(lift); CPB(holeWater);
+#undef CPB
+    for (j = 0; j < 8; j++) x->lane[1][j] = j + nA < 8 ? x->lane[0][j + nA] : 0; }
+static int PlanForkLanes(int ks, int ke)   /* pieces ks .. ke - 1 (split, B a copy of A): their lanes divided; 0 when the road has fewer than 2 lanes */
+{   const RoadSection *s0 = &g_c.piece[ks].halfA; double le = s0->offset - s0->laneL * 250.0 / 256, re = s0->offset + s0->laneR * 250.0 / 256, S, x; int n = (int)floor((re - le) / 250 + 0.5), nA, nB, i, sl;
+    if (n < 2) return 0;
+    nB = n / 2; nA = n - nB; S = floor(le + 250.0 * nA + 0.5);
+    for (i = ks, sl = 0, x = 0; i < ke; i++) { RoadSection *a = &g_c.piece[i].halfA, *b = &g_c.piece[i].halfB; int w;
+        w = x / 2 > CE_FORKGORE ? CE_FORKGORE : x > 0 ? (int)(x / 2) : 0; sl += b->curve - a->curve; x += sl;   /* (x: B's room beside A at this piece's start) */
+        a->laneL = (int)floor((a->offset - (S - 250.0 * nA)) * 256 / 250 + 0.5); a->laneR = (int)floor((S - a->offset) * 256 / 250 + 0.5); a->shoulderW[1] = w; Derive(a, 0x2c);   /* (A: its nA
+                                                                     lanes left of the line, the whole fork long - at the join A and B are the lanes of the road on) */
+        b->offset = (int)S; b->laneL = 0; b->laneR = 256 * nB; b->shoulderW[0] = w; Derive(b, 0xcc);
+        if (g_ra.ext && i < g_ra.next) { PlanForkExtB(&g_ra.ext[i], nA); g_ra.ext[i].gutter[0][1] = (unsigned char)((g_ra.ext[i].gutter[0][1] & ~3) | 2); g_ra.ext[i].gutter[1][0] = (unsigned char)((g_ra.ext[i].gutter[1][0] & ~3) | 2); } }   /* (no
+                                                                     gutter between the two: the lanes' dip into it left a crack along the edge they share - the originals have none there) */
+    for (i = ke; i < ke + CE_FORKOUT && i < g_c.n && g_c.piece[i].layout != 2; i++) { RoadSection *a = &g_c.piece[i].halfA;   /* (on from the join: both roads' lanes) */
+        a->laneL = (int)floor((a->offset - (S - 250.0 * nA)) * 256 / 250 + 0.5); a->laneR = (int)floor((S + 250.0 * nB - a->offset) * 256 / 250 + 0.5); Derive(a, 0x2c); g_c.piece[i].halfB = *a; }
+    return 1; }
+static void PlanForkShape(int ks, int ke)   /* pieces ks .. ke - 1 a split road, B a copy of A turning off as k_forkDh - its angles scaled down until its way is at most
+                                              CE_FORKLONG longer than A's (B has A's pieces, as many: the original's own B was 301 pieces beside A's 300 - k_forkDh as it is
+                                              would make it 70 pieces longer on a 600 piece fork, and the join (course3d.h C3_FramesB) would pull it back onto A) */
+{   double sc = 1, ex, lim = (getenv("CE_TESTFORKLONG") ? atof(getenv("CE_TESTFORKLONG")) : CE_FORKLONG) * (ke - ks) * CE_L; int it;   /* (CE_TESTFORKLONG: tests, another allowance) */
+    for (it = 0; it < 4; it++) { ex = PlanForkCurves(ks, ke, sc, 0); if (ex <= lim) break; sc *= sqrt(lim / ex); }
+    PlanForkCurves(ks, ke, sc, 1); PlanForkLanes(ks, ke); }
 static int PlanForkRange(int ks, int ke)   /* pieces ks .. ke - 1 forked */
-{   int bs, be, i, n = ke - ks, q; Undo *u;
+{   int bs, be, i, n = ke - ks; Undo *u;
     if (ke < ks) { i = ks; ks = ke; ke = i; n = ke - ks; }
     if (!PlanBlockRange(ks, &bs, &be)) { Status("Plan: no course data here to fork"); return 0; }
     {   int nb = 1, b2 = be, e2; while (b2 < ke && PlanBlockRange(b2, &e2, &b2)) nb++;   /* (the course blocks it runs over) */
         if (b2 < ke || nb > CE_FORKBLK) { Status("Plan: a fork can run over %d course blocks of the game's at most - this one runs over more (or past the course data)", CE_FORKBLK); return 0; } }
     if (ks <= bs) { Status("Plan: a fork cannot leave at a course block's first piece (%d) - start it a piece or more after", bs); return 0; }
-    if (n < 2 * CE_SAME + 20) { Status("Plan: a fork takes %d pieces or more (both roads alike for %d at each end) - this one is %d", 2 * CE_SAME + 20, CE_SAME, n); return 0; }
+    if (n < 2 * CE_SAME + 20) { Status("Plan: a fork takes %d pieces or more - this one is %d", 2 * CE_SAME + 20, n); return 0; }
     for (i = ks - 1; i <= ke; i++) if (i >= 0 && i < g_c.n && g_c.piece[i].layout == 2) { Status("Plan: there is a split road there (or next to it) already"); return 0; }
     if (g_c.start >= ks - 2 && g_c.start <= ke + 2) { Status("Plan: the race starts there - a fork cannot cross the start"); return 0; }
-    u = UndoBeginWhole();
-    q = (n - 2 * CE_SAME) / 4; if (q > 45) q = 45;
-    for (i = ks; i < ke; i++) { RoadPiece *pc = &g_c.piece[i]; int j = i - ks - CE_SAME - (n - 2 * CE_SAME - 4 * q) / 2;
-        pc->layout = 2; pc->halfB = pc->halfA;
-        if (j >= 0 && j < 4 * q) { pc->halfB.curve += (j < q || j >= 3 * q) ? 1 : -1; Derive(&pc->halfB, 0xb8); } }   /* (B: out to the right and back - drag its points to shape it) */
-    UndoEnd(u); g_forkFrom = -1; g_dirty = 1; Redraw(); PropsFill(); PlanChoose(ks + n / 2, 1);
-    Status("Plan: pieces %d..%d forked - B (blue points) leaves A at %d and joins it at %d; drag B's points to shape it (the first and last %d pieces stay beside A, as the game's forks).  In True 3D every rider can take either road", ks, ke - 1, ks + CE_SAME, ke - CE_SAME, CE_SAME);
+    {   const RoadSection *s0 = &g_c.piece[ks].halfA; if (s0->laneL + s0->laneR < 2 * 256 - 128) { Status("Plan: a fork divides the road's lanes - it needs 2 lanes or more where it leaves (piece %d has %d)", ks, s0->lanesL + s0->lanesR); return 0; } }
+    u = UndoBeginWhole(); PlanForkShape(ks, ke); UndoEnd(u); g_forkFrom = -1; g_dirty = 1; Redraw(); PropsFill(); PlanChoose(ks + n / 2, 1);
+    Status("Plan: pieces %d..%d forked - B (blue points) turns off A at %d and joins it again at %d; drag B's points to shape it.  In True 3D every rider can take either road", ks, ke - 1, ks, ke);
     return 1; }
 static void PlanForkFrom(int k)
 {   int bs, be; g_forkFrom = k;
@@ -1503,9 +1571,15 @@ static int PlanUnforkAt(int k)
     if (!PlanNewFork(k)) { Status("Plan: no fork made here"); return 0; }
     for (ks = k; ks > 0 && PlanNewFork(ks - 1); ks--) ; for (ke = k; ke < g_c.n && PlanNewFork(ke); ke++) ;
     u = UndoBeginWhole();
-    for (i = ks; i < ke; i++) { g_c.piece[i].layout = g_orig[i].layout; g_c.piece[i].halfB = g_orig[i].halfB; g_c.piece[i].splitX = g_orig[i].splitX; g_c.piece[i].splitSlope = g_orig[i].splitSlope; }
+    for (i = ks; i < ke; i++) { PlanForkMerge(&g_c.piece[i]); g_c.piece[i].layout = g_orig[i].layout; g_c.piece[i].halfB = g_orig[i].halfB; g_c.piece[i].splitX = g_orig[i].splitX; g_c.piece[i].splitSlope = g_orig[i].splitSlope; }
     UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(k, 0);
     Status("Plan: the fork over pieces %d..%d removed (Ctrl+Z: back)", ks, ke - 1); return 1; }
+static int PlanReshapeAt(int k)   /* a fork made here: B shaped again as a new fork's (PlanForkShape) - one undo step */
+{   int ks, ke; Undo *u;
+    if (!PlanNewFork(k)) { Status("Plan: no fork made here"); return 0; }
+    for (ks = k; ks > 0 && PlanNewFork(ks - 1); ks--) ; for (ke = k; ke < g_c.n && PlanNewFork(ke); ke++) ;
+    u = UndoBeginWhole(); { int i; for (i = ks; i < ke; i++) PlanForkMerge(&g_c.piece[i]); } PlanForkShape(ks, ke); UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(ks + (ke - ks) / 2, 1);
+    Status("Plan: the fork over pieces %d..%d shaped again - B turns off at %d and back in to A at %d (Ctrl+Z: back)", ks, ke - 1, ks, ke); return 1; }
 /* right-drag a point (user, 2026-11-20: "if i hold right click and drag a vertex i want you to conform the previous vertex points before it with minimal adjustments to
    make it smoothly meet the dragged vertex"): the curves of the pieces a .. k - 1 before point k changed as little as they can be (least squares) for piece k to come
    to the drop, leaving it the way it did (the road on from k keeps its shape, carried with the point); a the point before k, then further back while the bend that
@@ -1597,14 +1671,14 @@ static void PlanConformApply(void)
     if (g_cf2N) Status("Plan: point %d moved - pieces %d..%d bent to meet it and on to the lock at %d (%.0f units off), nothing past the locks moved (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK + g_cf2N - 1, g_cfK + g_cf2N, g_cfErr);
     else Status("Plan: point %d moved - pieces %d..%d bent to meet it (%.0f units off), the road on from it carried along (Ctrl+Z: undo)", g_cfK, g_cfA, g_cfK - 1, g_cfErr); }
 static void PlanConformPaint(HDC dc, const PlanXf *t)   /* the drag: the bend (cyan; red: not within the limits), the road on from the point carried (grey) */
-{   HPEN pc, pr, pg, old; POINT pt; int i; double ex, ez;
+{   HPEN pc, pr, pg, old; POINT pt; int i, n; double ex, ez;
     if (!g_cfOn || g_cfN < 2 || !g_cfX) return;
     pc = CreatePen(PS_SOLID, 3, RGB(80, 230, 255)); pr = CreatePen(PS_SOLID, 3, RGB(255, 70, 70)); pg = CreatePen(PS_DOT, 1, RGB(170, 170, 170));
     old = (HPEN)SelectObject(dc, g_cfOk ? pc : pr);
     for (i = 0; i <= g_cfN; i++) { int x = (int)PX2(t, g_cfX[i]), y = (int)PZ2(t, g_cfZ[i]); if (!i) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
     if (g_cf2N && g_cf2X) for (i = 0; i <= g_cf2N; i++) { int x = (int)PX2(t, g_cf2X[i]), y = (int)PZ2(t, g_cf2Z[i]); if (!i) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }   /* (on to the lock) */
     ex = g_cfX[g_cfN] - g_c.frame[g_cfK].x; ez = g_cfZ[g_cfN] - g_c.frame[g_cfK].z; SelectObject(dc, pg);
-    if (!g_cf2N) for (i = g_cfK; i <= PlanLast(); i++) { int x = (int)PX2(t, g_c.frame[i].x + ex), y = (int)PZ2(t, g_c.frame[i].z + ez); if (i == g_cfK) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
+    if (!g_cf2N) for (i = g_cfK, n = PlanLast(); i <= n; i++) { int x = (int)PX2(t, g_c.frame[i].x + ex), y = (int)PZ2(t, g_c.frame[i].z + ez); if (i == g_cfK) MoveToEx(dc, x, y, &pt); else LineTo(dc, x, y); }
     {   int x = (int)PX2(t, g_cfTx), y = (int)PZ2(t, g_cfTz); SelectObject(dc, g_cfOk ? pc : pr); SelectObject(dc, GetStockObject(NULL_BRUSH)); Rectangle(dc, x - 8, y - 8, x + 9, y + 9); }
     SelectObject(dc, old); DeleteObject(pc); DeleteObject(pr); DeleteObject(pg); }
 static void PlanLockToggle(int v)   /* a right-click on point v: locked / unlocked (two at most) */
@@ -1617,14 +1691,14 @@ static void PlanLockToggle(int v)   /* a right-click on point v: locked / unlock
 static void PlanPointMenu(HWND w, int v, int x, int y)   /* right-click on point v: start / each level's finish there */
 {   HMENU m = CreatePopupMenu(); POINT p = { x, y }; int i, cmd; char lb[48];
     AppendMenuA(m, MF_STRING, 100, "Start here"); AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-    {   int ks, ke; if (PlanNewFork(v)) AppendMenuA(m, MF_STRING, 110, "Remove the fork here");
+    {   int ks, ke; if (PlanNewFork(v)) { AppendMenuA(m, MF_STRING, 110, "Remove the fork here"); AppendMenuA(m, MF_STRING, 114, "Shape the fork again (B as a new fork's)"); }
         else if (g_forkFrom >= 0 && v != g_forkFrom) { sprintf(lb, "Join here (the fork: pieces %d..%d)", g_forkFrom < v ? g_forkFrom : v, (g_forkFrom < v ? v : g_forkFrom) - 1); AppendMenuA(m, MF_STRING, 112, lb);
             AppendMenuA(m, MF_STRING, 113, "Cancel the fork begun"); }
         else if (PlanBlockRange(v, &ks, &ke)) AppendMenuA(m, MF_STRING, 111, "Fork from here");
         AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
     for (i = 0; i < 5; i++) { sprintf(lb, "Level %d finish here%s", i + 1, g_lvFin0[i] < 0 ? " (none on this track)" : ""); AppendMenuA(m, MF_STRING | (g_lvFin0[i] < 0 ? MF_GRAYED : 0), 101 + i, lb); }
     ClientToScreen(w, &p); cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, w, NULL); DestroyMenu(m);
-    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); else if (cmd == 110) PlanUnforkAt(v); else if (cmd == 111) PlanForkFrom(v); else if (cmd == 112) PlanForkRange(g_forkFrom, v); else if (cmd == 113) { g_forkFrom = -1; PlanInv(); } }
+    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); else if (cmd == 110) PlanUnforkAt(v); else if (cmd == 111) PlanForkFrom(v); else if (cmd == 112) PlanForkRange(g_forkFrom, v); else if (cmd == 113) { g_forkFrom = -1; PlanInv(); } else if (cmd == 114) PlanReshapeAt(v); }
 
 /* the plan's mouse: a press on a point chooses it (the 3D view goes there), dragging it moves it (a move waiting: Enter applies); a drag on the ground moves
    the view, a click there: none chosen */
@@ -1865,11 +1939,22 @@ static int CellPickAt(int x, int y, int *part, int *cell)   /* the cell under fr
     kc = CellRange(&lo, &hi);
     for (j = lo; j < hi && j + 1 < g_vc->n; j++) for (side = 0; side < 2; side++) for (c = 0; c < 7; c++) { double u[4], h[4]; float sx[4], sy[4], p[3]; int in = 1, sg = 0;
         if (!CellQuad(j, side, c, u, h)) continue;
+        if (g_vc->piece[j].layout == 2 && C3_FitInner(g_vc, j, g_half) == side && (side ? u[0] > C3_FitMid(g_vc, j, g_half) : u[0] < C3_FitMid(g_vc, j, g_half))) continue;   /* (a fork's
+                                                                     half: its inner cells past the line half way to the other half are the other's ground - course3d.h C3_InnerClamp) */
         for (q = 0; q < 4 && in; q++) { C3_PointF(g_vc, F, j + (q >= 2), u[q], h[q] + 4, p); if (!Project(p, &sx[q], &sy[q])) in = 0; }
         for (q = 0; q < 4 && in; q++) { float cr = (sx[(q + 1) & 3] - sx[q]) * (y - sy[q]) - (sy[(q + 1) & 3] - sy[q]) * (x - sx[q]); int t = cr > 0 ? 1 : cr < 0 ? -1 : 0;
             if (t && sg && t != sg) in = 0; if (t) sg = t; }
         if (in && abs(j - kc) < bd) { bd = abs(j - kc); best = j; *part = side + 1; *cell = c; } }
     return best; }
+static int CellPickAny(int x, int y, int *part, int *cell)   /* CellPickAt - and on a fork, the other road's cell when the click is on its ground: the editing switched to that
+                                                               road (Edit split road B, as a B point chosen on the plan) - user, 2026-11-21 "Why cant i assign to these cells? the
+                                                               cells need to fork off too right?" */
+{   int k = CellPickAt(x, y, part, cell), h0 = g_half, p2, c2, k2;
+    if (k >= 0 || !g_vc->frameB) return k;
+    g_half = !h0; k2 = CellPickAt(x, y, &p2, &c2);
+    if (k2 < 0 || g_vc->piece[k2].layout != 2) { g_half = h0; return k; }
+    SendMessageA(g_half2, BM_SETCHECK, g_half ? BST_CHECKED : BST_UNCHECKED, 0); PropsFill();
+    *part = p2; *cell = c2; return k2; }
 static float g_gridFade = 1; static int g_gridUnder;   /* (g_gridUnder: the cell lies under buildings - GridCell: its outline only, faint, unless hot) */   /* (GridCell: the further from the camera the fainter - the grid is drawn over the frame, not hidden by what stands in front) */
 /* the vertices Raise / Lower / Level work on (user, 2026-11-18: "raise level and lower applies only to vertex points ... highlighted when mouse over ... shown
    regardless in this mode"): per piece and side the curb's top, the verge's outer edge, P0, P1, P2 - on each piece's start line, as the mesh has them */
@@ -1994,16 +2079,16 @@ static int LanePickAt(int k, int x, int y)
     return -1; }
 static void Pick3D(int x, int y, int extend)   /* a click in the 3D view: choose the piece there (and the part: the road, left / right of it) - or paint it */
 {   int part, band, best;
-    if (g_tpaint && g_bpaint == 4) { int cell; best = CellPickAt(x, y, &part, &cell);   /* (a block: the cell - a Road block: the lane under the mouse, Ctrl: the whole side) */
+    if (g_tpaint && g_bpaint == 4) { int cell; best = CellPickAny(x, y, &part, &cell);   /* (a block: the cell - a Road block: the lane under the mouse, Ctrl: the whole side) */
         if (best >= 0) { g_pickLane = g_bCat == 0 && GetKeyState(VK_CONTROL) >= 0 ? LanePickAt(best, x, y) : -1; PicPaintAt(best, part, cell); g_pickLane = -1; } return; }
     if (g_tpaint && g_bpaint == 8) { NoteAt(x, y); return; }   /* (Note) */
     if (g_tpaint && g_bpaint == 7 && g_lcMode != 2) { int side, v, cell; best = VtxPickAt(x, y, &side, &v);   /* (Level: cell by cell - unless pressed on a vertex's square) */
-        if (g_lcMode == 1 || best < 0 || g_vpSeg >= 0) { best = CellPickAt(x, y, &part, &cell); if (best >= 0 && part && cell >= 0 && cell <= 4) { g_lcMode = 1; LevelCell(best, part - 1, cell); } return; }
+        if (g_lcMode == 1 || best < 0 || g_vpSeg >= 0) { best = CellPickAny(x, y, &part, &cell); if (best >= 0 && part && cell >= 0 && cell <= 4) { g_lcMode = 1; LevelCell(best, part - 1, cell); } return; }
         g_lcMode = 2; }
     if (g_tpaint && g_bpaint >= 5 && g_bpaint <= 7) { int side, v, seg; best = VtxPickAt(x, y, &side, &v); seg = g_vpSeg; if (best < 0) return;   /* (Raise / Lower / Level: the vertex - */
         if (seg >= 0 && g_bpaint != 7) { HeightV(seg, side, v); HeightV(seg + 1, side, v); } else HeightV(best, side, v); return; }                 /*  Raise / Lower on an edge: both its ends) */
     if (g_tpaint && g_bpaint == 10) { WidthDrag(x, y); return; }   /* (Widths: an edge dragged sideways) */
-    if (g_tpaint && g_bpaint == 9) { int cell; best = CellPickAt(x, y, &part, &cell); if (best >= 0 && part) FlattenAt(best, part - 1, cell); return; }   /* (Flatten: the cell) */
+    if (g_tpaint && g_bpaint == 9) { int cell; best = CellPickAny(x, y, &part, &cell); if (best >= 0 && part) FlattenAt(best, part - 1, cell); return; }   /* (Flatten: the cell) */
     if (g_tpaint) { best = TerrPickAt(x, y, &part, &band); if (best >= 0) TerrPaintAt(best, part, band); return; }
     best = PickAt(x, y, &part);
     if (best < 0) return;
@@ -2075,7 +2160,7 @@ static void Render3D(void)
     SDL_FlushRenderer(g_ren);
     R3_Render(&g_r, &f);
     SDL_SetTextureBlendMode(g_rt, SDL_BLENDMODE_NONE); SDL_RenderTexture(g_ren, g_rt, NULL, NULL);
-    {   static SDL_FRect used[1200]; int nu = 0, d; SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);  /* every piece's number on the road (small); out from the focus, a label that would cover a nearer one is left out */
+    if (g_showText) {   static SDL_FRect used[1200]; int nu = 0, d; SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);  /* every piece's number on the road (small); out from the focus, a label that would cover a nearer one is left out */
         for (d = 0; d <= g_meshHi - g_meshLo + 1 && nu < 1200; d++) { int s2;
             for (s2 = 0; s2 < (d ? 2 : 1); s2++) { int j = s2 ? kc - d : kc + d, on = j == k, sel, u; float pt[3], sx, sy, tw; char lb[24]; SDL_FRect r;
                 if (j < g_meshLo || j > g_meshHi || j >= g_vc->n) continue;
@@ -2116,7 +2201,7 @@ static void Render3D(void)
                     if (!Project(p0, &x0, &y0) || !Project(p1, &x1, &y1)) continue;
                     SDL_SetRenderDrawColor(g_ren, pc[i][0], pc[i][1], pc[i][2], 255); SDL_RenderLine(g_ren, x0, y0, x1, y1);
                     if (j == kc) { char lb[8]; sprintf(lb, "P%d", i); SDL_RenderDebugText(g_ren, x0 + 3, y0 - 10, lb); } } } } }
-    {   char tx[220]; RoadSection *s = Sec(k, g_half);
+    if (g_showText) {   char tx[220]; RoadSection *s = Sec(k, g_half);
         sprintf(tx, "%s   piece %d (%s)  curve %d  hill %d  lanes %d+%d   |  click: choose a piece (hold and move / Shift: several)   right-drag: look round   wheel: distance   WASD: move",
             g_vslot ? "AS THE GAME BUILDS IT" : "EDITOR", k, KindName(s->kind), s->curve, s->hill, s->lanesL, s->lanesR);
         SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255); SDL_FRect bg = { 0, 0, (float)w, 22 }; SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND); SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 150); SDL_RenderFillRect(g_ren, &bg);
@@ -2143,7 +2228,7 @@ static void Layout(void)
     SendMessageA(g_statusw, WM_SIZE, 0, 0);
     ShowWindow(g_list, SW_HIDE);
     top -= 34;   /* (no Edit Part button) */
-    MoveWindow(g_gridChk, W - pw + 4, top + 34, pw / 2 - 8, 22, TRUE); MoveWindow(g_vtxChk, W - pw / 2, top + 34, pw / 2 - 4, 22, TRUE);
+    MoveWindow(g_gridChk, W - pw + 4, top + 34, pw / 3 - 8, 22, TRUE); MoveWindow(g_vtxChk, W - pw + pw / 3, top + 34, pw / 3 - 4, 22, TRUE); MoveWindow(g_textChk, W - pw + 2 * pw / 3, top + 34, pw / 3 - 4, 22, TRUE);
     MoveWindow(g_stopBtn, W - pw, top + 60, pw, 28, TRUE);
     ShowWindow(g_hBtn[3], SW_HIDE); MoveWindow(g_noteBtn, W - pw, top + 92, pw, 26, TRUE);   /* (Note; Heights... gone: its toolbar always shown) */
     {   static const int col[5] = { 3, 0, 4, 2, 1 }; int i, cw = pw / 5;   /* (shown Road, Curbs, Footpaths, Ground, Buildings - user, 2026-11-19) */
@@ -2804,7 +2889,7 @@ static void NoteDraw(void)   /* Note: the overlay, then the note sent */
 static void NoteAt(int x, int y)   /* Note: the click at frame pixel x, y */
 {   int k, part = 0, cell = -1, hh; char dir[MAX_PATH], shot[MAX_PATH], name[64], title[160], *js, txt[4300]; SYSTEMTIME t; FILE *f;
     if (g_noteDone || !g_open) return; g_noteDone = 1;
-    k = CellPickAt(x, y, &part, &cell); if (k < 0) { k = PickAt(x, y, &part); cell = -1; }
+    k = CellPickAny(x, y, &part, &cell); if (k < 0) { k = PickAt(x, y, &part); cell = -1; }
     if (k < 0) k = g_focus;
     hh = g_half && k >= 0 && k < g_c.n && g_c.piece[k].layout == 2;
     GetLocalTime(&t); sprintf(name, "note_%04d%02d%02d_%02d%02d%02d_%03d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
@@ -2865,6 +2950,7 @@ static void ClearCourse(int fresh)   /* Clear course (user, 2026-11-18): a blank
     for (k = 0; k < g_c.n; k++) for (hh = 0; hh < (g_c.piece[k].layout == 2 ? 2 : 1); hh++) { RoadSection *s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA; RrcExtra *x = &g_ra.ext[k];
         if (!fresh && s->kind == SEC_OPEN && (s->kindFlags & 0x20)) continue;   /* (a cross street) */
         if (!TerrRec(k)) { TerrEnd(); return; }
+        if (fresh && !hh && PlanNewFork(k)) { RoadPiece *pc = &g_c.piece[k]; PlanForkMerge(pc); pc->layout = g_orig[k].layout; pc->halfB = g_orig[k].halfB; pc->splitX = g_orig[k].splitX; pc->splitSlope = g_orig[k].splitSlope; }   /* (New track: the forks made here gone too) */
         s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA; x = &g_ra.ext[k];
         if (fresh) { s->curve = 0; s->hill = 0; Derive(s, 0xb8); Derive(s, 0xbc); s->kindFlags &= ~0x20; }   /* (New track: the road straight and level, no cross street) */
         for (side = 0; side < 2; side++) { BlockSideTerrain(s, x, hh, side, &dn, ds);
@@ -3289,7 +3375,7 @@ static void BandInfo(int k, int hh, int side, int cell, unsigned painted)
     SetWindowTextA(g_bandInfo, t); }
 static void BandMenu(int x, int y)   /* the right-click at frame pixel x, y (the band there, if any) */
 {   int part, band, k, hh; char t[120]; POINT p; unsigned short *v, *vs;
-    k = CellPickAt(x, y, &part, &band);
+    k = CellPickAny(x, y, &part, &band);
     if (k < 0 || k >= g_c.n || part < 1 || band < 0 || !g_ra.ext || k >= g_ra.next) { Status("Right-click a cell of the grid beside the road (road side, P0, P1, P2, past P2) for its pictures"); return; }
     hh = g_half && g_c.piece[k].layout == 2;
     if (!g_bandWin) { WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.hInstance = GetModuleHandleA(NULL); wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
@@ -3518,6 +3604,7 @@ static LRESULT CALLBACK MainProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
             if (g_bpaint == 4 && g_bList == 3 && (g_bpVal & (BLK_FPUP | BLK_FPFLAT))) g_bpVal = (g_bpVal & ~(BLK_FPUP | BLK_FPFLAT)) | (g_fpFlat ? BLK_FPFLAT : BLK_FPUP);   /* (the chosen footpath: the same picture, the other height) */
             g_bFill = -1; BlocksFill(); Status(g_fpFlat ? "Footpaths: flush - level with the road (cyan bar)" : "Footpaths: raised - on a kerb above the road (amber step)"); return 0;
         case ID_VTXCHK: g_showVtx = SendMessageA(g_vtxChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_showVtx ? "Vertex points shown: the road's edge (blue), the curb's top, the verge's edge, P0, P1, P2 - Heights... moves them" : "Vertex points hidden (shown while Raise / Lower / Level is on)"); return 0;
+        case ID_TEXTCHK: g_showText = SendMessageA(g_textChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_showText ? "Labels shown: the piece numbers, the finishes and the line along the top of the 3D view" : "Labels hidden (the 3D view's piece numbers, finishes and top line)"); return 0;
         case ID_HFLAT: BlockSet(g_bpaint == 9 ? 0 : 9); SetFocus(g_view); return 0;
         case ID_WDRAG: BlockSet(g_bpaint == 10 ? 0 : 10); SetFocus(g_view); return 0;
         case ID_HNOTE: NoteDraw(); return 0;
@@ -3667,6 +3754,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     SendMessageA(g_gridChk, BM_SETCHECK, BST_CHECKED, 0);
     g_vtxChk = CreateWindowA("BUTTON", "Show vertex points", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g_main, (HMENU)ID_VTXCHK, inst, NULL); SendMessageA(g_vtxChk, WM_SETFONT, (WPARAM)g_font, 0);
     SendMessageA(g_vtxChk, BM_SETCHECK, BST_CHECKED, 0);
+    g_textChk = CreateWindowA("BUTTON", "Show labels", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g_main, (HMENU)ID_TEXTCHK, inst, NULL); SendMessageA(g_textChk, WM_SETFONT, (WPARAM)g_font, 0);
+    SendMessageA(g_textChk, BM_SETCHECK, BST_CHECKED, 0);
     g_fpRaiseChk = CreateWindowA("BUTTON", "Raised", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g_main, (HMENU)ID_FPRAISE, inst, NULL); SendMessageA(g_fpRaiseChk, WM_SETFONT, (WPARAM)g_font, 0);
     SendMessageA(g_fpRaiseChk, BM_SETCHECK, BST_CHECKED, 0);
     {   static const char *const fl[5] = { "Ground", "Road", "Buildings", "Footpaths", "Curbs" }; int i;
@@ -3752,6 +3841,28 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             gp = strchr(gp, ';'); if (gp) gp++; }
         for (li = 0; li < 2; li++) if (g_lock[li] >= 0) LOG("test plan lock %d after: moved %.2f, heading %.6f -> %.6f", g_lock[li], hypot(g_c.frame[g_lock[li]].x - lx[li], g_c.frame[g_lock[li]].z - lz[li]), lh[li], g_c.frame[g_lock[li]].heading);
         if (g_lock[0] >= 0) { int f = g_lock[1] >= 0 && g_lock[1] < g_lock[0] ? g_lock[1] : g_lock[0]; LOG("test plan lock: before the first lock moved %.2f, piece %d (past the locks) moved %.2f", hypot(g_c.frame[f > 2 ? f - 2 : 0].x - b0x, g_c.frame[f > 2 ? f - 2 : 0].z - b0z), last, hypot(g_c.frame[last].x - e0x, g_c.frame[last].z - e0z)); } }
+    if (getenv("CE_TESTPLANAT")) { int kz = 0; float z = 1; sscanf(getenv("CE_TESTPLANAT"), "%d %f", &kz, &z); if (kz >= 0 && kz < g_c.n) { g_pZoom = z; g_pFit = 0; g_pCx = g_c.frame[kz].x; g_pCz = g_c.frame[kz].z; PlanInv(); } }   /* (tests: "<piece> <zoom>": the plan there) */
+    if (getenv("CE_TESTRESHAPE")) { PlanReshapeAt(atoi(getenv("CE_TESTRESHAPE"))); LOG("test reshape: %s", g_status); if (getenv("CE_TESTSAVEAS")) LOG("test reshape: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); if (getenv("CE_TESTRESHAPEK")) { int kk = 0, hb = 0; sscanf(getenv("CE_TESTRESHAPEK"), "%d %d", &kk, &hb); PlanChoose(kk, hb); } }   /* (CE_TESTRESHAPEK "<piece> <half>": the view there after)   /* (tests: Shape the fork again at that piece) */
+    if (getenv("CE_TESTFORKLANES")) { FILE *fl = fopen(getenv("CE_TESTFORKLANES"), "w"); int ks, k;   /* (tests: every split's lanes / edges, A and B, round the fork and the join) */
+        if (fl) { fprintf(fl, "split,k,lay,A:lanesL,lanesR,laneL,laneR,edgeL,edgeR,laneEdgeL,laneEdgeR,outerL,outerR,kind,arg0,arg3,half | B:same\n");
+            for (ks = 1; ks < g_c.n; ks++) if (g_c.piece[ks].layout == 2 && g_c.piece[ks - 1].layout != 2) { int kj; for (kj = ks; kj < g_c.n && g_c.piece[kj].layout == 2; kj++) ;
+                for (k = ks - 3; k <= kj + 3 && k < g_c.n; k++) { const RoadPiece *pc = &g_c.piece[k]; int hh;
+                    if (k > ks + 30 && k < kj - 6) continue;
+                    fprintf(fl, "%d,%d,%d", ks, k, pc->layout);
+                    for (hh = 0; hh < 2; hh++) { const RoadSection *x = hh ? &pc->halfB : &pc->halfA;
+                        fprintf(fl, "%s%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", hh ? " | " : ",", x->lanesL, x->lanesR, x->laneL, x->laneR, x->edgeL, x->edgeR, x->laneEdgeL, x->laneEdgeR, x->outerL, x->outerR, x->kind, x->kindArg[0], x->kindArg[3], x->half); }
+                    fprintf(fl, "\n"); } }
+            fclose(fl); LOG("test fork lanes: %s", getenv("CE_TESTFORKLANES")); } }
+    if (getenv("CE_TESTFORKLOG") && g_c.frameB) { FILE *fl = fopen(getenv("CE_TESTFORKLOG"), "w"); int k, ks;   /* (tests: every split's real shape, as True 3D builds it - k, A's piece beside, B's side offset off A, nearest A, heading B - A in degrees, curves, B ended) */
+        if (fl) { fprintf(fl, "split,k,j,pa,off,near,dh,ca,cb,dead,len\n");
+            for (ks = 0; ks < g_c.n; ) { int kj; if (g_c.piece[ks].layout != 2) { ks++; continue; }
+                for (kj = ks; kj < g_c.n && g_c.piece[kj].layout == 2; kj++) ;
+                for (k = ks; k <= kj && k < g_c.n; k++) { const C3Frame *B = &g_c.frameB[k]; int pa = g_c.pairA ? g_c.pairA[k] : k, q; const C3Frame *A = &g_c.frame[pa]; double off = (B->x - A->x) * cos(A->heading) - (B->z - A->z) * sin(A->heading), nr = 1e30, dh = B->heading - A->heading;
+                    for (q = pa - 60; q <= pa + 60; q++) if (q >= 0 && q <= g_c.n) { double dx = B->x - g_c.frame[q].x, dz = B->z - g_c.frame[q].z, d = sqrt(dx * dx + dz * dz); if (d < nr) nr = d; }
+                    while (dh > 3.14159265358979) dh -= 6.28318530717959; while (dh < -3.14159265358979) dh += 6.28318530717959;
+                    fprintf(fl, "%d,%d,%d,%d,%.0f,%.0f,%.2f,%d,%d,%d,%d\n", ks, k, k - ks, pa, off, nr, dh * 57.2957795, g_c.piece[k].halfA.curve, g_c.piece[k].halfB.curve, g_c.bdead ? g_c.bdead[k] : 0, kj - ks); }
+                ks = kj; }
+            fclose(fl); LOG("test fork log: %s", getenv("CE_TESTFORKLOG")); } }
     if (getenv("CE_TESTFORK")) { int k = 0, kj = 0, ok, i, nb = 0; sscanf(getenv("CE_TESTFORK"), "%d %d", &k, &kj); PlanForkFrom(k); ok = PlanForkRange(g_forkFrom, kj);   /* (tests) "<from> <join>": Fork from here, Join here */
         for (i = 0; i < g_c.n; i++) nb += PlanNewFork(i);
         LOG("test fork at %d: %d, %d pieces forked; %s", k, ok, nb, g_status);
@@ -3795,6 +3906,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     HBarToggle();   /* (Heights and Widths: always shown) */
     if (getenv("CE_TESTTOOL")) { BlockSet(atoi(getenv("CE_TESTTOOL"))); }   /* (tests: a tool on - 5 Raise, 6 Lower, 7 Level) */
     if (getenv("CE_TESTNOGRID")) { g_grid = 0; SendMessageA(g_gridChk, BM_SETCHECK, BST_UNCHECKED, 0); }   /* (tests: no grid) */
+    if (getenv("CE_TESTCLEAN")) { g_grid = g_showVtx = g_showText = g_showMarks = 0; SendMessageA(g_gridChk, BM_SETCHECK, BST_UNCHECKED, 0); SendMessageA(g_vtxChk, BM_SETCHECK, BST_UNCHECKED, 0); SendMessageA(g_textChk, BM_SETCHECK, BST_UNCHECKED, 0); if (g_marksChk) SendMessageA(g_marksChk, BM_SETCHECK, BST_UNCHECKED, 0); }   /* (tests: the view alone - no grid, points, labels, fields) */
     if (getenv("CE_TESTGB")) { const char *gp = getenv("CE_TESTGB"); if (getenv("CE_TESTHALF")) g_half = 1;   /* (tests: CE_TESTHALF=1 - painted on carriageway B) */
         while (gp && *gp) { int cat = 2, item = 0, k = 0, side = 0, cell = 0, cnt = 1, i, lane = -1; char spec[120]; const char *sc = strchr(gp, ';');   /* (several: ";" between) */
         sprintf(spec, "%.*s", sc ? (int)(sc - gp) : 100, gp); gp = sc ? sc + 1 : NULL;   /* (tests) "<category> <block item> <piece> <side> <cell> [pieces [lane]]": that block painted there */
@@ -3907,6 +4019,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             if (!vhDone && g_lastOk && getenv("CE_TESTVHOV") && sscanf(getenv("CE_TESTVHOV"), "%d %d %d %f", &vk, &vs, &vv, &t) >= 3) { const C3Frame *F = g_half && g_vc->frameB ? g_vc->frameB : g_vc->frame; int ww = 0, wh = 0; float sc;
                 vhDone = 1; SDL_GetWindowSize(g_sw, &ww, &wh); sc = ww > 0 && g_lastW > 0 ? (float)g_lastW / ww : 1.0f;
                 if (VtxScreen(F, vk, vs, vv, &ax, &ay) && VtxScreen(F, vk + 1, vs, vv, &bx, &by)) { g_hx = (int)((ax + (bx - ax) * t) / sc); g_hy = (int)((ay + (by - ay) * t) / sc); LOG("test vhov: %d,%d", g_hx, g_hy); Render3D(); } } }
+        {   static int pickN; int px, py, pp = 0, pc = -1, pk; const char *gp = getenv("CE_TESTPICK");   /* (tests: "x y;x y...": frame pixels clicked - CellPickAny, logged) */
+            if (gp && g_lastOk && pickN < 8) { int i; for (i = 0; i < pickN && gp; i++) { gp = strchr(gp, ';'); if (gp) gp++; }
+                if (gp && sscanf(gp, "%d %d", &px, &py) == 2) { pk = CellPickAny(px, py, &pp, &pc); LOG("test pick %d %d: piece %d side %d cell %d half %d", px, py, pk, pp, pc, g_half); }
+                pickN++; } }
         {   static int cellDone; int ck, cs, cc, ci = -1; double u[4], h[4]; float pt[3], sx, sy, ax = 0, ay = 0; int q, nq = 0;   /* (tests: "piece side cell [picture]" - the mouse
                                                                                                                                   over that cell's middle, right-clicked there) */
             if (!cellDone && g_lastOk && getenv("CE_TESTCELL") && sscanf(getenv("CE_TESTCELL"), "%d %d %d %d", &ck, &cs, &cc, &ci) >= 3 && CellQuad(ck, cs, cc, u, h)) { int ww = 0, wh = 0; float sc;
