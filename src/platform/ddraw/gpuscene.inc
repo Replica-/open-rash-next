@@ -54,6 +54,7 @@ typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD 
 static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
 static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
 static int HdCarVariants(const char *name8); static const DWORD *HdCarVariantPx(const char *name8, int w, int h, int var);   /* hdtex.inc: more traffic cars */
+static void HrStats(void);   /* hdrider.inc: RR_SCENELOG */
 static int g_hdTrackHint;   /* hdtex.inc HdTrack: the track to look in instead of the game's (world3d.inc W3Tex, around its look-ups; 0 = the game's) */
 static GpuTex g_gt2[GPU_TEXSLOTS]; static int g_gtN;
 static DWORD GpuPalSum(Pal *p){ DWORD s=0; int i; if(!p) return 0; for(i=0;i<256;i++) s=s*31+((DWORD)p->e[i].peRed<<16|(DWORD)p->e[i].peGreen<<8|p->e[i].peBlue); return s; }
@@ -300,6 +301,7 @@ __declspec(dllexport) void __stdcall RR_GpuSceneBegin(unsigned char *frame, int 
     g_gpuBgW=w; g_gpuBgH=h; memcpy(g_gpuClip,clip,sizeof g_gpuClip);
     { int x0=clip[0]<0?0:clip[0], x1=clip[2]>w?w:clip[2], y0=clip[1]<0?0:clip[1], y1=clip[3]>=h?h-1:clip[3];   /* viewport -> marker colour */
       for(y=y0;y<=y1;y++) if(x1>x0) memset(frame+(size_t)y*pitch+x0,g_gpuMark,(size_t)(x1-x0)); }
+    { static int sl=-1; if(sl<0) sl=getenv("RR_SCENELOG")!=NULL; if(sl && g_gpuFrame%500==0) HrStats(); }   /* test switch RR_SCENELOG=1: every 500 scenes the time + HD Rider's state */
     g_gpuMarkPrev=g_gpuMark; g_gpuFrame++; GpuListReset(); W3SceneBegin(); HhSceneBegin(); g_gpuScene=1; if(g_gpuRiderQ) g_gpuRiderFrames++; g_gpuRiderQ=0; g_gpuFrames++;
     ps=GpuPalSum(g_primary?g_primary->pal:NULL); if(ps!=g_gpuPal){ GpuTexDropAll(); g_gpuPal=ps; }   /* palette fades: the textures are rebuilt */
     { float sx=g_wsSx, sy=g_wsSy; g_gpuOutScale=(float)sqrt(sx*sy); if(g_gpuOutScale<0.25f) g_gpuOutScale=0.25f; } }
