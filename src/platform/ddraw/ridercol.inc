@@ -144,6 +144,17 @@ static void RcDrawSprite(HDC dc, int n, const unsigned *lut, int x, int y, int s
     memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
     StretchDIBits(dc, x, y, w * sc, h * sc, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
     free(px); }
+/* Game Options > HD Rider on: sprite n's HD picture in the player's colours (hdrider.inc HrPreview), fitted into the cell (cw x ch at x, y) on background bg */
+static int RcDrawHd(HDC dc, int n, int row, int x, int y, int cw, int ch, unsigned bg)
+{   int W, H, i, dw, dh; const DWORD *hp = HrPreview(n, row, &W, &H); unsigned *px; BITMAPINFO bi; double f; POINT o;
+    if (!hp || !(px = (unsigned *)malloc((size_t)W * H * 4))) return 0;
+    for (i = 0; i < W * H; i++) { unsigned a = hp[i] >> 24, c = hp[i], r = ((c >> 16 & 255) * a + (bg >> 16 & 255) * (255 - a)) / 255, g = ((c >> 8 & 255) * a + (bg >> 8 & 255) * (255 - a)) / 255, b = ((c & 255) * a + (bg & 255) * (255 - a)) / 255;
+        px[i] = (r << 16) | (g << 8) | b; }   /* (its soft outline over the cell's colour) */
+    f = (double)cw / W < (double)ch / H ? (double)cw / W : (double)ch / H; dw = (int)(W * f + 0.5); dh = (int)(H * f + 0.5);
+    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = W; bi.bmiHeader.biHeight = -H; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+    SetStretchBltMode(dc, HALFTONE); SetBrushOrgEx(dc, 0, 0, &o);
+    StretchDIBits(dc, x + (cw - dw) / 2, y + (ch - dh) / 2, dw, dh, 0, 0, W, H, px, &bi, DIB_RGB_COLORS, SRCCOPY);
+    free(px); return 1; }
 
 /* the palette (under the parts): 12 hues light / mid / dark and a column of greys; a swatch makes the chosen part that custom colour */
 #define RC_PCOLS 13
@@ -193,7 +204,7 @@ static void RcOutfitSet(int o) { int p; for (p = 0; p < RC_PARTS; p++) { g_rcPar
 
 /* pc >= 0: the palette has the keyboard, its cursor on swatch pc */
 static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
-{   HDC dc; HFONT title, rowf, fSm, fMid, old; int i, row = g_rcRow >= 0 ? g_rcRow : 0; unsigned cur[256]; char t[64];
+{   HDC dc; HFONT title, rowf, fSm, fMid, old; int i, row = g_rcRow >= 0 ? g_rcRow : 0, hd = HrWanted(); unsigned cur[256]; char t[64];
     static const int spr[4] = { 89, 197, 297, 292 };   /* (292: walking towards the camera) */
     memcpy(tmp->bits, base->bits, (size_t)tmp->pitch * tmp->h); SdDarken(tmp, 0, 0, tmp->w, tmp->h); SdDarken(tmp, 8, 8, 632, 472);
     S_GetDC(&tmp->itf, &dc); SetBkMode(dc, TRANSPARENT);
@@ -208,7 +219,8 @@ static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
         if (i == RC_PARTS) { int o = RcOutfitNow(); _snprintf(t, sizeof t, "%s", o >= 0 ? g_rcOutfit[o].name : "Your own mix"); }
         else if (g_rcPart[i] < 0) _snprintf(t, sizeof t, "Own colours"); else if (g_rcPart[i] == RC_CUSTOM) _snprintf(t, sizeof t, "Custom #%06X", g_rcRGB[i]); else _snprintf(t, sizeof t, "Scheme %d", g_rcPart[i] + 1);
         SelectObject(dc, fMid); IcText(dc, 150, y + 4, on ? "<" : "", c, TA_LEFT | TA_TOP); IcText(dc, 166, y + 4, t, on ? c : RGB(190, 230, 255), TA_LEFT | TA_TOP); { SIZE sz; GetTextExtentPoint32A(dc, t, (int)strlen(t), &sz); if (on) IcText(dc, 174 + sz.cx, y + 4, ">", c, TA_LEFT | TA_TOP); }
-        if (i < RC_PARTS) { int s, b = 5, x; for (s = g_rcLo[i], x = 282; s <= g_rcHi[i]; s++, x += 16) { unsigned v = cur[b * 32 + s]; IcBox(dc, x, y + 3, 14, 16, RGB((v >> 16) & 255, (v >> 8) & 255, v & 255), RGB(20, 20, 30), 0); } } }
+        if (i < RC_PARTS && hd) { unsigned v = HrPlayerColour(row, i + 1); IcBox(dc, 282, y + 3, 94, 16, RGB((v >> 16) & 255, (v >> 8) & 255, v & 255), RGB(20, 20, 30), 0); }   /* (HD Rider: one bright colour per part) */
+        else if (i < RC_PARTS) { int s, b = 5, x; for (s = g_rcLo[i], x = 282; s <= g_rcHi[i]; s++, x += 16) { unsigned v = cur[b * 32 + s]; IcBox(dc, x, y + 3, 14, 16, RGB((v >> 16) & 255, (v >> 8) & 255, v & 255), RGB(20, 20, 30), 0); } } }
     /* palette: the chosen part's colour framed white, the keyboard cursor yellow */
     for (i = 0; i < RC_PCOLS * RC_PROWS; i++) { unsigned v = sel < RC_PARTS ? RcSwatch(i) : (RcSwatch(i) >> 2) & 0x3f3f3f; int x = RC_PX + (i % RC_PCOLS) * RC_PW, y = RC_PY + (i / RC_PCOLS) * RC_PH;
         int mine = sel < RC_PARTS && g_rcPart[sel] == RC_CUSTOM && g_rcRGB[sel] == v;   /* (dimmed: no part chosen) */
@@ -216,8 +228,9 @@ static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
         IcBox(dc, x, y, RC_PW - 6, RC_PH - 6, RGB((v >> 16) & 255, (v >> 8) & 255, v & 255), RGB(20, 20, 30), 0); }
     /* preview: four of the rider's sprites in the colours chosen */
     IcBox(dc, 404, 58, 226, 330, RGB(28, 32, 56), RGB(90, 90, 130), 8);
-    if (g_rcTab && g_rcBob) { int k;   /* 2 x 2 cells, each sprite centred and scaled to fit */
+    if (g_rcTab && g_rcBob) { int k;   /* 2 x 2 cells, each sprite centred and scaled to fit (HD Rider: its HD picture) */
         for (k = 0; k < 4; k++) { int w, h, cw = 107, ch = 160, cx = 408 + (k & 1) * 111, cy = 62 + (k >> 1) * 162, sc;
+            if (hd && RcDrawHd(dc, spr[k], row, cx, cy, cw, ch, 0x1c2038)) continue;
             if (!RcSprite(spr[k], &w, &h)) continue;
             sc = (cw / w < ch / h) ? cw / w : ch / h; if (sc < 1) sc = 1; if (sc > 2) sc = 2;
             RcDrawSprite(dc, spr[k], cur, cx + (cw - w * sc) / 2, cy + (ch - h * sc) / 2, sc, 0x1c2038); } }
@@ -225,7 +238,8 @@ static void RcDraw(Surf *tmp, const Surf *base, int sel, int pc)
     SelectObject(dc, fSm); IcBox(dc, 18, 394, 614, 48, RGB(16, 16, 34), RGB(90, 90, 130), 8);
     IcText(dc, 28, 400, pc >= 0 ? "Palette: arrows try a colour on the rider, Enter keeps it, Esc goes back to what it was.  The shading of the clothes stays."
                                 : "Left/Right: own colours, one of the game's 15 schemes or a custom colour.  Enter or click: the palette.  Outfit: ready-made sets.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
-    IcText(dc, 28, 417, g_rcRow >= 0 ? "Applies from the next race.  Preview: your colour scheme of the last race." : "Applies from the next race.  The preview uses scheme 1 until you have raced.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
+    IcText(dc, 28, 417, hd ? "Applies from the next race.  Preview: HD Rider (Game Options) - own colours and schemes are its bright colours."
+                           : g_rcRow >= 0 ? "Applies from the next race.  Preview: your colour scheme of the last race." : "Applies from the next race.  The preview uses scheme 1 until you have raced.", RGB(225, 225, 240), TA_LEFT | TA_TOP);
     IcText(dc, 18, 462, pc >= 0 ? "Arrows: colour   Enter / click: keep   Esc: back" : "Up/Down: part   Left/Right: change   Enter: palette (parts), Outfit / Done   Esc: done", RGB(150, 150, 175), TA_LEFT | TA_TOP);
     SelectObject(dc, old); DeleteObject(title); DeleteObject(rowf); DeleteObject(fSm); DeleteObject(fMid); GdiFlush(); }
 static int RcRowAt(int x, int y) { int i; if (x < 0 || x >= 400) return -1; for (i = 0; i < RC_ROWS; i++) { int yy = RcRowY(i); if (y >= yy && y < yy + RC_DY - 6) return i; } return -1; }

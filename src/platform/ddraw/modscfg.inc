@@ -126,4 +126,4 @@ __declspec(dllexport) int __stdcall RR_ModsConfig(void)
 static void McTestHook(void)
 {   static int fired; char *e=getenv("RR_TEST_MODSCFG_OPEN");
     if(fired || !e || !g_primary || !g_clockMode) return; { DWORD fr=(GetTickCount()-g_t0)*30/1000; if(fr<120) return; }
-    fired=1; RR_ModsConfig(); }
+    fired=1; if(getenv("RR_TEST_RIDERCOL")) RR_RiderColours(); else RR_ModsConfig(); }   /* (with RR_TEST_RIDERCOL: straight into Change clothes - its picture, ridercol.inc) */

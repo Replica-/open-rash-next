@@ -53,10 +53,11 @@ static int HrInstalled(void)
         for (i = 0; i < n; i++) { char p[MAX_PATH + 16]; _snprintf(p, sizeof p - 1, "%s\\hdrider.txt", c[i]); p[sizeof p - 1] = 0;
             if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) { strcpy(g_hrDir, c[i]); g_hrState = 1; HrIndex(); break; } } }
     return g_hrState > 0; }
-static int HrOn(void)
+static int HrWanted(void)   /* the setting is on and the pictures are there (ridercol.inc: the Change clothes preview) */
 {   static int env = -2;
     if (env == -2) { const char *e = getenv("RR_HDRIDER"); env = (e && *e) ? (*e != '0') : -1; }
-    return (env >= 0 ? env : g_vid.hdRider) && g_w3On && HrInstalled(); }
+    return (env >= 0 ? env : g_vid.hdRider) && HrInstalled(); }
+static int HrOn(void) { return g_w3On && HrWanted(); }
 
 /* ---- the worker thread (HrWorker): it reads the pictures, repaints them in a rider's colours and makes the mip levels - ~12 ms a picture, too long for
    the game's frame; the game's thread only uploads the finished levels (HrTex).  Jobs: a lock-free ring (state 0 free, 1 queued, 2 working, 3 done,
@@ -92,10 +93,11 @@ static unsigned HrScheme(int r, int part)
     case 3: return light ? 0x181818u : 0xf4f4f4u;
     case 4: return light ? 0x222226u : HrHsv(h, 0.9f, 0.45f);   /* trousers: the jacket's hue, dark (light jackets: black - a dark yellow is olive) */
     default: return HrHsv(h + 0.04f, 0.9f, 0.95f); } }
+static unsigned HrPlayerColour(int row, int p)   /* the player's part p (1..5): Change clothes - a custom colour as it is, a scheme / own as that row's bright scheme */
+{   unsigned rgb = 0; int k = RcPartPick(p - 1, &rgb); return k == 15 ? rgb : HrScheme(k >= 0 && k < 15 ? k : row, p); }
 static void HrColours(const RrGpuQuad *q, unsigned *c)   /* c[1..5] */
 {   int p, row = q->riderRow >= 0 ? q->riderRow : 0;
-    for (p = 1; p < HR_PARTS; p++) { unsigned rgb = 0; int k = q->objKind == RRO_PLAYER ? RcPartPick(p - 1, &rgb) : -1;
-        c[p] = k == 15 ? rgb : HrScheme(k >= 0 && k < 15 ? k : row, p); } }
+    for (p = 1; p < HR_PARTS; p++) c[p] = q->objKind == RRO_PLAYER ? HrPlayerColour(row, p) : HrScheme(row, p); }
 /* the picture in the rider's colours: a part's pixel = its colour shaded by the picture's brightness there (brighter than the part's mean: towards white);
    the parts blend over 3 x 3 pixels (a quarter of an original pixel each way) - computed once where the 3 x 3 is all one part (most pixels) */
 static void HrShade(DWORD s, int k, const unsigned *c, float Y, float *r, float *g, float *b)
@@ -190,6 +192,25 @@ static DWORD HrKey(const unsigned *c, int pid, int wpn)
 static void HrStats(void)   /* RR_SCENELOG (gpuscene.inc): the textures made, the jobs by state, the pictures held decoded */
 {   int i, nt = 0, js[5] = { 0 }; for (i = 0; i < HR_TEX; i++) nt += g_hrTex[i].t.nl > 0; for (i = 0; i < HR_JOBS; i++) { LONG st = g_hrJob[i].state; js[st >= 0 && st < 5 ? st : 0]++; }
     LOG("scenelog %u: HD textures %d, jobs free %d queued %d working %d done %d failed %d, decoded %d", g_gpuFrame, nt, js[0], js[1], js[2], js[3], js[4], g_hrNLoaded); }
+/* the Change clothes preview (ridercol.inc): sprite spr's picture in the player's colours, 4w x 4h ARGB (free it), NULL = none.  Read into a picture of
+   its own - the worker's decoded pictures are the worker's - and the last few are kept (the preview is drawn again at every key) */
+static const DWORD *HrPreview(int spr, int row, int *w, int *h)
+{   static struct { int spr; DWORD key; DWORD *px; } kept[8]; static int next; unsigned c[HR_PARTS]; HrPic p; char a[MAX_PATH + 32], b[MAX_PATH + 32]; DWORD key, *l; int i, n;
+    if (spr < 0 || spr >= HR_SPR || !HrWanted() || g_hrSpr[spr].w <= 0) return NULL;
+    for (i = 1; i < HR_PARTS; i++) c[i] = HrPlayerColour(row, i);
+    key = HrKey(c, spr, 0); *w = 4 * g_hrSpr[spr].w; *h = 4 * g_hrSpr[spr].h;
+    for (i = 0; i < 8; i++) if (kept[i].px && kept[i].spr == spr && kept[i].key == key) return kept[i].px;
+    memset(&p, 0, sizeof p); p.w = g_hrSpr[spr].w; p.h = g_hrSpr[spr].h;
+    _snprintf(a, sizeof a - 1, "%s\\s%03d.png", g_hrDir, spr); a[sizeof a - 1] = 0; _snprintf(b, sizeof b - 1, "%s\\l%03d.png", g_hrDir, spr); b[sizeof b - 1] = 0;
+    if (!(p.px = HdLoad(a, p.w, p.h))) return NULL;
+    if (!(l = HdLoad(b, p.w, p.h)) || !(p.lab = (BYTE *)malloc((size_t)16 * p.w * p.h))) { free(l); free(p.px); return NULL; }
+    for (i = 0, n = 16 * p.w * p.h; i < n; i++) { int v = ((l[i] & 255) + 20) / 40; p.lab[i] = (BYTE)(v < HR_PARTS ? v : 0); }
+    free(l);
+    i = next; next = (next + 1) % 8; free(kept[i].px);
+    kept[i].spr = spr; kept[i].key = key; kept[i].px = HrPaint(&p, c);
+    free(p.px); free(p.lab);
+    return kept[i].px; }
+
 /* the rider's sprite history (by its record): the previous sprite and when the current one began */
 static HrRider *HrRiderOf(const RrGpuQuad *q, int *changed)
 {   HrRider *r = NULL, *fr = NULL; int i;
