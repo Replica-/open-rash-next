@@ -220,12 +220,22 @@ float rr_World3DObjDepth(const void *rec)
    (frame_draw.c passes W3_OBJ(node) as an argument, so the lookup has always just happened).  Cars are told by their draw hook (+0xdc) */
 void __fastcall rr_ShadowMarkerDraw(int *obj, int dst);   /* rider_sprites.c: the traffic cars' draw hook */
 void __fastcall rr_PlayerSpriteDraw(int p, int q);   /* rider_sprites.c: the bikes' draw hook (every rider's, not only the player's) */
+void __fastcall rr_RoadsideObjectDraw(int p, int q);   /* road\debris.c: the pedestrians' (and other roadside objects') draw hook */
 /* the bike model (0..14: Rat 0..4, Sport 5..9, Super 10..14, race_messages.c) of the rider whose object o is (a rider record points to its object at +0x2fc) */
 static int RrObjBike(const int *o)
 {   int i, lv = (*(char *)&rec_featureAccum1.g_raceLevel); if (lv > 0) lv--; if (lv > 4) lv = 4;
     if (g_playerRider && o == (const int *)((const int *)g_playerRider)[0x2fc / 4]) return (unsigned char)rec_playerRecord.g_playerBike;
     for (i = 0; i < rr_slots; i++) { const int *r = (const int *)RrRiderAt(i); if (r && (const int *)r[0x2fc / 4] == o) return RrSlotBike(i, lv); }
     return 0; }
+/* the carriageway the object of the last lookup is on (RRQ_SPLIT | RRQ_ONB; 0 = a single road): its section (+0x140), that section's half (+0x36: 1 = A, 2 = B) */
+unsigned rr_World3DObjHalf(void)
+{
+    const int *o = g_lastRec; int sec;
+    if (!o || (o[0xdc / 4] != (int)rr_PlayerSpriteDraw && o[0xdc / 4] != (int)rr_ShadowMarkerDraw && o[0xdc / 4] != (int)rr_RoadsideObjectDraw)) return 0;   /* (bikes, traffic cars,
+                                                                                                     pedestrians: +0x140 is theirs) */
+    if ((unsigned)(sec = o[0x140 / 4]) < 0x10000u || (unsigned)*(int *)(sec + 0x28) < 0x10000u || *(char *)(*(int *)(sec + 0x28) + 0x1c) != 2) return 0;
+    return RRQ_SPLIT | ((*(unsigned char *)(sec + 0x36) & 3) == 2 ? RRQ_ONB : 0);
+}
 int rr_World3DObjInfo(float *yaw, float *lat, unsigned *id)
 {
     const int *o = g_lastRec;
@@ -236,6 +246,8 @@ int rr_World3DObjInfo(float *yaw, float *lat, unsigned *id)
         if (g_copRider && o == (const int *)((const int *)g_copRider)[0x2fc / 4]) return RRO_COP;
         if (g_playerRider && o == (const int *)((const int *)g_playerRider)[0x2fc / 4]) return RRO_PLAYER;
         return RRO_RIDER; }
+    if (o && o[0xdc / 4] == (int)rr_RoadsideObjectDraw) { *lat = (float)(o[0x50 / 4] / 256.0); return RRO_NONE; }   /* (a pedestrian: its lateral, where its draw hook puts it -
+                                                                                                                  the shim leaves out one on a fork's other road / ground, world3d.inc) */
     if (!o || o[0xdc / 4] != (int)rr_ShadowMarkerDraw) return RRO_NONE;
     *yaw = (float)((o[0x68 / 4] & 0xffffff) / 16777216.0);   /* 0x1000000 = a turn */
     *lat = (float)(o[0x50 / 4] / 256.0);

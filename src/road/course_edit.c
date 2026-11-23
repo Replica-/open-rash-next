@@ -125,8 +125,16 @@ static void MapFinishes(const CeMap *m)
 #define CE_SPLIT_SAME 0x51
 static struct { int *p, v; } g_fkw[1024]; static int g_nfkw;   /* (every word the forks changed - in the chain's nodes, the maps: as it was) */
 static void CeW(int *p, int v) { if (g_nfkw < 1024) { g_fkw[g_nfkw].p = p; g_fkw[g_nfkw].v = *p; g_nfkw++; } *p = v; }
+/* how far past a fork / before a join the ring keeps both roads (node +5; the game's TreePrepare / RoadGenBuild set it to 0x5100, 81 pieces - its look-ahead of the split):
+   in between it builds only the player's road, and whatever was on the other one carried on along it at its place across that road - on A's ground between the roads
+   (user, 2026-11-23: "cars materialising or coming in from nowhere from the right to the left"), and where it split again 81 pieces before the join every car and
+   rider took A (one link).  The Course Editor's forks: their whole length, both roads all the way (render\scene_tree.c rr_TreePrepare; road_build.c RoadGenStep) */
+#define CE_NFN 128
+#define CE_FNALL 0x40000000   /* (past any position: RoadGenStep compares it with the cursor's place in the course data of the block it is in, not the fork's own pieces) */
+static struct { const int *node; int len; } g_fn[CE_NFN]; static int g_nfn;
+int rr_CeForkNodeLen(const int *node) { int i; for (i = 0; i < g_nfn; i++) if (g_fn[i].node == node) return g_fn[i].len; return 0; }
 static void CeForkUndo(void)
-{   while (g_nfkw > 0) { g_nfkw--; *g_fkw[g_nfkw].p = g_fkw[g_nfkw].v; } }
+{   while (g_nfkw > 0) { g_nfkw--; *g_fkw[g_nfkw].p = g_fkw[g_nfkw].v; } g_nfn = 0; }
 /* a part's header: a copy of ha with its own rows (heights hs / he at its ends) and finish table (the finishes on the course data's pieces a .. b - 1) - tables:
    its own scenery tables too (B) */
 static int *CeHdr(const int *ha, int lenOrig, int hs, int he, int a, int b, int tables)
@@ -201,6 +209,7 @@ static int CeForkSpan(int *q, int a, int nb, int b, const signed char *curveB)
     /* the chain: X1 > open { 1, 6, A, B, X1 } > A's parts / B's parts > close { 2, 6, A's last, B's last, X3 or the block after } > X3 > the block after */
     s1[0] = 1; s1[1] = 6; s1[2] = (int)nA[0]; s1[3] = (int)nB[0]; s1[4] = (int)q; s1[5] = 0x3c00; s1[6] = 0x10000;
     s2[0] = 2; s2[1] = 6; s2[2] = (int)nA[nb - 1]; s2[3] = (int)nB[nb - 1]; s2[4] = n3 ? (int)n3 : (int)nx; s2[5] = 0x3c00; s2[6] = 0x10000;
+    if (g_nfn + 2 <= CE_NFN) { g_fn[g_nfn].node = s1; g_fn[g_nfn++].len = CE_FNALL; g_fn[g_nfn].node = s2; g_fn[g_nfn++].len = CE_FNALL; }   /* (both roads all the way: rr_CeForkNodeLen) */
     for (i = 0; i < nb; i++) { int *pa = i == 0 ? s1 : nA[i - 1], *pb = i == 0 ? s1 : nB[i - 1], *xa = i == nb - 1 ? s2 : nA[i + 1], *xb = i == nb - 1 ? s2 : nB[i + 1];
         nB[i][0] = 0; nB[i][1] = 6; nB[i][2] = (int)xb; nB[i][3] = (int)pb; nB[i][5] = (i == nb - 1 ? b : k[i].L) - (i == 0 ? a : 0);
         if (i == 0) { nA[0][0] = 0; nA[0][1] = 6; nA[0][2] = (int)xa; nA[0][3] = (int)pa; nA[0][5] = nB[0][5]; }
@@ -237,6 +246,19 @@ static void CeForkMake(int *course)
 }
 /* the edited course's own forks (the Course Editor's "Fork here" / "Join here": RrcPiece.spare[1] bit 0 on the pieces of a fork, B's road in their b halves):
    each run of marked records made a fork from the main-road block it leaves to the one it joins in (CeForkSpan) - after the map (the blocks as edited) */
+#define CE_NFORK 64
+static int g_forkRec[2 * CE_NFORK];   /* (each fork made: its first record, the record after its last) */
+/* each fork's B offsets off A per record, from the edited curves (as the editor keeps them: courseedit.c PlanForkFields - splitSlope(k) = splitSlope(k - 1) +
+   B.curve - A.curve, splitX(k + 1) = splitX(k) + splitSlope(k), both from 0 at the fork), worked out when the forks are made and put on the road's pieces as they
+   are built (road_build.c rr_RoadBlockBuild: rr_CeForkSplit) - the game's cursor summed the course data's rows, whose A curves are the original's, not the edited
+   ones: its offsets crept off (City 128..727: 35 degrees at the join) and True 3D had to correct them every race (user, 2026-11-23: "the fork is known up front"
+   / "during level creation cant it plot everything where it needs to") */
+static int *g_fkSX, *g_fkSS, g_fkN;
+int rr_CeForkSplit(int pos, int *sx, int *ss)
+{   int r = (pos >> 8) - (g_rrcHdr.piece0 >> 8), i;
+    if (!g_fkSX || r < 0 || r >= g_fkN) return 0;
+    for (i = 0; i < rr_ceForks && i < CE_NFORK; i++) if (r >= g_forkRec[2 * i] && r < g_forkRec[2 * i + 1]) { *sx = g_fkSX[r]; *ss = g_fkSS[r]; return 1; }
+    return 0; }
 static void CeForkEdited(int *course)
 {
     int r = 0, b0 = g_rrcHdr.piece0 >> 8, made = 0;
@@ -258,15 +280,23 @@ static void CeForkEdited(int *course)
             else if (q[0] == 1) { int *e2 = (int *)q[2]; while (e2 && e2[0] == 0 && g++ < 4096) { p += e2[5]; e2 = (int *)e2[2]; } q = e2 && e2[0] == 2 ? (int *)e2[4] : 0; }   /* (a split: along A to its join) */
             else if (q[0] == 2) q = (int *)q[4];
             else break; }
+        if (ok && made < CE_NFORK) { g_forkRec[2 * made] = r0; g_forkRec[2 * made + 1] = r1; }   /* (the course file's records: the pieces True 3D numbers so - CeForksTell) */
         made += ok;
         wsprintfA(m, ok ? "course edit: a fork made over pieces %d..%d" : "course edit: the fork over pieces %d..%d NOT made (not on normal course blocks of the main road, or too short)", p0, p1 - 1); Log(m); }
     rr_ceForks = made;
+    if (made && (g_fkN = g_rrcHdr.n, g_fkSX = (int *)HeapReAlloc(GetProcessHeap(), 0, g_fkSX ? g_fkSX : HeapAlloc(GetProcessHeap(), 0, 8), sizeof(int) * 2 * g_fkN)) != NULL) {   /* (the offsets: rr_CeForkSplit) */
+        int f; g_fkSS = g_fkSX + g_fkN;
+        for (f = 0; f < made && f < CE_NFORK; f++) { int k, s = 0, x = 0;
+            for (k = g_forkRec[2 * f]; k < g_forkRec[2 * f + 1] && k < g_fkN; k++) { g_fkSX[k] = x; s += ((const RoadSection *)g_rrc[k].b)->curve - ((const RoadSection *)g_rrc[k].a)->curve; g_fkSS[k] = s; x += s; } } }
 }
-/* the shim told whether this race has the editor's forks (rr_ceForks): True 3D then has forks on - every rider free to take either road (world3d.inc RR_SetForks) */
+/* the shim told whether this race has the editor's forks (rr_ceForks): True 3D then has forks on - every rider free to take either road (world3d.inc RR_SetForks) -
+   and which pieces they are (RR_SetForkPieces: B's offsets from its curves there, course3d.h C3_EdForkFix) */
 static void CeForksTell(void)
-{   static void (__stdcall *f)(int); static int looked;
-    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (void (__stdcall *)(int))GetProcAddress(sh, "RR_SetForks") : 0; looked = 1; }
+{   static void (__stdcall *f)(int); static void (__stdcall *fp)(int, const int *); static int looked;
+    if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (void (__stdcall *)(int))GetProcAddress(sh, "RR_SetForks") : 0;
+        fp = sh ? (void (__stdcall *)(int, const int *))GetProcAddress(sh, "RR_SetForkPieces") : 0; looked = 1; }
     if (f) f(rr_ceForks > 0);
+    if (fp) fp(rr_ceForks < CE_NFORK ? rr_ceForks : CE_NFORK, g_forkRec);
     if (GetEnvironmentVariableA("RR_FORKMAKE", 0, 0)) { char m[80]; wsprintfA(m, "fork tell: %d fork(s), shim %d", rr_ceForks, f != 0); Log(m); } }
 
 void rr_CourseEditMap(int *course)
@@ -338,9 +368,12 @@ void rr_CourseEditApply(int *p)
     {   RoadSection keep; int nf = half && (g_rrc[k].spare[1] & 1);   /* (a fork made in the editor: its B painted as the editor has it, the fields the game works out for a
                                                                     carriageway of its own kept - half (2: B; the file's copy of A said 7, a single road: the riders stayed on A),
                                                                     the ground heights, the wall projection term, the walls) */
-        if (nf) memcpy(&keep, sec, sizeof keep);
+        int fk = g_rrc[k].spare[1] & 1;   /* (A too keeps the game's half on an editor fork: the file says 7, a single road - its pedestrians at the inner kerb were solid to a
+                                             bike on B, which was lifted over nothing; user, 2026-11-23: "around segment 540 ... the bike just gets bumped or pushed for no reason") */
+        if (fk) memcpy(&keep, sec, sizeof keep);
         memcpy(sec + RRC_FROM, src + RRC_FROM, RRC_SECSIZE - RRC_FROM);
-        if (nf) { RoadSection *d = (RoadSection *)sec; d->half = keep.half; memcpy(d->rowH, keep.rowH, sizeof d->rowH); d->depthC0 = keep.depthC0; memcpy(d->wall, keep.wall, sizeof d->wall); } }
+        if (fk) ((RoadSection *)sec)->half = keep.half;
+        if (nf) { RoadSection *d = (RoadSection *)sec; memcpy(d->rowH, keep.rowH, sizeof d->rowH); d->depthC0 = keep.depthC0; memcpy(d->wall, keep.wall, sizeof d->wall); } }
     *(int *)(sec + 0x44) = frame[0]; *(int *)(sec + 0x54) = frame[1];
     mark = sec[0x38] == 7 && (unsigned)sec[0x39] - (unsigned)(*(unsigned char *)&rec_playerRecord.g_playerLevel) == 1 ? 0x20 : 0;   /* (the finish marker bit: this race's level's marker
                                                          only, as rr_RoadSectionFill sets it - the file is every level's) */
@@ -350,46 +383,46 @@ void rr_CourseEditApply(int *p)
 /* painted water (user, 2026-11-18: "if the player lands in the water its instant game lost") or a hole (2026-11-19: "if the player falls into this they immediately lose"): 1 = lateral position lat at road position pos lies in a cell
    painted WATER (course3d.h C3_WaterRow: k_c3Ground[C3_GWATER], RRC_BAND | RRC_GEN | 1 on the bands P0 .. P2 / past P2 of a terrain side) - the cells as
    course3d.h C3_Side lays them (verge's outer edge, the profile points, then on out) */
-int rr_CourseEditWater(unsigned pos, int lat)
+int rr_CourseEditWater(unsigned pos, int lat, int half)   /* (half: the player's road - 1 = B of a split; user, 2026-11-23 "is there anything else like this?": B's rider was checked against A's cells) */
 {
     const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int side, c, sg, b[6], i; unsigned w = RRC_BAND | RRC_GEN | 1u, ho = RRC_BAND | RRC_GEN | 2u, hd = RRC_BAND | RRC_GEN | 14u;   /* (WATER, HOLE, DHOLE: ground_art.h) */
     if (!x) return 0;
-    s = (const RoadSection *)RR_RING(pos)[3];
+    s = (const RoadSection *)RR_RING(pos)[3 + half];
     if (!s) return 0;
     side = lat > (s->edgeL + s->edgeR) / 2; sg = side ? 1 : -1;
-    if (!(s->kind == SEC_PROFILE || (s->kind == SEC_OPEN && x->sideKind[0][side] == 2))) return 0;   /* (a terrain side: course3d.h C3_SideKind) */
+    if (!(s->kind == SEC_PROFILE || (s->kind == SEC_OPEN && x->sideKind[half][side] == 2))) return 0;   /* (a terrain side: course3d.h C3_SideKind) */
     b[0] = side ? s->edgeR : s->edgeL; b[1] = side ? s->outerR : s->outerL;   /* (cell c from b[c] to b[c + 1]: the verge, P0, P1, P2, past P2) */
     for (i = 0; i < 3; i++) { b[i + 2] = s->profile[(i * 2 + side) * 2]; if ((b[i + 2] - b[i + 1]) * sg < 0) b[i + 2] = b[i + 1]; }
     b[5] = b[4] + sg * 1000000;
     for (c = 0; c <= 4; c++) {
-        unsigned v = c == 0 ? x->cell[0][side][0] : c <= 3 ? x->band[0][side][c - 1] : x->cell[0][side][1];
+        unsigned v = c == 0 ? x->cell[half][side][0] : c <= 3 ? x->band[half][side][c - 1] : x->cell[half][side][1];
         if ((v == ho || v == hd || (v == w && c >= 1)) && (lat - b[c]) * sg > 0 && (b[c + 1] - lat) * sg >= 0) { char m[96]; wsprintfA(m, "%s: the player in it at %u (lateral %d, cell %d)", v == ho || v == hd ? "hole" : "water", pos >> 8, lat, c); Log(m); return 1; } }
     return 0;
 }
 
 /* cobbles (user, 2026-11-18: "when the bike rides over cobble stone it makes a cobble road noise"): 1 = lateral position lat at road position pos lies on the road
    (between its edges) where the lanes on that side of the centre line are painted COBBLE (RrcExtra.road = RRC_BAND | RRC_GEN | 0: ground_art.h k_c3Road[0]) */
-int rr_CourseEditCobble(unsigned pos, int lat)
+int rr_CourseEditCobble(unsigned pos, int lat, int half)
 {
     const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int j; unsigned v;
     if (!x) return 0;
-    s = (const RoadSection *)RR_RING(pos)[3];
+    s = (const RoadSection *)RR_RING(pos)[3 + half];
     if (!s || lat < s->edgeL || lat > s->edgeR) return 0;
     j = (lat + 250 * (int)s->lanesL) / 250;   /* (course3d.h C3_Lanes: the lanes from -250 x lanesL, the centre line at 0) */
-    v = j >= 0 && j < 8 && x->lane[0][j] ? x->lane[0][j] : x->road[0][lat < 0 ? 0 : 1];   /* (the lane's own surface, else its side's) */
+    v = j >= 0 && j < 8 && x->lane[half][j] ? x->lane[half][j] : x->road[half][lat < 0 ? 0 : 1];   /* (the lane's own surface, else its side's) */
     if (v != (RRC_BAND | RRC_GEN)) return 0;
     {   static unsigned said; if (pos >> 8 != said + 1 && pos >> 8 != said) { char m[80]; wsprintfA(m, "cobbles: the player on them at %u (lane %d)", pos >> 8, j + 1); Log(m); } said = pos >> 8; }   /* (each time onto them) */
     return 1;
 }
 /* a speed bump (user, 2026-11-20: speed bumps you feel): 1 = lateral position lat at road position pos lies on a lane painted SPDBUMP (RrcExtra.road / lane =
    RRC_BAND | RRC_GEN | 3: ground_art.h k_c3Road[3]) within its hump - the middle of the piece, as course3d.h C3_Lanes draws it (C3_BUMPW: 90 of the piece's ~662) */
-int rr_CourseEditBump(unsigned pos, int lat)
+int rr_CourseEditBump(unsigned pos, int lat, int half)
 {
     const RrcExtra *x = rr_CourseEditExtra(pos); const RoadSection *s; int j, f = (int)(pos & 255); unsigned v;
     if (!x || f < 110 || f > 146) return 0;
-    s = (const RoadSection *)RR_RING(pos)[3];
+    s = (const RoadSection *)RR_RING(pos)[3 + half];
     if (!s || lat < s->edgeL || lat > s->edgeR) return 0;
     j = (lat + 250 * (int)s->lanesL) / 250;
-    v = j >= 0 && j < 8 && x->lane[0][j] ? x->lane[0][j] : x->road[0][lat < 0 ? 0 : 1];
+    v = j >= 0 && j < 8 && x->lane[half][j] ? x->lane[half][j] : x->road[half][lat < 0 ? 0 : 1];
     return v == (RRC_BAND | RRC_GEN | 3u);
 }

@@ -542,7 +542,8 @@ void __fastcall rr_RiderApplyImpulse(int o)
                                                           its speed with it - it waits and moves off as the tram does (user, 2026-11-21: "it has to wait behind it while it moves") */
         static int (__stdcall *ahead)(unsigned, int, int *, int *); static int looked; int rear = 0, dir = 0;
         if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); ahead = sh ? (int (__stdcall *)(unsigned, int, int *, int *))GetProcAddress(sh, "RR_TramAhead") : 0; looked = 1; }
-        int got = ahead ? ahead((unsigned)*(int *)(o + 0x1c), *(int *)(o + 0x28) >> 8, &rear, &dir) : -1;
+        int sec = *(int *)(o + 0x2c), onB = (unsigned)sec >= 0x10000u && (*(unsigned char *)(sec + 0x36) & 3) == 2;   /* (a car on road B of a split: the trams run on A's lanes only) */
+        int got = ahead && !onB ? ahead((unsigned)*(int *)(o + 0x1c), *(int *)(o + 0x28) >> 8, &rear, &dir) : -1;
         if (got > 0 && ((int)step > 0) == (dir > 0)) {   /* (going the tram's way: its lane's) */
             int room = (rear - dir * (*(int *)(o + 0x178) + 0x50) - *(int *)(o + 0x1c)) * dir;   /* (how far it may go: its nose a car's gap short of the rear) */
             if (room < (int)step * dir) { int ns = room > 0 ? room * dir : 0;

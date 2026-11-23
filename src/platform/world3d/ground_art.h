@@ -6,11 +6,11 @@
  * (n = its place in k_c3Ground; course3d.h C3_PaintTex).  Used by the game (world3d.inc) and the Course Editor; needs SDL3 (SDL_LoadPNG). */
 #ifndef C3_GROUND_ART_H
 #define C3_GROUND_ART_H
-#define C3_NGROUND 15
-static const char *const k_c3Ground[C3_NGROUND] = { "REDWOOD", "WATER", "HOLE", "BRIDGE", "DUNES", "CLIFF", "SANDW", "SANDG", "SANDR", "SANDPATH", "SLABS", "TILES", "SHRUB", "FOREST", "DHOLE" };   /* (only ever added to: a painted cell keeps its number - RRC_GEN | place) */
-static const unsigned k_c3GroundCol[C3_NGROUND] = { 0, 0, 0, 0, 0xd6c4a0u, 0x6e645au, 0xe1d7c3u, 0xcdaa69u, 0xb96944u, 0xd4b68au, 0, 0, 0x3c5a2eu, 0x2a4428u, 0 };   /* (no picture: a mottled ground of this colour, RGB) */   /* (HOLE: course3d.h C3_GHOLE - sunk in the game, C3_HoleRow) */   /* (WATER: course3d.h C3_GWATER - the cells painted with it are water, C3_WaterRow) */
+#define C3_NGROUND 16
+static const char *const k_c3Ground[C3_NGROUND] = { "REDWOOD", "WATER", "HOLE", "BRIDGE", "DUNES", "CLIFF", "SANDW", "SANDG", "SANDR", "SANDPATH", "SLABS", "TILES", "SHRUB", "FOREST", "DHOLE", "SEACLIFF" };   /* (only ever added to: a painted cell keeps its number - RRC_GEN | place) */
+static const unsigned k_c3GroundCol[C3_NGROUND] = { 0, 0, 0, 0, 0xd6c4a0u, 0x6e645au, 0xe1d7c3u, 0xcdaa69u, 0xb96944u, 0xd4b68au, 0, 0, 0x3c5a2eu, 0x2a4428u, 0, 0 };   /* (no picture: a mottled ground of this colour, RGB) */   /* (HOLE: course3d.h C3_GHOLE - sunk in the game, C3_HoleRow) */   /* (WATER: course3d.h C3_GWATER - the cells painted with it are water, C3_WaterRow) */
 static int C3_GroundIsPath(int n) { return n >= 0 && n < C3_NGROUND && (!strcmp(k_c3Ground[n], "SANDPATH") || !strcmp(k_c3Ground[n], "SLABS") || !strcmp(k_c3Ground[n], "TILES")); }   /* (a footpath's picture: the Course Editor's Footpaths list - SANDPATH the sand footpath, DUNES its ground: user, 2026-11-19 "two version of sand") */
-static const char *C3_GroundLabel(int n) { return n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "HOLE") ? "CLIFF HOLE" : n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "DHOLE") ? "DIRT HOLE" : n >= 0 && n < C3_NGROUND ? k_c3Ground[n] : "?"; }   /* (the Course Editor's name for it - user,
+static const char *C3_GroundLabel(int n) { return n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "HOLE") ? "CLIFF HOLE" : n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "DHOLE") ? "DIRT HOLE" : n >= 0 && n < C3_NGROUND && !strcmp(k_c3Ground[n], "SEACLIFF") ? "SEA CLIFF" : n >= 0 && n < C3_NGROUND ? k_c3Ground[n] : "?"; }   /* (the Course Editor's name for it - user,
                                                                  2026-11-19 "rename hole as CLIFF HOLE": k_c3Ground keeps HOLE, its picture's file name) */
 #define C3_NROAD 4
 static const char *const k_c3Road[C3_NROAD] = { "COBBLE", "RAINBOW", "TRAM", "SPDBUMP" };   /* (TRAM: a lane with tram rails - a tram runs on it, world3d.inc W3Trams; SPDBUMP: a speed bump across it - a hump in the game, course3d.h C3_Lanes: user, 2026-11-20) */   /* (RAINBOW: user, 2026-11-19 - an animated road of coloured squares in waves: render3d.h vertex alpha 235) */   /* extra road surfaces (user, 2026-11-18: "for road can you add cobblestone texture"): <hd>\road\<NAME>.png
@@ -106,7 +106,9 @@ static int C3_GroundArt(RxAssets *ra, const char *hdDir)
         _snprintf(p, sizeof p - 1, "%s\\ground\\%s%s.png", hdDir, k_c3Ground[n], kind == 1 ? "_TREE" : kind ? "_HEDGE" : ""); p[sizeof p - 1] = 0;
         px = hdDir[0] ? C3G_LoadPng(p, W, H) : NULL;
         if (!px && kind == 2 && hdDir[0] && (px = C3G_LoadPng(p, 512, 512)) != NULL) H = 512;   /* (a square hedge: FOREST's tall wall of trees) */
+        if (!px && kind == 1 && hdDir[0] && (px = C3G_LoadPng(p, 512, 512)) != NULL) W = H = 512;   /* (a square tree: SHRUB_TREE, a bush) */
         if (kind && !px) continue;   /* (no tree / hedge) */
+        if (!kind && !px && hdDir[0] && !strcmp(k_c3Ground[n], "SEACLIFF")) { _snprintf(p, sizeof p - 1, "%s\\ground\\CLIFF.png", hdDir); p[sizeof p - 1] = 0; px = C3G_LoadPng(p, W, H); }   /* (no SEACLIFF.png: CLIFF's rock) */
         if (!kind && !px && !strcmp(k_c3Ground[n], "WATER") && (px = C3G_Water(64)) != NULL) W = H = 64;
         if (!kind && !px && (!strcmp(k_c3Ground[n], "HOLE") || !strcmp(k_c3Ground[n], "DHOLE")) && (px = C3G_Hole(64)) != NULL) W = H = 64;
         if (!kind && !px && !strcmp(k_c3Ground[n], "BRIDGE") && (px = C3G_Bridge(128)) != NULL) W = H = 128;
@@ -117,7 +119,7 @@ static int C3_GroundArt(RxAssets *ra, const char *hdDir)
         g_c3GroundPx[kind * C3_NGROUND + n] = px;
         x = &ra->tex[ra->ntex]; memset(x, 0, sizeof *x);
         _snprintf(x->name, sizeof x->name, "%.6s%s", k_c3Ground[n], kind == 1 ? "TR" : kind ? "HG" : ""); x->name[8] = 0; x->w = W; x->h = H; x->gen = px; x->gpu = -1;
-        if (kind) { x->key = 1; if (n < 4) { if (kind == 1) ra->groundTree[n] = ra->ntex + 1; else ra->groundHedge[n] = ra->ntex + 1; } } else { ra->nground++; found += W > 1; }        ra->ntex++; }
+        if (kind) { x->key = 1; if (n < 16) { if (kind == 1) ra->groundTree[n] = ra->ntex + 1; else ra->groundHedge[n] = ra->ntex + 1; } } else { ra->nground++; found += W > 1; }        ra->ntex++; }
     ra->road0 = ra->ntex; ra->nroad = 0;
     {   int ns; ra->shrubTex = 0;   /* SHRUB (user, 2026-11-20: "make it a terrain please shubbery and in P3D it stays flat but in T3D it turns into that shubbery and it has 4 sides"):
                                        its blocks' sides are SHRUB_HEDGE.png if there, else REDWOOD's hedge */

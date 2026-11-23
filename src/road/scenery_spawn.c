@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+int rr_CeForkSplit(int pos, int *sx, int *ss);   /* road\course_edit.c: a Course Editor fork piece (its B offsets) */
 
 RR_DATA(int,            g_sceneryNodePool);
 RR_DATA(unsigned *,     g_sceneryGroupPool);
@@ -24,7 +25,7 @@ void __fastcall rr_RoadGroupSpawn(int *o, int self)
     int special;
     int base, secA, secB, pos, sec;
     char count, lanes;
-    int *g, *r, *slots;
+    int *g, *r, *slots, noLeft = 0, noRight = 0;
     int n;
 
     if ('\x03' < (char)cVar11)
@@ -57,6 +58,12 @@ void __fastcall rr_RoadGroupSpawn(int *o, int self)
     g[0x3d] = 0;
     g[0x3c] = 0;
     g[0x3e] = 0;
+    {   int sx_, ss_, half = *(unsigned char *)(secA + 0x36) & 3;   /* on a Course Editor fork: no pedestrians on its road's inner side - A's right, B's left: the ground
+                                                                    between the two roads, the other road (user, 2026-11-23: "pedestrians just materialised out of nowhere and i was
+                                                                    hitting invisible objects" - left out where the game makes them, not hidden in the picture) */
+        if (*(char *)(I32(secA, 0x28) + 0x1c) == 2 && rr_CeForkSplit(I32(I32(secA, 0x28), 8), &sx_, &ss_)) { noRight = half == 1; noLeft = half == 2; }
+        { static int on = -1; char e[4], b[200]; void (__stdcall *dl)(const char *); if (on < 0) on = GetEnvironmentVariableA("RR_SPAWNLOG", e, sizeof e) > 0;   /* (test switch RR_SPAWNLOG=1: each group spawn) */
+          if (on && (dl = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog")) != 0) { wsprintfA(b, "spawn piece %d secA %d half %x nh %d noL %d noR %d phase %d special %d first %d", I32(I32(secA, 0x28), 8) >> 8, I32(secA, 4) >> 8, *(unsigned char *)(secA + 0x36), *(char *)(I32(secA, 0x28) + 0x1c), noLeft, noRight, cVar11, special, isFirst); dl(b); } } }
     if (special && isFirst) {
         g[0x3f] = 0x4b;
         g[0x40] = 0;
@@ -66,26 +73,26 @@ void __fastcall rr_RoadGroupSpawn(int *o, int self)
         g[0x40] = 0xb4;
         g[0x41] = 0x30c;
     }
-    if (0 < (int)(I32(secA, 0x2c) + (I32(secA, 0x2c) >> 0x1f & 0xffU)) >> 8) {
+    if (!noRight && 0 < (int)(I32(secA, 0x2c) + (I32(secA, 0x2c) >> 0x1f & 0xffU)) >> 8) {
         r = (int *)RoadObjectCreateBetween(0, 1, 0x50, secB, count, (int)g);
         *slots = (int)r;
         if (r == 0)
             goto done;
     }
-    if (0 < (int)(I32(secB, 0x30) + (I32(secB, 0x30) >> 0x1f & 0xffU)) >> 8) {
+    if (!noLeft && 0 < (int)(I32(secB, 0x30) + (I32(secB, 0x30) >> 0x1f & 0xffU)) >> 8) {
         r = (int *)RoadObjectCreateBetween(2, 0, 0xb0, secA, count, (int)g);
         g[0x3d] = (int)r;
         if (r == 0)
             goto done;
     }
     if (!special) {
-        if ((char)cVar11 == '\x01' || (char)cVar11 == '\x02') {
+        if (!noLeft && ((char)cVar11 == '\x01' || (char)cVar11 == '\x02')) {
             r = (int *)RoadObjectCreateBetween(3, 0, 0x50, secB, lanes, (int)g);
             g[0x3e] = (int)r;
             if (r == 0)
                 goto done;
         }
-        if ((char)cVar11 == '\x01' || (char)cVar11 == '\x03') {
+        if (!noRight && ((char)cVar11 == '\x01' || (char)cVar11 == '\x03')) {
             r = (int *)RoadObjectCreateBetween(1, 1, 0xb0, secA, lanes, (int)g);
             g[0x3c] = (int)r;
         }

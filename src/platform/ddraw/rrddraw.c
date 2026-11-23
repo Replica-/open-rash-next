@@ -284,7 +284,7 @@ static void Present(Surf *s)
             int p=*g_posRoad>>8, la=RingLayout(p+m), i;
             if(prevA>0 && la>0 && la!=prevA && np<32){ int seg=p+m; char kind=la==2?'F':'J'; sprintf(path,"%s/ev%05d%c_before.bmp",g_dumpDir,seg,kind); DumpBmp(s,path); gpuDump=1; pseg[np]=seg; pkind[np]=kind; np++; LOG("shot %c at %d (view %d)",kind,seg,p); }
             if(la>0) prevA=la;
-            for(i=0;i<np;i++) if(pseg[i]>0 && p>=pseg[i]+m){ sprintf(path,"%s/ev%05d%c_after.bmp",g_dumpDir,pseg[i],pkind[i]); DumpBmp(s,path); gpuDump=1; pseg[i]=-pseg[i]; } } }
+            for(i=0;i<np;i++) if(pseg[i]>0 && p>=pseg[i]+m){ sprintf(path,"%s/ev%05d%c_after.bmp",g_dumpDir,pseg[i],pkind[i]); DumpBmp(s,path); gpuDump=1; LOG("shot %c after %d (view %d)",pkind[i],pseg[i],p); pseg[i]=-pseg[i]; } } }
     if (g_sceneThis) { g_lastSceneF=g_frame; g_lastSceneTick=GetTickCount(); }   /* end-of-race screens are static (few presents): PostThread below ticks them on the wall clock */
     if (!g_clockMode && ScriptTick(g_frame) && g_dumpDir[0]) { sprintf(path,"%s/at%06lu.bmp",g_dumpDir,g_frame); DumpBmp(s,path); gpuDump=1; }
     if (g_dumpDir[0] && g_dumpEvery>0 && g_frame % g_dumpEvery == 0){ sprintf(path,"%s\\f%06lu.bmp",g_dumpDir,g_frame); DumpBmp(s,path); }

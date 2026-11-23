@@ -15,7 +15,7 @@ RR_DATA(int *,         g_sceneTreeNode);
 RR_REPLACE_FAST(CursorIsFar, rr_CursorIsFar, 4);  int rr_IsFarCursor(const void *p);   /* road_build.c: the shadow front cursor of bigger road rings */
 int __fastcall rr_CursorIsFar(char *p) { return rr_IsFarCursor(p) || p == &(*(char *)&rec_ringCursorFar.g_ringCursorFar); }
 
-extern int rr_ceMaps; int rr_CourseEditSrc(int blk, int v);   /* road\course_edit.c */
+extern int rr_ceMaps; int rr_CourseEditSrc(int blk, int v); int rr_CeForkNodeLen(const int *node);   /* road\course_edit.c */
 /* ---- sprite scan-line copy ---- */
 /* copy every second byte (alternating sprite columns) of one image strip into the other, honouring the clip offset for mode 2 */
 RR_REPLACE_FAST(SpriteColumnsCopy, rr_SpriteColumnsCopy, 4);
@@ -109,12 +109,14 @@ unsigned char __fastcall rr_TreePrepare(int *n)
         n[5] = 0x5100;
         SpriteColumnsCopy((int)n);
         if ((unsigned char)RoadGenBuild((int)n, 1) == 0) return 0;
+        { int L = rr_CeForkNodeLen(n); if (L > n[5]) n[5] = L; }   /* (a Course Editor fork: both roads its whole length - road\course_edit.c) */
         if (rr_TreePrepare((int *)n[2]) == 0) return 0;
         return rr_TreePrepare((int *)n[3]) != 0;
     case 2:
         n[5] = 0x5100;
         SpriteColumnsCopy((int)n);
         if ((unsigned char)RoadGenBuild((int)n, -1) == 0) return 0;
+        { int L = rr_CeForkNodeLen(n); if (L > n[5]) n[5] = L; }
         return rr_TreePrepare((int *)n[4]) != 0;
     default:
         return 1;

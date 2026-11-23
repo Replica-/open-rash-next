@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "../road/course_edit.h"
 #include <mmsystem.h>
 #include <string.h>
 #include <stdbool.h>
@@ -463,28 +464,52 @@ void __fastcall rr_AiSteerBackToLane(int o)
 }
 
 /* position of the target along the lookahead; the heading diff for lane kinds 1 / 2 and the lookahead offsets - sets the rider's AI goal fields (+0x194..+0x19c) */
+/* a Course Editor fork ahead (user, 2026-11-23 "the ai seems to have problems picking which fork they want to go to, they seem to decide last minute i saw the ai
+   hard steer left in the right lane"): the goal lane is counted from the road's lane grid (+0xcc, laneR), and its 4 lanes become 2 on each road at the split -
+   a rider's lane 1 of 4 (375) became A's lane 0 (125), one in the right lanes (875) B's lane 0 (625): every one cut across just past the split (the originals' lanes
+   sit either side of the centre line, the same lane on both).  Within CE_AIFORKLEAD pieces of the fork the rider picks its road (the side of the split line it is
+   on then - A with forks off) and aims at that road's lane there: it moves over early and calmly, and on the fork the goal is the same lane */
+#define CE_AIFORKLEAD 40
+static int AiForkAheadLane(int obj, int *dist)   /* the section to count the goal lane from: the road this rider takes at an editor fork ahead (*dist pieces on); 0 = none ahead */
+{   static int init; static int (__stdcall *pick)(void); int s = I32(obj, 0x2c), i, sx, ss, blk, a;
+    if (!s || *(char *)(I32(s, 0x28) + 0x1c) == 2) return 0;
+    for (i = 1, s = I32(s, 8); i <= CE_AIFORKLEAD && s; i++, s = I32(s, 8)) if (*(char *)(I32(s, 0x28) + 0x1c) == 2) break;
+    if (!s || i > CE_AIFORKLEAD || !rr_CeForkSplit(I32(I32(s, 0x28), 8), &sx, &ss)) return 0;   /* (the piece's road position - the section's +4 counts from its course block's start) */
+    *dist = i; blk = I32(s, 0x28); a = I32(blk, 0xc);
+    if (!init) { HMODULE m = GetModuleHandleA("rrddraw.dll"); init = 1; pick = m ? (int (__stdcall *)(void))GetProcAddress(m, "RR_ForkPick") : 0; }
+    if ((pick && pick() == 1) || (I32(obj, 0x28) >> 8) < I32(a, 0xe4)) return a;
+    return I32(blk, 0x10); }
+
 RR_REPLACE_FAST(AiLookaheadGoal, rr_AiLookaheadGoal, 4);
 void __fastcall rr_AiLookaheadGoal(int obj)
 {
     int rec = I32(I32(obj, 0x2fc), 0x1d8);
     char mode = *(char *)(rec + 0x18c);
     int node = I32(I32(obj, 0x2c), 0x10);
-    int k, avg;
+    int k, avg, dist = 0, fk = AiForkAheadLane(obj, &dist), g;
+    int lanes, pass, gl[2];   /* (the goal lane on this road, and on the road it takes at a Course Editor fork ahead - eased from the one to the other over the
+                                 CE_AIFORKLEAD pieces: the rider drifts across, no snap; the bend ahead its own road's) */
+    for (pass = 0; pass < (fk ? 2 : 1); pass++) { lanes = pass ? fk : node;
     if (mode == 0) {
         k = 0;
     } else if (mode == 1) {
-        k = (((I32(node, 0x2c) + ((I32(node, 0x2c) >> 31) & 0xff)) >> 8) - 1) / 2;
+        k = (((I32(lanes, 0x2c) + ((I32(lanes, 0x2c) >> 31) & 0xff)) >> 8) - 1) / 2;
     } else if (mode == 2) {
-        unsigned u = (unsigned)(((I32(node, 0x2c) + ((I32(node, 0x2c) >> 31) & 0xff)) >> 8) - 1);
+        unsigned u = (unsigned)(((I32(lanes, 0x2c) + ((I32(lanes, 0x2c) >> 31) & 0xff)) >> 8) - 1);
         unsigned s = (int)u >> 31;
         k = (int)((u ^ s) - s);
     } else {
         k = 0;
     }
+    gl[pass] = (I32(lanes, 0xcc) + k * 0xfa) * 0x100; }
+    g = gl[0];
+    if (fk) { double t = (double)(CE_AIFORKLEAD - dist) / (CE_AIFORKLEAD - 4); if (t > 1) t = 1; if (t < 0) t = 0; g = gl[0] + (int)((gl[1] - gl[0]) * t * t * (3 - 2 * t)); }   /* (on it 4 pieces before the split) */
     I32(rec, 0x198) = I32(obj, 0x1c) + 0x3c0;
     avg = RoadAngleAverage(node, 8);
-    I32(rec, 0x194) = ((avg + ((avg >> 31) & 7)) >> 3) + (I32(node, 0xcc) + k * 0xfa) * 0x100 + I32(rec, 400);
+    I32(rec, 0x194) = ((avg + ((avg >> 31) & 7)) >> 3) + g + I32(rec, 400);
     I32(rec, 0x19c) = AiSteeringEstimate(obj);
+    { static int on = -1; char e[4], b[160]; void (__stdcall *dl)(const char *); if (on < 0) on = GetEnvironmentVariableA("RR_AIFORKLOG", e, sizeof e) > 0;
+      if (on && (dl = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog")) != 0 && (I32(obj, 0x1c) >> 8) > 90 && (I32(obj, 0x1c) >> 8) < 160) { wsprintfA(b, "aigoal %x road %d x %d mode %d fk %x goal %d", obj, I32(obj, 0x1c) >> 8, I32(obj, 0x28) >> 8, mode, fk, I32(rec, 0x194) >> 8); dl(b); } }
 }
 
 /* low byte = a.pos + a.size < b.pos - b.size (fields +0x1c, +0x178); upper 24 bits are the raw sum's, as the original left them */

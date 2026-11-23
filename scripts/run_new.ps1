@@ -8,9 +8,9 @@
 # -Demo [-Speed <percent>] = demo: every track at level 5 in turn, the bike riding by itself; Up / Down = game speed 0 (paused) .. x8 (default x3; RR_DEMO_ALL);
 #   Q = quit, terminating every other running copy of the game too (OpenRash.exe / the tests' RoadRash.exe).
 # -ShowPos = the segment tracker on for this run (RR_SHOW_POS; else Video Options > Segment tracker, default off).
-# -Mute = no sound and no music (RR_AUDIO=off, RR_JUKEBOX=off).
+# -Mute = no sound and no music (RR_AUDIO=off, RR_JUKEBOX=off).  -Trace = the race logged to analysis\headless\play_trace.log (RR_PLAYERHITS, RR_POSLOG=100-800); with -Track you ride it yourself, as the editor's Test drive (RR_TESTDRIVE=player - else a -Track race is the demo rider's), and the game closes when it ends.
 # -Build = build first (build_quick.ps1).  The game gets a clean environment: no RR_* switch of an earlier launch (the PowerShell extension reuses one session) or of a test.
-param([switch]$Wait,[string]$Cop="",[int]$Cash=0,[int]$RacePct=0,[int]$Track=0,[int]$SkipTo=0,[int]$Bike=-1,[ValidateSet("","A","B")][string]$Fork="",[switch]$NoFork,[switch]$Build,[switch]$Demo,[int]$Speed=300,[switch]$ShowPos,[switch]$Mute)
+param([switch]$Wait,[string]$Cop="",[int]$Cash=0,[int]$RacePct=0,[int]$Track=0,[int]$SkipTo=0,[int]$Bike=-1,[ValidateSet("","A","B")][string]$Fork="",[switch]$NoFork,[switch]$Build,[switch]$Demo,[int]$Speed=300,[switch]$ShowPos,[switch]$Mute,[switch]$Trace)
 $root=(Resolve-Path "$PSScriptRoot\..").Path; $a="$root\analysis"; $play="$a\build\play"; $data="$root\data"
 if($Build){ & "$PSScriptRoot\build_quick.ps1"; if(-not $?){ "build failed - not starting"; exit 1 } }
 if(-not (Test-Path "$a\build\OpenRash.exe")){ "no build: analysis\build\OpenRash.exe is missing (run the Build entry)"; exit 1 }
@@ -26,6 +26,7 @@ $e = $psi.EnvironmentVariables
 foreach($k in @($e.Keys)){ if($k -like "RR_*"){ $e.Remove($k) } }
 $e["RR_SHOT_DIR"] = "$root\screenshots"   # P = screenshot, saved here and opened in the image viewer (rrddraw.c ShotKey)
 if($ShowPos){ $e["RR_SHOW_POS"] = "1" }   # course position top left in races, whatever Video Options > Segment tracker says (rrddraw.c ShowRoadPos)
+if($Trace){ $e["RR_LOG"] = "$a\headless\play_trace.log"; $e["RR_PLAYERHITS"] = "1"; $e["RR_POSLOG"] = "100-800"; if($Track -ge 1){ $e["RR_TESTDRIVE"] = "player" } }   # the race logged for a look afterwards: every contact of the bike, and each frame on road pieces 100..800 the bike and everything near it (race\collision.c)
 if($Mute){ $e["RR_AUDIO"] = "off"; $e["RR_JUKEBOX"] = "off" }   # silent: no sound effects, no music (rrdsound.c, musicbox.inc StartSongs, jukebox.inc)
 if($Cop){ $e["RR_COP"] = $Cop }
 if($Cash -gt 0){ $e["RR_CASH"] = "$Cash" }

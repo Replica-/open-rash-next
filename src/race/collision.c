@@ -33,6 +33,42 @@ static void CarHitLog(const int *a, const int *b)
     dl(s);
 }
 
+/* test switch RR_PLAYERHITS=1: every contact of the player's bike in the shim log (both objects: road position, x, height, kind +0xc4, the other record, their section's half bits +0x36) */
+RR_DATA(int, g_playerRider);
+static void PlayerHitLog(const int *a, const int *b)
+{
+    static int on = -1; char e[4], s[240]; void (__stdcall *dl)(const char *); const int *o;
+    if (on < 0) on = GetEnvironmentVariableA("RR_PLAYERHITS", e, sizeof e) > 0;
+    if (!on || ((int)a != g_playerRider && (int)b != g_playerRider)) return;
+    if ((int)b == g_playerRider) { o = a; a = b; b = o; }
+    dl = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog");
+    if (!dl) return;
+    wsprintfA(s, "playerhit frame %d: road %d.%03d x %d h %d half %d nh %d  vs  road %d.%03d x %d h %d kind %d obj %x half %d nh %d", rec_featureAccum1.g_raceTime,
+              a[0x1c / 4] >> 8, (a[0x1c / 4] & 255) * 1000 / 256, a[0x28 / 4], a[0x20 / 4], *(unsigned char *)(a[0x2c / 4] + 0x36), *(char *)(*(int *)(a[0x2c / 4] + 0x28) + 0x1c),
+              b[0x1c / 4] >> 8, (b[0x1c / 4] & 255) * 1000 / 256, b[0x28 / 4], b[0x20 / 4], b[0xc4 / 4], (int)b, *(unsigned char *)(b[0x2c / 4] + 0x36), *(char *)(*(int *)(b[0x2c / 4] + 0x28) + 0x1c));
+    dl(s);
+}
+
+/* test switch RR_POSLOG=<from>-<to> (road pieces): each frame the player's bike is in that stretch, it and every object within 12 pieces of it in the shim log - road position,
+   lateral x, speed x (+0x10c), kind, half bits, the block's splitX / splitSlope (+0x24 / +0x28) and the section's curve (+0xb8) */
+static void PosLog(int **list)
+{
+    static int on = -1, lo, hi, all = -1; char e[32], s[320]; void (__stdcall *dl)(const char *); int *p = (int *)g_playerRider, *o, pp;
+    if (on < 0) { on = GetEnvironmentVariableA("RR_POSLOG", e, sizeof e) > 0; if (on) { char *q = e; lo = hi = 0; while (*q >= '0' && *q <= '9') lo = lo * 10 + *q++ - '0'; if (*q) q++; while (*q >= '0' && *q <= '9') hi = hi * 10 + *q++ - '0'; } }
+    if (!on || !p) return;
+    pp = p[0x1c / 4] >> 8; if (all < 0) all = GetEnvironmentVariableA("RR_POSLOGALL", e, sizeof e) > 0;   /* (RR_POSLOGALL=1: every object in the stretch, wherever the player is) */
+    if (!all && (pp < lo || pp > hi)) return;
+    if (!(dl = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog"))) return;
+    for (o = (int *)**list; *o; o = (int *)*o) {
+        int sec = o[0x2c / 4], blk; if ((unsigned)sec < 0x10000u || (unsigned)(blk = *(int *)(sec + 0x28)) < 0x10000u) continue;
+        if (all ? ((o[0x1c / 4] >> 8) < lo || (o[0x1c / 4] >> 8) > hi) : (o != p && iabs((o[0x1c / 4] >> 8) - pp) > 12)) continue;
+        wsprintfA(s, "pos frame %d %s: road %d.%03d x %d vx %d kind %d obj %x half %d sx %d ss %d curve %d off %d edge %d..%d lanes %d/%d lat50 %d hd %d lean %d push %d/%d bits %x ext %d..%d", rec_featureAccum1.g_raceTime, o == p ? "ME" : "ob",
+                  o[0x1c / 4] >> 8, (o[0x1c / 4] & 255) * 1000 / 256, o[0x28 / 4], o[0x10c / 4], o[0xc4 / 4], (int)o, *(unsigned char *)(sec + 0x36),
+                  *(int *)(blk + 0x24), *(int *)(blk + 0x28), *(int *)(sec + 0xb8), *(int *)(sec + 0xcc), *(int *)(sec + 0xe0), *(int *)(sec + 0xe4), *(int *)(sec + 0x30), *(int *)(sec + 0x2c), o[0x50 / 4], o[0x5c / 4], o[0x130 / 4], o[0x184 / 4], o[0x188 / 4], *(unsigned char *)((char *)o + 0x19c), *(int *)(sec + 0xe8), *(int *)(sec + 0xec));
+        dl(s);
+    }
+}
+
 /* collision pass over the rider list (node list headed by **list): pairs of riders whose boxes overlap are linked (+0x1a0), handed to RidersCollisionResolve and their hooks (+0x1a4) called;
  * returns g_collisionResult */
 RR_REPLACE_FAST(RidersCollisionPass, rr_RidersCollisionPass, 4);
@@ -41,6 +77,7 @@ unsigned char __fastcall rr_RidersCollisionPass(int **list)
     int frame = rec_featureAccum1.g_raceTime;
     int *a, *b;
     g_collisionResult = 0;
+    PosLog(list);
     a = (int *)**list;
     while (*a != 0) {
         if (a[0x10 / 4] == frame && ((*(unsigned char *)((char *)a + 0xc0)) & 6) == 6) {
@@ -55,7 +92,7 @@ unsigned char __fastcall rr_RidersCollisionPass(int **list)
                         ((*(unsigned char *)(b[0x2c / 4] + 0x36) & bl) & 3) != 0 &&
                         iabs(a[0x20 / 4] - b[0x20 / 4] - b[0x17c / 4] + a[0x17c / 4]) <= a[0x17c / 4] + b[0x17c / 4]) {
                         a[0x1a0 / 4] = (int)b; b[0x1a0 / 4] = (int)a;
-                        CarHitLog(a, b);
+                        CarHitLog(a, b); PlayerHitLog(a, b);
                         RidersCollisionResolve((int)a, (int)b);
                         if (a[0x1a4 / 4]) ((void (__fastcall *)(int))a[0x1a4 / 4])((int)a);
                         if (b[0x1a4 / 4]) ((void (__fastcall *)(int))b[0x1a4 / 4])((int)b);

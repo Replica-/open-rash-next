@@ -46,9 +46,9 @@ typedef struct RxAssets {
     int rockTex;                               /* the rocks' texture (world3d.inc W3RockTex; -1 = none: course3d.h C3_Rock flat colour) */
     int sign0, nsign;                          /* projecting signs (the City set): tex[sign0 .. sign0 + nsign - 1] (course3d.h C3_BladeSign) */
     int ground0, nground;                      /* extra ground pictures (ground_art.h: REDWOOD): tex[ground0 + n] = RRC_BAND | RRC_GEN | n painted on a cell */
-    int groundTree[4];                         /* each one's tree (tex index + 1; 0 none): stands on the cells painted with it (course3d.h C3_GroundTrees) */
+    int groundTree[16];                        /* (16: every ground of ground_art.h k_c3Ground - FOREST / SHRUB too) each one's tree (tex index + 1; 0 none): stands on the cells painted with it (course3d.h C3_GroundTrees) */
     int road0, nroad;                          /* the extra road surfaces (ground_art.h k_c3Road: COBBLE ...): painted as RRC_BAND | RRC_GEN | n in RrcExtra.road (course3d.h C3_Lanes) */
-    int groundHedge[4];                        /* each one's hedge (tex index + 1; 0 none): along the inner edge of a "beyond" cell painted with it (course3d.h C3_GroundHedge) */
+    int groundHedge[16];                       /* each one's hedge (tex index + 1; 0 none): along the inner edge of a "beyond" cell painted with it (course3d.h C3_GroundHedge) */
     int forestTex;                             /* FOREST's blocks: its wall of trees (FOREST_HEDGE.png, tex index + 1; 0 none - course3d.h C3_Shrub) */
     int dholeTex;                              /* DIRT HOLE's walls: a dirt cliff face (DHOLE_HEDGE.png, tex index + 1; 0 none: CLIFF's rock - course3d.h C3_HoleWall) */
     int shrubTex;                              /* SHRUB's blocks (ground_art.h): the hedge picture on their sides (tex index + 1; 0 none - course3d.h C3_Shrub) */

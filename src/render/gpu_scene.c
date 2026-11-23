@@ -94,11 +94,12 @@ static void CourseProgress(void)
 /* the frame driver locked the frame buffer for this frame: the sky panorama is in it, no world polygon yet */
 void rr_World3DFrame(void);   /* world3d_feed.c */
 int rr_World3DObjInfo(float *yaw, float *lat, unsigned *id);   /* world3d_feed.c: what the object of the last W3_OBJ lookup is (RRO_*) */
+unsigned rr_World3DObjHalf(void);   /* world3d_feed.c: its carriageway (RRQ_SPLIT | RRQ_ONB) */
 int rr_World3DObjShadow(void);   /* world3d_feed.c: ... and whether that record is a bike's shadow */
 static unsigned ObjFlags(const RrGpuQuad *g)
 {
     if (g->objDepth < 0) return 0;
-    return (rr_World3DObjShadow() ? RRQ_SHADOW : 0) | (g->objKind == RRO_PLAYER && ((*(int *)&rec_featureAccum1.g_inputBits) & 2) ? RRQ_BRAKE : 0);
+    return (rr_World3DObjShadow() ? RRQ_SHADOW : 0) | (g->objKind == RRO_PLAYER && ((*(int *)&rec_featureAccum1.g_inputBits) & 2) ? RRQ_BRAKE : 0) | rr_World3DObjHalf();
 }
 void rr_GpuSceneBegin(void)
 {

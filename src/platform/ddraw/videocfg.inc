@@ -11,7 +11,7 @@
  *   (the race world is always drawn by the GPU at the window's resolution, gpuscene.inc)
  *   (no Race 3D row: every race is True 3D - the race world as a real 3D world, world3d.inc, every split road its left road only (RR_ForkPick, race/physics.c);
  *   Pseudo 3D is gone from the game, user 2026-11-21)
- *   (races show the traffic as its sprites - upscaled with the widescreen mod - and the HD sky picture where there is one, hdsky.inc - no rows; RR_CARS3D=1 = 3D car models, RR_HDSKY=0 = no HD sky)
+ *   (races show the traffic as its sprites - upscaled with the widescreen mod - and the HD sky picture where there is one, hdsky.inc - no rows; RR_HDSKY=0 = no HD sky)
  *   FPS counter         On / Off   (gpuscene.inc; the course map is on the Game Options screen, modscfg.inc)
  *   Smoothing           Sharp pixels / Smooth (bilinear)
  *   V-Sync              Off / On

@@ -42,6 +42,8 @@ static int g_pfOn = -1; static double g_pfGpu[3]; static int g_pfGpuN;   /* (ren
 
 #define CE_MAXCURVE 51   /* the plan's sharpest turn a piece (RoadSection.curve): the original tracks' sharpest (Pacific Highway 51 = 4.4 degrees; the game takes +-90 - user, 2026-11-19
                             "the corners are too tight" ... "cap it at 4.4 please") */
+#define CE_STEEP 20      /* the plan marks a piece turning more than this (RoadSection.curve) in red - well inside CE_MAXCURVE, but the game pushes a bike out on a bend by its curve: the originals' forks
+                            mostly 8 .. 10, a tenth of their pieces past 22 (user, 2026-11-23: an alert above 20) */
 #define CE_L   (2.07 * 320.0)   /* segment length in lateral units (as True 3D: world3d.inc W3_L) */
 #define CE_RANGE 200            /* pieces built round the 3D view's piece */
 
@@ -325,7 +327,7 @@ static int OpenCourse(int track, int level)
     return 1; }
 
 /* ---------------------------------------------------------------- windows */
-enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_TEXTCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE };
+enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_TEXTCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE, ID_PLANSTART };
 static HWND g_partWin, g_blocks, g_blkHint, g_partBtn, g_gridChk, g_stopBtn; static int g_grid = 1, g_hx = -1, g_hy = -1;   /* g_grid: the blocks' grid shown (Show grid); g_hx, g_hy: the mouse over the 3D view (window points, -1 away) */   /* the Edit Part window (the fields list), the blocks (right panel) */
 static HWND g_main, g_list, g_props, g_plan, g_prof, g_view, g_statusw, g_edit, g_cbTrack, g_cbLevel, g_half2, g_gameChk, g_p3dBtn; static HFONT g_font; static int g_editRow = -1;
 static void ModeSwitch(int t3d) { SendMessageA(g_p3dBtn, BM_SETCHECK, t3d ? BST_UNCHECKED : BST_CHECKED, 0); SendMessageA(g_gameChk, BM_SETCHECK, t3d ? BST_CHECKED : BST_UNCHECKED, 0); }   /* (the P3D / T3D switch) */
@@ -501,7 +503,7 @@ static HWND g_fpRaiseChk; static int g_fpFlat;   /* (the Footpaths list's "Raise
 static int g_lvK0, g_lvK1, g_lvV0, g_lvV1, g_lvSide;   /* (Level: the vertex pressed, the one the drag is over - piece, vertex; their side) */
 static int VtxOk(int k, int side, int v); static void ClearCourse(int fresh); static int EnsureTerrain(int k, int side); static void FlattenAt(int k, int side, int cell); static int g_lcMode, g_lcHas; static double g_lcH; static void LevelCell(int k, int side, int cell);   /* (Level a stroke: 0 not yet, 1 cell by cell, 2 a vertex join; the cells' height) */
 static int g_lvlOn, *g_hVis, g_hVisN, g_hVisCap;   /* (Level: the stroke's height, once taken; the cells done this stroke) */   /* (blocks that are no picture: the original picture, buildings, the gutter's switches) */
-static int g_bCat = 2; static HWND g_blkFilter, g_blk[5], g_blkLab[5];   /* (g_blk: the lists Ground, Road, Buildings, Footpaths, Curbs - g_blocks is g_blk[0]) */   /* the blocks' category (user, 2026-11-18: "road, curbs and <make up a name here>"): 0 Road (the lanes), 1 Curbs (the road
+static int g_bCat = 2; static HWND g_blkFilter, g_blk[6], g_blkLab[6];   /* (g_blk: the lists Ground, Road, Buildings, Footpaths, Curbs, Walls - g_blocks is g_blk[0]) */   /* the blocks' category (user, 2026-11-18: "road, curbs and <make up a name here>"): 0 Road (the lanes), 1 Curbs (the road
                                                     edge: kerb face, gutter), 2 Ground (verge, P0, P1, P2, beyond - any of its blocks onto any of its cells) */
 static int g_tsOn; static void TerrBegin(void); static void TerrEnd(void);   /* (the Terrain toolbar's stroke, below) */
 static int g_tpaint;   /* the Terrain toolbar is open: clicks / drags in the 3D view paint terrain bands / the forest (TerrPaintAt, below) */
@@ -854,6 +856,17 @@ static void PaintPlan(HWND w, HDC dc, RECT rc)
     { static const COLORREF kc[7] = { RGB(150, 150, 150), RGB(190, 140, 90), RGB(190, 140, 90), RGB(220, 110, 60), RGB(110, 180, 90), RGB(120, 140, 210), RGB(255, 230, 60) };
       for (i = 0; i < 7; i++) pens[i] = CreatePen(PS_SOLID, i == 6 ? 4 : 2, kc[i]); pens[7] = CreatePen(PS_SOLID, 1, RGB(80, 80, 80)); }   /* (7: past a course being built's end) */
     last = PlanLast();
+    {   HPEN ph = CreatePen(PS_SOLID, 9, RGB(220, 40, 40)); int hb, ns = 0;   /* the steep pieces: a red band under the road (user, 2026-11-23 "by default can you just highlight all roads that
+                                                                       have too steeper angle please like an alert") - sharper than CE_STEEP, either road */
+        SelectObject(dc, ph);
+        for (hb = 0; hb < 2; hb++) for (i = 0; i < last; i++) { const C3Frame *a, *b; const RoadSection *sc = hb ? &g_c.piece[i].halfB : &g_c.piece[i].halfA;
+            if (hb && (!g_c.frameB || g_c.piece[i].layout != 2 || (g_c.bdead && g_c.bdead[i]))) continue;
+            if (sc->curve <= CE_STEEP && sc->curve >= -CE_STEEP) continue;
+            ns++; a = hb ? &g_c.frameB[i] : &g_c.frame[i]; b = hb ? &g_c.frameB[i + 1] : &g_c.frame[i + 1];
+            MoveToEx(dc, (int)PX2(&t, a->x), (int)PZ2(&t, a->z), &pt); LineTo(dc, (int)PX2(&t, b->x), (int)PZ2(&t, b->z)); }
+        DeleteObject(ph);
+        if (ns) { char m[96]; int l = sprintf(m, "%d piece%s sharper than %d a piece (red): bikes pushed hard", ns, ns == 1 ? "" : "s", CE_STEEP);
+            SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(255, 90, 90)); TextOutA(dc, 6, 4, m, l); } }
     for (i = 0; i < last; i++) { const C3Frame *a = &g_c.frame[i], *b = &g_c.frame[i + 1]; int kd = g_c.piece[i].halfA.kind;
         double x0 = PX2(&t, a->x), y0 = PZ2(&t, a->z), x1 = PX2(&t, b->x), y1 = PZ2(&t, b->z);
         if ((x0 < -50 && x1 < -50) || (x0 > t.W + 50 && x1 > t.W + 50) || (y0 < -50 && y1 < -50) || (y0 > t.H + 50 && y1 > t.H + 50)) continue;
@@ -1348,8 +1361,12 @@ static void PlanMovesApply(void)   /* Enter: the moves waiting applied, first to
 /* building a course point by point (user, 2026-11-19: "with a new course, just draw the start vertex point and whatever happens before it. i want to be able to add new
    vertex points and change them as i go along"): New track shows the road to the start only (g_pEnd); Shift+click on the plan lays the road on towards the click, a piece
    at a time (each the game's length, CE_L), each turning at most CE_MAXCURVE (4.4 degrees), and puts a point where it ends */
+static int PlanBuildEnd(void)   /* where Shift+click lays the road on from: the end the plan shows - past a fork made beyond the road's end, from its join (user, 2026-11-23:
+                                   "i cant seem to add any nodes past this point ... after the join") */
+{   int e = PlanLast(); while (e < g_c.n && g_c.piece[e].layout == 2) e++; return e; }
 static void PlanExtend(double tx, double tz)
 {   int e = g_pEnd, k, m = 0, *cv; double x, z, S, d0 = 1e30, dist = 1e30, dist0; Undo *u;
+    if (e >= 0 && e < g_c.n) e = PlanBuildEnd();
     if (e < 1 || e >= g_c.n - 4) { Status("Plan: no road left to lay on (the course's pieces are all used)"); return; }
     if (g_nmv) { Status("Plan: apply the moves waiting first (Enter), then Shift+click to lay the road on"); return; }
     if (!(cv = (int *)malloc(sizeof(int) * 3001))) return;
@@ -1495,10 +1512,36 @@ static const short k_forkDh[101] = { 0, -1, 5, 42, 92, 135, 184, 261, 365, 452, 
     199, 222, 269, 325, 378, 384, 307, 131, -69, -275, -459, -568, -607, -593, -574, -552, -519, -440, -337, -218, -99, 33, 115, 130, 109, 61, 5, -46, -96, -167, -249,
     -278, -302, -328, -346, -328, -248, -134, -57, -16, 0, 2, 0 };
 #define CE_FORKLONG 0.02   /* B's way at most this much longer than A's (a fifth of a piece on each 10) */
+#define CE_FORKOPEN 10     /* the opening (user, 2026-11-23 "with the split why 705 -> 709 there seems to be no difference and no split" / "forks dont need such a
+                              large ramp up it should be a few segments before the actual split can occur"): B turns off up to k_forkDh 10 % (its widest angle) over
+                              CE_FORKOPENN pieces whatever the fork's length, */
+#define CE_FORKOPENN 24    /* only the rest stretched to the fork.  Eased (user, 2026-11-23 "the ai ... hard steer left in the right lane": B's angle 4 degrees at once and ~49 by
+                              the 12th piece bent B at curve 25 .. 37 - the game threw everything on it to the inside): its angle eased from A's to k_forkDh 10 % over
+                              these pieces (PlanForkDh), curve ~14 at most - it still parts from the first piece */
+#define CE_FORKJOINN 24    /* the join: B's angle at k_forkDh 90 % eased to A's over these last pieces (user, 2026-11-23 "when the road joins again some the cars just dart into the right lane too quickly": the table's own last 10 % over 12 pieces turned B back 35 degrees in ~6 - curve 35, everything on B thrown aside; eased, at most ~10 as the fork's own bends - its sideways way all but the table's) */
+static double PlanForkPct(int j, int n)   /* piece j of an n piece fork: how far through k_forkDh (percent) */
+{   double p = j + 1;
+    if (p <= CE_FORKOPENN) return CE_FORKOPEN * p / CE_FORKOPENN;
+    if (p > n - CE_FORKJOINN) return 100 - CE_FORKOPEN + CE_FORKOPEN * (p - (n - CE_FORKJOINN)) / CE_FORKJOINN;   /* (the join the fork's mirror - user, 2026-11-23 "the join should be
+                                                                                                                        basically the opposite of the fork": k_forkDh's last 10 % (B in at ~30 degrees, lined up) over the
+                                                                                                                        last CE_FORKJOINN pieces (eased: PlanForkCurves) - it had been stretched over the last 10 % of the fork) */
+    return CE_FORKOPEN + (p - CE_FORKOPENN) * (100 - 2 * CE_FORKOPEN) / (n - CE_FORKOPENN - CE_FORKJOINN); }
+static int g_forkFlat; static double g_forkFlatQ = 1;   /* (Flatten B: PlanFlattenAt - the middle one sweep, its shape g_forkFlatQ) */
+static double PlanForkDh(double t)   /* B's direction off A at t % through a fork (tenths of a degree, as k_forkDh) */
+{   int a; double f, u;
+    if (t > 100 - CE_FORKOPEN) { u = (t - (100 - CE_FORKOPEN)) / CE_FORKOPEN; return k_forkDh[100 - CE_FORKOPEN] * (1 - u * u * (3 - 2 * u)); }   /* (the join: eased in - CE_FORKJOINN) */
+    if (t <= CE_FORKOPEN) { u = t / CE_FORKOPEN; return k_forkDh[CE_FORKOPEN] * u * u * (3 - 2 * u); }   /* (the turn-off: eased out - CE_FORKOPENN) */
+    if (g_forkFlat) { u = pow((t - CE_FORKOPEN) / (100 - 2 * CE_FORKOPEN), g_forkFlatQ); u = u * u * (3 - 2 * u);   /* (flattened: from the turn-off's angle to the join's in one
+                                                                   smooth sweep - user, 2026-11-23 "can you flatten b's points please": the original's wander made bends of 9 .. 13 that pushed the bike) */
+        return k_forkDh[CE_FORKOPEN] + (k_forkDh[100 - CE_FORKOPEN] - k_forkDh[CE_FORKOPEN]) * u; }
+    a = (int)t; if (a > 99) a = 99; f = t - a; return k_forkDh[a] * (1 - f) + k_forkDh[a + 1] * f; }
+static void PlanForkFlatFit(int n)   /* g_forkFlatQ for an n piece fork: B's way off A over the fork adds up to nothing (it comes back onto A at the join) */
+{   double lo = 0.05, hi = 20; int it, j;
+    for (it = 0; it < 60; it++) { double sum = 0; g_forkFlatQ = sqrt(lo * hi); for (j = 0; j < n; j++) sum += PlanForkDh(PlanForkPct(j, n)); if (sum > 0) hi = g_forkFlatQ; else lo = g_forkFlatQ; } }
 static double PlanForkCurves(int ks, int ke, double sc, int set)   /* B's curves off A as k_forkDh x sc (set: put them in); returns how much further B goes than A (units) */
 {   int n = ke - ks, i, acc = 0; double along = 0;   /* (acc: B's slope off A so far - splitSlope, curve units) */
-    for (i = ks; i < ke; i++) { RoadPiece *pc = &g_c.piece[i]; double t = (double)(i - ks + 1) * 100 / n, f, want; int a, dc, ca = pc->halfA.curve;
-        a = (int)t; if (a > 99) a = 99; f = t - a; want = sc * (k_forkDh[a] * (1 - f) + k_forkDh[a + 1] * f) * 0.1 * 3.14159265358979 / 180 * CE_L;   /* (B's slope off A at this piece's end) */
+    for (i = ks; i < ke; i++) { RoadPiece *pc = &g_c.piece[i]; double t = PlanForkPct(i - ks, n), want; int dc, ca = pc->halfA.curve;
+        want = sc * PlanForkDh(t) * 0.1 * 3.14159265358979 / 180 * CE_L;   /* (B's slope off A at this piece's end) */   /* (B's slope off A at this piece's end) */
         dc = (int)floor(want - acc + 0.5);
         if (ca + dc > CE_MAXCURVE) dc = CE_MAXCURVE - ca; if (ca + dc < -CE_MAXCURVE) dc = -CE_MAXCURVE - ca;
         acc += dc; along += CE_L * cos(acc / CE_L);
@@ -1514,6 +1557,7 @@ static double PlanForkCurves(int ks, int ke, double sc, int set)   /* B's curves
 #define CE_FORKGORE 224
 #define CE_FORKOUT 40   /* the pieces after the join given both roads' lanes (user, 2026-11-21 "This should definitely merge into 4 lanes please and then i can reduce it to 2
                            after the join is finished") */
+#define CE_FORKEASE 16  /* then the pieces easing back to the road's own lanes */
 static void PlanForkMerge(RoadPiece *pc)   /* a fork's piece: A's lanes and right shoulder as before it was divided (B's right lanes back on A) - PlanForkLanes undone */
 {   RoadSection *a = &pc->halfA; const RoadSection *b = &pc->halfB; double re = b->offset + b->laneR * 250.0 / 256;
     if (pc->layout != 2 || re <= a->offset + a->laneR * 250.0 / 256 + 1) return;
@@ -1528,6 +1572,14 @@ static void PlanForkExtB(RrcExtra *x, int nA)   /* a fork's piece: B's painting 
     CPB(band); CPB(forest); CPB(forestCode); CPB(sideKind); CPB(bld); CPB(bldCode); CPB(walk); CPB(bandSet); CPB(cell); CPB(cellSet); CPB(edge); CPB(edgeSet); CPB(gutter); CPB(road); CPB(fac); CPB(facSet); CPB(lift); CPB(holeWater);
 #undef CPB
     for (j = 0; j < 8; j++) x->lane[1][j] = j + nA < 8 ? x->lane[0][j + nA] : 0; }
+static int PlanLanesEase(int ks, int n)   /* pieces ks .. ks + n - 1 (not split): from piece ks - 1's lanes eased to their own; the pieces done */
+{   const RoadSection *m; int j, i = ks;
+    if (ks < 1 || ks >= g_c.n || g_c.piece[ks - 1].layout == 2) return 0;
+    m = &g_c.piece[ks - 1].halfA;
+    for (j = 1; j <= n && i < g_c.n && g_c.piece[i].layout != 2; j++, i++) { RoadSection *a = &g_c.piece[i].halfA; double w = 0.5 + 0.5 * cos(3.14159265358979 * j / (n + 1));
+        if (a->offset != m->offset) break;
+        a->laneL = (int)floor(a->laneL + (m->laneL - a->laneL) * w + 0.5); a->laneR = (int)floor(a->laneR + (m->laneR - a->laneR) * w + 0.5); Derive(a, 0x2c); g_c.piece[i].halfB = *a; }
+    return i - ks; }
 static int PlanForkLanes(int ks, int ke)   /* pieces ks .. ke - 1 (split, B a copy of A): their lanes divided; 0 when the road has fewer than 2 lanes */
 {   const RoadSection *s0 = &g_c.piece[ks].halfA; double le = s0->offset - s0->laneL * 250.0 / 256, re = s0->offset + s0->laneR * 250.0 / 256, S, x; int n = (int)floor((re - le) / 250 + 0.5), nA, nB, i, sl;
     if (n < 2) return 0;
@@ -1541,6 +1593,8 @@ static int PlanForkLanes(int ks, int ke)   /* pieces ks .. ke - 1 (split, B a co
                                                                      gutter between the two: the lanes' dip into it left a crack along the edge they share - the originals have none there) */
     for (i = ke; i < ke + CE_FORKOUT && i < g_c.n && g_c.piece[i].layout != 2; i++) { RoadSection *a = &g_c.piece[i].halfA;   /* (on from the join: both roads' lanes) */
         a->laneL = (int)floor((a->offset - (S - 250.0 * nA)) * 256 / 250 + 0.5); a->laneR = (int)floor((S + 250.0 * nB - a->offset) * 256 / 250 + 0.5); Derive(a, 0x2c); g_c.piece[i].halfB = *a; }
+    if (i == ke + CE_FORKOUT) PlanLanesEase(i, CE_FORKEASE);   /* (then back to the road's own lanes - user, 2026-11-22 "why isnt the 4 lanes going down to two lanes
+                                                                   naturally?": they dropped in one piece, the road's edges stepped in) */
     return 1; }
 static void PlanForkShape(int ks, int ke)   /* pieces ks .. ke - 1 a split road, B a copy of A turning off as k_forkDh - its angles scaled down until its way is at most
                                               CE_FORKLONG longer than A's (B has A's pieces, as many: the original's own B was 301 pieces beside A's 300 - k_forkDh as it is
@@ -1580,6 +1634,12 @@ static int PlanReshapeAt(int k)   /* a fork made here: B shaped again as a new f
     for (ks = k; ks > 0 && PlanNewFork(ks - 1); ks--) ; for (ke = k; ke < g_c.n && PlanNewFork(ke); ke++) ;
     u = UndoBeginWhole(); { int i; for (i = ks; i < ke; i++) PlanForkMerge(&g_c.piece[i]); } PlanForkShape(ks, ke); UndoEnd(u); g_dirty = 1; Redraw(); PropsFill(); PlanChoose(ks + (ke - ks) / 2, 1);
     Status("Plan: the fork over pieces %d..%d shaped again - B turns off at %d and back in to A at %d (Ctrl+Z: back)", ks, ke - 1, ks, ke); return 1; }
+static int PlanFlattenAt(int k)   /* a fork made here: B shaped again with its middle one gentle sweep (g_forkFlat) - one undo step */
+{   int ks, ke, r;
+    if (!PlanNewFork(k)) { Status("Plan: no fork made here"); return 0; }
+    for (ks = k; ks > 0 && PlanNewFork(ks - 1); ks--) ; for (ke = k; ke < g_c.n && PlanNewFork(ke); ke++) ;
+    g_forkFlat = 1; PlanForkFlatFit(ke - ks); r = PlanReshapeAt(k); g_forkFlat = 0;
+    if (r) Status("Plan: the fork over pieces %d..%d flattened - B turns off at %d, sweeps across in one gentle bend and back in to A at %d (Ctrl+Z: back)", ks, ke - 1, ks, ke); return r; }
 /* right-drag a point (user, 2026-11-20: "if i hold right click and drag a vertex i want you to conform the previous vertex points before it with minimal adjustments to
    make it smoothly meet the dragged vertex"): the curves of the pieces a .. k - 1 before point k changed as little as they can be (least squares) for piece k to come
    to the drop, leaving it the way it did (the road on from k keeps its shape, carried with the point); a the point before k, then further back while the bend that
@@ -1691,14 +1751,14 @@ static void PlanLockToggle(int v)   /* a right-click on point v: locked / unlock
 static void PlanPointMenu(HWND w, int v, int x, int y)   /* right-click on point v: start / each level's finish there */
 {   HMENU m = CreatePopupMenu(); POINT p = { x, y }; int i, cmd; char lb[48];
     AppendMenuA(m, MF_STRING, 100, "Start here"); AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-    {   int ks, ke; if (PlanNewFork(v)) { AppendMenuA(m, MF_STRING, 110, "Remove the fork here"); AppendMenuA(m, MF_STRING, 114, "Shape the fork again (B as a new fork's)"); }
+    {   int ks, ke; if (PlanNewFork(v)) { AppendMenuA(m, MF_STRING, 110, "Remove the fork here"); AppendMenuA(m, MF_STRING, 114, "Shape the fork again (B as a new fork's)"); AppendMenuA(m, MF_STRING, 115, "Flatten B (one gentle sweep)"); }
         else if (g_forkFrom >= 0 && v != g_forkFrom) { sprintf(lb, "Join here (the fork: pieces %d..%d)", g_forkFrom < v ? g_forkFrom : v, (g_forkFrom < v ? v : g_forkFrom) - 1); AppendMenuA(m, MF_STRING, 112, lb);
             AppendMenuA(m, MF_STRING, 113, "Cancel the fork begun"); }
         else if (PlanBlockRange(v, &ks, &ke)) AppendMenuA(m, MF_STRING, 111, "Fork from here");
         AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
     for (i = 0; i < 5; i++) { sprintf(lb, "Level %d finish here%s", i + 1, g_lvFin0[i] < 0 ? " (none on this track)" : ""); AppendMenuA(m, MF_STRING | (g_lvFin0[i] < 0 ? MF_GRAYED : 0), 101 + i, lb); }
     ClientToScreen(w, &p); cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, p.x, p.y, 0, w, NULL); DestroyMenu(m);
-    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); else if (cmd == 110) PlanUnforkAt(v); else if (cmd == 111) PlanForkFrom(v); else if (cmd == 112) PlanForkRange(g_forkFrom, v); else if (cmd == 113) { g_forkFrom = -1; PlanInv(); } else if (cmd == 114) PlanReshapeAt(v); }
+    if (cmd == 100) PlanStartAt(v); else if (cmd >= 101 && cmd <= 105) PlanFinishAt(cmd - 100, v); else if (cmd == 110) PlanUnforkAt(v); else if (cmd == 111) PlanForkFrom(v); else if (cmd == 112) PlanForkRange(g_forkFrom, v); else if (cmd == 113) { g_forkFrom = -1; PlanInv(); } else if (cmd == 114) PlanReshapeAt(v); else if (cmd == 115) PlanFlattenAt(v); }
 
 /* the plan's mouse: a press on a point chooses it (the 3D view goes there), dragging it moves it (a move waiting: Enter applies); a drag on the ground moves
    the view, a click there: none chosen */
@@ -1793,14 +1853,21 @@ static LRESULT CALLBACK PanelProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         if (m == WM_LBUTTONDOWN || m == WM_MOUSEMOVE || m == WM_LBUTTONUP || m == WM_MOUSEWHEEL || m == WM_KEYDOWN || m == WM_RBUTTONUP || m == WM_RBUTTONDOWN) { PlanMouse(w, m, wp, lp); return 0; }
         if (m == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
         if (m == WM_CLOSE && w == g_planBig) { ShowWindow(w, SW_HIDE); return 0; }
-        if (m == WM_SIZE) { InvalidateRect(w, NULL, FALSE); return 0; } }
+        if (m == WM_COMMAND && w == g_planBig && LOWORD(wp) == ID_PLANSTART) {   /* Start here (user, 2026-11-23: "a button in big plan mode to reassign the start point") */
+            if (g_pvSel < 0 || g_pvSelH) Status("Plan: click a point on the road (not on a fork's road B) first, then Start here"); else PlanStartAt(g_pvSel);
+            SetFocus(w); return 0; }
+        if (m == WM_SIZE) { if (w == g_planBig) { HWND b = GetDlgItem(w, ID_PLANSTART); if (b) SetWindowPos(b, NULL, LOWORD(lp) - 136, 26, 0, 0, SWP_NOSIZE | SWP_NOZORDER); }
+            InvalidateRect(w, NULL, FALSE); return 0; } }
     else if ((m == WM_LBUTTONDOWN || (m == WM_MOUSEMOVE && (wp & MK_LBUTTON))) && g_open) { RECT rc; int k, x = (short)LOWORD(lp); GetClientRect(w, &rc);
         k = (int)((double)(x - 10) * g_c.n / (rc.right - 20));
         SelectPiece(k, (wp & MK_SHIFT) != 0 || m == WM_MOUSEMOVE); return 0; }
     return DefWindowProcA(w, m, wp, lp); }
 static void PlanBigToggle(void)   /* F7: the plan in a big window of its own (and back) */
 {   if (!g_planBig) { RECT r; GetWindowRect(g_main, &r);
-        g_planBig = CreateWindowExA(WS_EX_TOOLWINDOW, "CEPanel", "Plan - Course Editor", WS_OVERLAPPEDWINDOW, r.left + 120, r.top + 90, 1100, 800, g_main, NULL, GetModuleHandleA(NULL), NULL); }
+        g_planBig = CreateWindowExA(WS_EX_TOOLWINDOW, "CEPanel", "Plan - Course Editor", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, r.left + 120, r.top + 90, 1100, 800, g_main, NULL, GetModuleHandleA(NULL), NULL);
+        if (g_planBig) { RECT c; HWND b; GetClientRect(g_planBig, &c);   /* (the race's start to the chosen point - as right-click > Start here) */
+            b = CreateWindowA("BUTTON", "Start here", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, c.right - 136, 26, 126, 28, g_planBig, (HMENU)ID_PLANSTART, GetModuleHandleA(NULL), NULL);
+            SendMessageA(b, WM_SETFONT, (WPARAM)g_font, 0); } }
     if (IsWindowVisible(g_planBig)) ShowWindow(g_planBig, SW_HIDE); else if (g_noFocus) { SetWindowPos(g_planBig, HWND_BOTTOM, -4000, -3000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW); } else { ShowWindow(g_planBig, SW_SHOW); SetFocus(g_planBig); } }
 
 /* ---------------------------------------------------------------- the mod's HD pictures
@@ -1927,6 +1994,13 @@ static int CellQuad(int j, int side, int c, double *u, double *h)   /* cell c of
         u[0] = ma; u[1] = ua[0] - sg * 50; u[2] = un[0] - sg * 50; u[3] = mn; h[0] = h[1] = h[2] = h[3] = 0;                                      /*  out to the road edge's strip) */
         return (u[1] - u[0]) * sg > 60 || (u[2] - u[3]) * sg > 60; }
     u[0] = ua[c]; h[0] = hA[c]; u[1] = ua[c + 1]; h[1] = hA[c + 1]; u[2] = un[c + 1]; h[2] = hN[c + 1]; u[3] = un[c]; h[3] = hN[c];
+    if (g_vc->piece[j].layout == 2 && C3_FitInner(g_vc, j, ha) == side) {   /* a fork's inner side ends half way to the other road (course3d.h C3_InnerClamp): the cells past it are
+                                                                              never drawn - none there, the one across it cut at it (user, 2026-11-23: "disable the grid cells that cant be
+                                                                              drawn on ... 700-B cant use left hand side P0,P1") */
+        double m0 = C3_FitMid(g_vc, j, ha), m1 = g_vc->piece[j + 1].layout == 2 || (g_vc->bfit && g_vc->bfit[j + 1]) ? C3_FitMid(g_vc, j + 1, ha) : m0, sg = side ? 1 : -1;
+        if ((u[0] - m0) * sg >= 0 && (u[3] - m1) * sg >= 0) return 0;
+        if ((u[1] - m0) * sg > 0) u[1] = m0; if ((u[2] - m1) * sg > 0) u[2] = m1;
+        if ((u[0] - m0) * sg > 0) u[0] = m0; if ((u[3] - m1) * sg > 0) u[3] = m1; }
     return 1; }
 static int CellRange(int *lo, int *hi)   /* the pieces the grid shows (round the camera) */
 {   int kc = (int)(g_camS >= 0 ? g_camS : g_focus), back = 2 + (int)(g_dist * cos(g_pitch) / CE_L);   /* (the camera stands g_dist back from its point) */
@@ -2077,6 +2151,24 @@ static int LanePickAt(int k, int x, int y)
             if (t && sg && t != sg) in = 0; if (t) sg = t; }
         if (in) return j; }
     return -1; }
+/* a block painted by a box of cells (user, 2026-11-22: "when i select a block if i drag over a cell it should start drawing a box and apply the block to all cells that
+   i covered with the box after the mouse click is released and apply at once" - then "instead of a drag box in 2d, can you do a drag box in 3d when i select a block and
+   then drag click on one of the cells?"): pressed on a cell and dragged to another, the box is every piece from the one to the other and every cell across from the one
+   to the other (the grid's columns: the road, curb, verge, P0 .. P3 each side) - lit while dragged, painted on letting go, one undo step (TerrBegin / TerrEnd round
+   it); let go on the cell it was pressed on: that cell, as a click */
+static int g_boxOn, g_boxK0, g_boxQ0, g_boxK1, g_boxQ1;   /* (the pressed cell and the one under the mouse: piece, column) */
+static int BoxCol(int side, int c) { int a = c == 6 ? 1 : c == 5 ? 2 : c + 3; return side ? a : -a; }   /* (across: the road 1, curb 2, verge 3, P0 .. P3 4 .. 7; - left) */
+static int BoxCell(int q, int *side) { int a = q < 0 ? -q : q; *side = q > 0; return a == 1 ? 6 : a == 2 ? 5 : a - 3; }
+static int BoxEach(int paint)   /* the box's cells: painted with the block chosen (paint), or lit; how many */
+{   const C3Frame *F = g_half && g_vc->frameB ? g_vc->frameB : g_vc->frame; int j, q, side, c, n = 0, c0 = 0, c1 = 4, k0 = g_boxK0 < g_boxK1 ? g_boxK0 : g_boxK1, k1 = g_boxK0 < g_boxK1 ? g_boxK1 : g_boxK0,
+        q0 = g_boxQ0 < g_boxQ1 ? g_boxQ0 : g_boxQ1, q1 = g_boxQ0 < g_boxQ1 ? g_boxQ1 : g_boxQ0; static const unsigned char yel[3] = { 255, 230, 60 };
+    if (g_bCat == 0) c0 = c1 = 6; else if (g_bCat == 1) c0 = c1 = 5; else if (g_bCat == 3) c0 = c1 = 0;   /* (the cells the block's category paints: PicPaintAt) */
+    for (j = k0; j <= k1 && j + 1 < g_vc->n; j++) for (q = q0; q <= q1; q++) { double u[4], h[4];
+        if (!q) continue; c = BoxCell(q, &side); if (c < c0 || c > c1 || !CellQuad(j, side, c, u, h)) continue;
+        if (g_vc->piece[j].layout == 2 && C3_FitInner(g_vc, j, g_half) == side && (side ? u[0] > C3_FitMid(g_vc, j, g_half) : u[0] < C3_FitMid(g_vc, j, g_half))) continue;   /* (as CellPickAt) */
+        if (paint) PicPaintAt(j, side + 1, c); else GridCell(F, j, u, h, yel, 1);
+        n++; }
+    return n; }
 static void Pick3D(int x, int y, int extend)   /* a click in the 3D view: choose the piece there (and the part: the road, left / right of it) - or paint it */
 {   int part, band, best;
     if (g_tpaint && g_bpaint == 4) { int cell; best = CellPickAny(x, y, &part, &cell);   /* (a block: the cell - a Road block: the lane under the mouse, Ctrl: the whole side) */
@@ -2162,15 +2254,23 @@ static void Render3D(void)
     SDL_SetTextureBlendMode(g_rt, SDL_BLENDMODE_NONE); SDL_RenderTexture(g_ren, g_rt, NULL, NULL);
     if (g_showText) {   static SDL_FRect used[1200]; int nu = 0, d; SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);  /* every piece's number on the road (small); out from the focus, a label that would cover a nearer one is left out */
         for (d = 0; d <= g_meshHi - g_meshLo + 1 && nu < 1200; d++) { int s2;
-            for (s2 = 0; s2 < (d ? 2 : 1); s2++) { int j = s2 ? kc - d : kc + d, on = j == k, sel, u; float pt[3], sx, sy, tw; char lb[24]; SDL_FRect r;
+            for (s2 = 0; s2 < (d ? 2 : 1); s2++) { int j = s2 ? kc - d : kc + d, sel, u, hb, split; float pt[3], sx, sy, tw; char lb[24]; SDL_FRect r;
                 if (j < g_meshLo || j > g_meshHi || j >= g_vc->n) continue;
-                C3_PointF(g_vc, g_vc->frame, j + 0.5, C3_RoadMid(g_vc, j + 0.5), 40, pt); if (!Project(pt, &sx, &sy) || sx < 0 || sy < 24 || sx > w || sy > h) continue;
-                sprintf(lb, "%d", j); tw = (float)strlen(lb) * 8; r.x = sx - tw / 2 - 1; r.y = sy - 5; r.w = tw + 2; r.h = 10;
-                for (u = 0; u < nu; u++) if (r.x < used[u].x + used[u].w && used[u].x < r.x + r.w && r.y < used[u].y + used[u].h && used[u].y < r.y + r.h) break;
-                if (u < nu) continue; used[nu++] = r; sel = IsSel(j);
-                SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 140); SDL_RenderFillRect(g_ren, &r);
-                if (on) SDL_SetRenderDrawColor(g_ren, 255, 120, 40, 255); else if (sel) SDL_SetRenderDrawColor(g_ren, 255, 230, 60, 255); else SDL_SetRenderDrawColor(g_ren, 255, 255, 255, 255);
-                SDL_RenderDebugText(g_ren, r.x + 1, r.y + 1, lb); } }
+                split = g_vc->piece[j].layout == 2 && g_vc->frameB && !(g_vc->bdead && g_vc->bdead[j]);   /* (a split road: each carriageway its own number, -A / -B - user, 2026-11-22
+                                                                                                         "why arent the labels appearing for the fork? they should be label -B postfix maybe and -A?") */
+                for (hb = 0; hb <= split; hb++) { const RoadPiece *p0 = &g_vc->piece[j], *p1 = j + 1 < g_vc->n && g_vc->piece[j + 1].layout == 2 ? &g_vc->piece[j + 1] : p0; int on = j == k && (!split || hb == (g_half != 0));
+                    if (hb) C3_PointF(g_vc, g_vc->frameB, j + 0.5, (p0->halfB.edgeL + p1->halfB.edgeL) * 0.5, 40, pt);   /* (a split: A's number left of the line between the two roads, B's right of
+                                                                     it - side by side, both shown where the roads still touch: user, 2026-11-22 "if i have 4 lanes i should be able to split off immediately ... A & B") */
+                    else if (split) C3_PointF(g_vc, g_vc->frame, j + 0.5, (p0->halfA.edgeR + p1->halfA.edgeR) * 0.5, 40, pt);
+                    else C3_PointF(g_vc, g_vc->frame, j + 0.5, C3_RoadMid(g_vc, j + 0.5), 40, pt);
+                    if (!Project(pt, &sx, &sy) || sx < 0 || sy < 24 || sx > w || sy > h) continue;
+                    if (split) sprintf(lb, "%d-%c", j, hb ? 'B' : 'A'); else sprintf(lb, "%d", j);
+                    tw = (float)strlen(lb) * 8; r.x = split ? (hb ? sx + 2 : sx - tw - 4) : sx - tw / 2 - 1; r.y = sy - 5; r.w = tw + 2; r.h = 10;
+                    for (u = 0; u < nu; u++) if (r.x < used[u].x + used[u].w && used[u].x < r.x + r.w && r.y < used[u].y + used[u].h && used[u].y < r.y + r.h) break;
+                    if (u < nu || nu >= 1200) continue; used[nu++] = r; sel = IsSel(j);
+                    SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 140); SDL_RenderFillRect(g_ren, &r);
+                    if (on) SDL_SetRenderDrawColor(g_ren, 255, 120, 40, 255); else if (sel) SDL_SetRenderDrawColor(g_ren, 255, 230, 60, 255); else if (hb) SDL_SetRenderDrawColor(g_ren, 150, 200, 255, 255); else SDL_SetRenderDrawColor(g_ren, 255, 255, 255, 255);
+                    SDL_RenderDebugText(g_ren, r.x + 1, r.y + 1, lb); } } }
         for (d = 0; d < 5; d++) { int j = g_lvFin[d]; float pt[3], sx, sy, tw; char lb[24]; SDL_FRect r;   /* each level's finish, over the numbers */
             if (j < 0 || j < g_meshLo || j > g_meshHi || j >= g_vc->n) continue;
             C3_PointF(g_vc, g_vc->frame, j + 0.5, C3_RoadMid(g_vc, j + 0.5), 160, pt); if (!Project(pt, &sx, &sy) || sx < 0 || sy < 24 || sx > w || sy > h) continue;
@@ -2190,6 +2290,10 @@ static void Render3D(void)
                 SDL_SetRenderDrawColor(g_ren, 255, 210, 80, 255); CM_Label(g_ren, g_vc, F, Project, k + 0.85, sd ? sc->edgeR : sc->edgeL, 0, t, -28); } }
         if (g_showMarks && g_c3Editor && g_ra.ext) FpMarks(F, kc);
         if (g_grid) BlockGrid(F, kc);
+        if ((g_showMarks || g_grid) && k + 1 < g_vc->n) { int sd; double u[4], h[4];   /* P3: the cell past P2, named as the points are (user, 2026-11-22 "anything beyond P2 can we name P3 and also give
+                                                                                         them labels and show them in the grid") - its middle on the chosen piece */
+            int pk[2] = { k, kc }, q; for (q = 0; q < (kc != k ? 2 : 1); q++) for (sd = 0; sd < 2; sd++) if (CellQuad(pk[q], sd, 4, u, h)) {   /* (and on the piece the camera is at: P0 .. P2's too) */
+                SDL_SetRenderDrawColor(g_ren, 200, 120, 255, 255); CM_Label(g_ren, g_vc, F, Project, pk[q] + 0.5, (u[0] + u[1] + u[2] + u[3]) * 0.25, (h[0] + h[1] + h[2] + h[3]) * 0.25, "P3", -5); } }
         if (g_showVtx || (g_bpaint >= 5 && g_bpaint <= 7) || g_bpaint == 10) VtxDraw(F);   /* (Show vertex points, or Raise / Lower / Level on: the vertices, grid or not) */
         if (g_tpaint) { int j, side, i; static const unsigned char pc[3][3] = { { 255, 230, 60 }, { 255, 150, 40 }, { 255, 70, 70 } };   /* (the Terrain toolbar: the bands' edges -
                                                                                                          P0 yellow, P1 orange, P2 red - along the terrain pieces near the view) */
@@ -2220,6 +2324,7 @@ static void Render3D(void)
         if (pc <= 0) sprintf(t2, "%lu s", el);
         SDL_SetRenderDrawColor(g_ren, 255, 255, 255, 255); SDL_RenderDebugText(g_ren, bx, by - 26, t1);
         SDL_RenderDebugText(g_ren, bx, by + 32, t2); busy3D = 1; }
+    if (g_boxOn && (g_boxK1 != g_boxK0 || g_boxQ1 != g_boxQ0)) { SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND); BoxEach(0); }   /* (a block's box being dragged: its cells lit) */
     SDL_RenderPresent(g_ren); }
 
 /* ---------------------------------------------------------------- main window */
@@ -2231,8 +2336,8 @@ static void Layout(void)
     MoveWindow(g_gridChk, W - pw + 4, top + 34, pw / 3 - 8, 22, TRUE); MoveWindow(g_vtxChk, W - pw + pw / 3, top + 34, pw / 3 - 4, 22, TRUE); MoveWindow(g_textChk, W - pw + 2 * pw / 3, top + 34, pw / 3 - 4, 22, TRUE);
     MoveWindow(g_stopBtn, W - pw, top + 60, pw, 28, TRUE);
     ShowWindow(g_hBtn[3], SW_HIDE); MoveWindow(g_noteBtn, W - pw, top + 92, pw, 26, TRUE);   /* (Note; Heights... gone: its toolbar always shown) */
-    {   static const int col[5] = { 3, 0, 4, 2, 1 }; int i, cw = pw / 5;   /* (shown Road, Curbs, Footpaths, Ground, Buildings - user, 2026-11-19) */
-        for (i = 0; i < 5; i++) { MoveWindow(g_blkLab[i], W - pw + col[i] * cw + 2, top + 124, cw - 4, 18, TRUE); { int y = i == 3 ? 166 : 144; MoveWindow(g_blk[i], W - pw + col[i] * cw, top + y, cw - (col[i] < 4 ? 2 : 0), H - top - sb - y - 62, TRUE); } }
+    {   static const int col[6] = { 3, 0, 4, 2, 1, 5 }; int i, cw = pw / 6;   /* (shown Road, Curbs, Footpaths, Ground, Buildings, Walls - user, 2026-11-19; Walls 2026-11-22) */
+        for (i = 0; i < 6; i++) { MoveWindow(g_blkLab[i], W - pw + col[i] * cw + 2, top + 124, cw - 4, 18, TRUE); { int y = i == 3 ? 166 : 144; MoveWindow(g_blk[i], W - pw + col[i] * cw, top + y, cw - (col[i] < 5 ? 2 : 0), H - top - sb - y - 62, TRUE); } }
         MoveWindow(g_fpRaiseChk, W - pw + col[3] * cw + 8, top + 144, cw - 10, 20, TRUE); }
     MoveWindow(g_blkHint, W - pw + 2, H - sb - 60, pw - 4, 58, TRUE);
     MoveWindow(g_view, lw + 4, top + 34, W - lw - pw - 8, H - top - 34 - sb - bh - 4, TRUE);   /* (under row 2: Clear course, New track, Big plan, Show fields) */
@@ -2488,7 +2593,7 @@ static void PaintBarCreate(void)   /* (at the start, hidden: the brush's value l
 static void PaintBarToggle(void)
 {   if (IsWindowVisible(g_paintBar)) { SendMessageA(g_paintBar, WM_CLOSE, 0, 0); return; }
     if (g_terrBar && IsWindowVisible(g_terrBar)) SendMessageA(g_terrBar, WM_CLOSE, 0, 0);   /* (one painting tool at a time) */
-    if (g_bpaint) { int i; g_bpaint = g_tpaint = 0; for (i = 0; i < 5; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
+    if (g_bpaint) { int i; g_bpaint = g_tpaint = 0; for (i = 0; i < 6; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
     ShowWindow(g_paintBar, SW_SHOWNOACTIVATE); g_paint = 1; g_palFor[0] = -1; BrushChoose(g_brushI);
     Status("Paint on: click / drag over the squares beside the road in the 3D view (the road itself is left alone).  Close the Paint toolbar to choose pieces again"); }
 /* ---------------------------------------------------------------- the Terrain toolbar (user, 2026-11-16: "a floating toolbar which i can select then paint a
@@ -2927,7 +3032,7 @@ static void VtxAdd(int k, int side, int v, int d)   /* its height + d (RrcExtra.
 static void FlattenAt(int k, int side, int cell)   /* Flatten (g_bpaint 9): ground cell `cell` of piece k's side level - its corners (its inner and outer vertex at piece k and
                                                      k + 1) at their mean height, so a building stands on it square */
 {   int va, vb, kk, v, n = 0; double sum = 0; int cnt = 0;
-    if (!g_open || !g_tsOn || k < 0 || k + 1 >= g_c.n || !g_ra.ext || k + 1 >= g_ra.next || cell < 0 || cell > 4) { if (cell == 5 || cell == 6) Status("Flatten: the ground cells (verge, P0, P1, P2, beyond)"); return; }
+    if (!g_open || !g_tsOn || k < 0 || k + 1 >= g_c.n || !g_ra.ext || k + 1 >= g_ra.next || cell < 0 || cell > 4) { if (cell == 5 || cell == 6) Status("Flatten: the ground cells (verge, P0, P1, P2, P3)"); return; }
     va = cell == 0 ? 0 : cell == 4 ? 4 : cell; vb = cell == 0 ? 1 : cell == 4 ? 4 : cell + 1;   /* (the cell's vertices: verge = curb top .. verge edge, P0 = verge edge .. P0, ...) */
     for (kk = k; kk <= k + 1; kk++) for (v = va; v <= vb; v++) if (VtxOk(kk, side, v)) { sum += VtxGet(kk, side, v); cnt++; }
     if (!cnt) return;
@@ -3157,6 +3262,59 @@ static HBITMAP ThumbNoBlend(HBITMAP src)
         d[y * PK_TS + x] = bar ? 0xffffffffu : 0xffe02424u; }
     if (n < 512) { from[n] = src; to[n] = b; n++; }
     return b; }
+/* a ground that stands up as a wall on P3 (user, 2026-11-22: "some ground textures have walls if they are placed beyond p2. can you put a symbol on those in the
+   brushes ... Forest is one of them"; course3d.h: FOREST and SHRUB their blocks, REDWOOD its hedge - GroundWalls): a dark square in the bottom right corner, a brick
+   wall in it */
+static int GroundIsWall(int i) { return i == C3_GCLIFF || i == C3_GSEACLIFF; }   /* (the Walls list's: CLIFF rises, SEA CLIFF drops into the sea - course3d.h) */
+static int GroundWalls(int i) { return i == C3_GFOREST || i == C3_GSHRUB || (i >= 0 && i < 4 && g_ra.groundHedge[i]); }
+static HBITMAP ThumbWall(HBITMAP src)
+{   static HBITMAP from[64], to[64]; static int n; BITMAPINFO bi; unsigned *d = NULL; HDC dc, sd, dd; HBITMAP b; int i, x, y, S = PK_TS / 3, x0 = PK_TS - S - 3, y0 = PK_TS - S - 3;
+    for (i = 0; i < n; i++) if (from[i] == src) return to[i];
+    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = PK_TS; bi.bmiHeader.biHeight = -PK_TS; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32;
+    dc = GetDC(NULL); b = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&d, NULL, 0); sd = CreateCompatibleDC(dc); dd = CreateCompatibleDC(dc); ReleaseDC(NULL, dc);
+    if (!b || !d) { DeleteDC(sd); DeleteDC(dd); return src; }
+    SelectObject(sd, src); SelectObject(dd, b); BitBlt(dd, 0, 0, PK_TS, PK_TS, sd, 0, 0, SRCCOPY); GdiFlush(); DeleteDC(sd); DeleteDC(dd);
+    for (y = 0; y < S; y++) for (x = 0; x < S; x++) { int in = x >= 3 && x < S - 3 && y >= 4 && y < S - 3, bh = (S - 7) / 3 > 2 ? (S - 7) / 3 : 2, row = (y - 4) / bh, bw = bh * 2,
+            mortar = (y - 4) % bh == 0 || (x - 3 + (row & 1) * bh) % bw == 0;   /* (three courses of bricks, every other one half a brick along) */
+        d[(y0 + y) * PK_TS + x0 + x] = !in ? 0xff202020u : mortar ? 0xffd8d8d8u : 0xffc0602cu; }
+    if (n < 64) { from[n] = src; to[n] = b; n++; }
+    return b; }
+/* a ground that grows sprites by itself on P0 .. P2 (user, 2026-11-22 note: "mark which ground textures have automated sprites between p0-p2 eg. tuffs or redwood
+   trees"): 1 trees (REDWOOD, FOREST, SHRUB - their tree pictures, course3d.h C3_GroundTrees), 2 grass tufts (a green ground: the game's test, world3d.inc W3IsGreen
+   on the picture's average), 3 dry scrub and rocks (dirt: course3d.h C3_TexDirt, C3_DirtRocks); 0 none.  t the picture, g its place among the extra grounds (-1 none) */
+static int GroundSprites(int t, int g)
+{   static unsigned char kind[8192]; RxTex *x; unsigned *px; double r = 0, gg = 0, b = 0; int i, n = 0, ri, gi, bi;
+    if (g >= 0 && g < 16 && g_ra.groundTree[g]) return 1;
+    if (t < 0 || t >= g_ra.ntex || t >= 8192) return 0;
+    if (kind[t]) return kind[t] - 1;
+    kind[t] = 1;
+    if (C3_TexDirt(&g_ra, t)) { kind[t] = 4; return 3; }
+    if (C3_TexMowed(&g_ra, t)) return 0;   /* (mowed grass: no tufts) */
+    x = &g_ra.tex[t];
+    if (!(px = RX_Rgba(&g_ra, x))) return 0;
+    for (i = 0; i < x->w * x->h; i += 3) if (px[i] >> 24) { r += px[i] & 255; gg += (px[i] >> 8) & 255; b += (px[i] >> 16) & 255; n++; }
+    free(px);
+    if (!n) return 0;
+    ri = (int)(r / n); gi = (int)(gg / n); bi = (int)(b / n);
+    if (gi > 40 && gi >= ri * 0.93 && gi > bi * 1.15) kind[t] = 3;   /* (as world3d.inc W3IsGreen) */
+    return kind[t] - 1; }
+static HBITMAP ThumbSprite(HBITMAP src, int kind)   /* GroundSprites' mark: a dark square in the bottom left corner - a fir (trees), green blades (tufts), tan scrub and a pebble (dirt) */
+{   static HBITMAP from[512], to[512]; static int n, ks[512]; BITMAPINFO bi; unsigned *d = NULL; HDC dc, sd, dd; HBITMAP b; int i, x, y, S = PK_TS / 3, x0 = 3, y0 = PK_TS - S - 3;
+    if (!kind) return src;
+    for (i = 0; i < n; i++) if (from[i] == src && ks[i] == kind) return to[i];
+    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = PK_TS; bi.bmiHeader.biHeight = -PK_TS; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32;
+    dc = GetDC(NULL); b = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&d, NULL, 0); sd = CreateCompatibleDC(dc); dd = CreateCompatibleDC(dc); ReleaseDC(NULL, dc);
+    if (!b || !d) { DeleteDC(sd); DeleteDC(dd); return src; }
+    SelectObject(sd, src); SelectObject(dd, b); BitBlt(dd, 0, 0, PK_TS, PK_TS, sd, 0, 0, SRCCOPY); GdiFlush(); DeleteDC(sd); DeleteDC(dd);
+    for (y = 0; y < S; y++) for (x = 0; x < S; x++) { unsigned c = 0xff202020u; double fx = (x + 0.5) / S, fy = (y + 0.5) / S;   /* (BGRA) */
+        if (kind == 1) { if (fy > 0.12 && fy < 0.78 && fabs(fx - 0.5) < (fy - 0.12) * 0.55) c = 0xff3cb450u; else if (fy >= 0.78 && fy < 0.9 && fabs(fx - 0.5) < 0.07) c = 0xff3c6496u; }   /* (a fir) */
+        else { int q; for (q = 0; q < 3; q++) { double bx = 0.25 + 0.25 * q, lean = (q - 1) * 0.18, t = (0.88 - fy) / 0.62;   /* (three blades, leaning out) */
+                if (t >= 0 && t <= 1 && fabs(fx - (bx + lean * t)) < 0.06 * (1 - t) + 0.015) c = kind == 2 ? 0xff40d060u : 0xff6eb4d2u; }
+            if (kind == 3 && (fx - 0.75) * (fx - 0.75) + (fy - 0.8) * (fy - 0.8) < 0.012) c = 0xffa0a0a0u; }   /* (a pebble) */
+        if (x < 2 || y < 2 || x >= S - 2 || y >= S - 2) c = 0xff202020u;
+        d[(y0 + y) * PK_TS + x0 + x] = c; }
+    if (n < 512) { from[n] = src; ks[n] = kind; to[n] = b; n++; }
+    return b; }
 /* a footpath picture's raised / flush mark (user, 2026-11-19: "some symbol on the texture to denote raised or not and that should be visible on the 3d part too"): a dark
    square in the bottom left corner with a step (raised, amber) or a flat bar (flush, cyan) - FpMarks draws the same in the 3D view */
 static HBITMAP ThumbFp(HBITMAP src, int raised)
@@ -3305,7 +3463,7 @@ static unsigned short *CellVal(RrcExtra *x, int hh, int side, int c, unsigned sh
     if (c == 5) { *set = &x->edgeSet[hh][side]; return &x->edge[hh][side]; }
     if (c >= 1 && c <= 3) { *set = &x->bandSet[hh][side][c - 1]; return &x->band[hh][side][c - 1]; }
     *set = &x->cellSet[hh][side][c ? 1 : 0]; return &x->cell[hh][side][c ? 1 : 0]; }
-static const char *const g_cellName[7] = { "verge", "P0", "P1", "P2", "beyond", "curb", "road" };
+static const char *const g_cellName[7] = { "verge", "P0", "P1", "P2", "P3", "curb", "road" };   /* (P3: past P2 - user, 2026-11-22 "anything beyond P2 can we name P3") */
 static void BandApply(int i);
 /* a hole's properties (user, 2026-11-19: "that height should be controllable when i right click on the hole ... show the properties too ... water height and if water is
    enabled or disabled"): RrcExtra.holeWater of the run of pieces with holes on that side round the one right-clicked - one undo step; T3D: course3d.h C3_HoleWater */
@@ -3376,7 +3534,7 @@ static void BandInfo(int k, int hh, int side, int cell, unsigned painted)
 static void BandMenu(int x, int y)   /* the right-click at frame pixel x, y (the band there, if any) */
 {   int part, band, k, hh; char t[120]; POINT p; unsigned short *v, *vs;
     k = CellPickAny(x, y, &part, &band);
-    if (k < 0 || k >= g_c.n || part < 1 || band < 0 || !g_ra.ext || k >= g_ra.next) { Status("Right-click a cell of the grid beside the road (road side, P0, P1, P2, past P2) for its pictures"); return; }
+    if (k < 0 || k >= g_c.n || part < 1 || band < 0 || !g_ra.ext || k >= g_ra.next) { Status("Right-click a cell of the grid beside the road (road side, P0, P1, P2, P3 - past P2) for its pictures"); return; }
     hh = g_half && g_c.piece[k].layout == 2;
     if (!g_bandWin) { WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.hInstance = GetModuleHandleA(NULL); wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
         wc.lpfnWndProc = BandWinProc; wc.lpszClassName = "CEBandWin"; RegisterClassA(&wc);
@@ -3476,7 +3634,7 @@ static void TerrBarCreate(void)   /* (at the start, hidden) */
 static void TerrBarToggle(void)
 {   if (IsWindowVisible(g_terrBar)) { SendMessageA(g_terrBar, WM_CLOSE, 0, 0); return; }
     if (IsWindowVisible(g_paintBar)) SendMessageA(g_paintBar, WM_CLOSE, 0, 0);   /* (one painting tool at a time) */
-    {   int i; g_bpaint = 0; for (i = 0; i < 5; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
+    {   int i; g_bpaint = 0; for (i = 0; i < 6; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
     ShowWindow(g_terrBar, SW_SHOWNOACTIVATE); g_tpaint = 1; g_tFor[0] = g_tForT[0] = -1; TerrBarFill();
     Status("Terrain on: choose a picture (or Forest), then click / drag over the terrain in the 3D view.  Close the Terrain toolbar to choose pieces again"); }
 static HIMAGELIST g_bImg; static int g_bTex[3] = { -2, -2, -2 }, g_bFill = -1;   /* (g_bTex[0]: the Buildings thumbnail's; g_bFill: the category filled for, -1 none yet) */
@@ -3490,18 +3648,21 @@ static void BlockAdd(HWND lv, HIMAGELIST il, int *n, const char *name, LPARAM v,
 static void BlocksFill(void)   /* the four lists: Ground (its "original", the course's ground pictures: PicList), Footpaths (L 3: their heights and pictures), Road / curbs (the road's "original" and surfaces,
                                   the gutter's switches, the curb faces), Buildings (the mix - its thumbnail the facade of the piece nearest the focus with one - and each
                                   facade: FacList) */
-{   static unsigned val[4096]; static int tex[4096], wh[4096]; static HIMAGELIST il[5]; int L, n, m, i, cur, ds, d, fac = -1; char lb[40];
+{   static unsigned val[4096]; static int tex[4096], wh[4096]; static HIMAGELIST il[6]; int L, n, m, i, cur, ds, d, fac = -1; char lb[40];
     if (!g_blk[0] || !g_open) return;
     if ((d = BlockDonor(g_focus, 1, 0, &ds)) >= 0) fac = RX_SideTex(&g_ra, &g_c.piece[d].halfA, d, 0, ds, 0);
     if (fac == g_bTex[0] && g_bFill == 3 && ListView_GetItemCount(g_blk[0]) > 0) return;
     g_bTex[0] = fac; g_bFill = 3;
-    for (L = 0; L < 5; L++) { HWND lv = g_blk[L]; n = 0;
+    for (L = 0; L < 6; L++) { HWND lv = g_blk[L]; n = 0;
         SendMessageA(lv, WM_SETREDRAW, FALSE, 0); ListView_DeleteAllItems(lv); if (il[L]) ImageList_Destroy(il[L]);
         il[L] = ImageList_Create(PAL_TS, PAL_TS, ILC_COLOR32, 64, 64); ListView_SetImageList(lv, il[L], LVSIL_NORMAL); ListView_SetIconSpacing(lv, 82, PAL_TS + 34);   /* (two lines of name, the column's width; little room between - user, 2026-11-19 "reduce the spacing between elements more") */
         if (L == 0) { BlockAdd(lv, il[L], &n, "original", BLK_ORIG, Thumb(-1));
-            for (i = 0; i < g_ra.nground; i++) if (!C3_GroundIsPath(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), i == C3_GBRIDGE ? ThumbNoBlend(ThumbCover(g_ra.ground0 + i)) : ThumbCover(g_ra.ground0 + i));   /* (REDWOOD ...: ground_art.h; a bridge's deck: no blend) */
+            for (i = 0; i < g_ra.nground; i++) if (!C3_GroundIsPath(i) && !GroundIsWall(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), ThumbSprite(i == C3_GBRIDGE ? ThumbNoBlend(ThumbCover(g_ra.ground0 + i)) : GroundWalls(i) ? ThumbWall(ThumbCover(g_ra.ground0 + i)) : ThumbCover(g_ra.ground0 + i), GroundSprites(g_ra.ground0 + i, i)));   /* (REDWOOD ...: ground_art.h; a bridge's deck:
+                                                                     no blend; a wall on P3: its mark) */
             m = PicList(-1, 0, 0, val, tex, wh, 4096);
-            for (i = 0; i < m; i++) if ((wh[i] & 0x7c) && !(val[i] & RRC_CAT5)) { PicName(lb, val[i], tex[i], 0); BlockAdd(lv, il[L], &n, lb, (LPARAM)val[i], C3_TexBaked(&g_ra, tex[i]) ? ThumbNoBlend(ThumbCover(tex[i])) : ThumbCover(tex[i])); } }   /* (road painted in: no blend) */
+            for (i = 0; i < m; i++) if ((wh[i] & 0x7c) && !(val[i] & RRC_CAT5)) { PicName(lb, val[i], tex[i], 0); BlockAdd(lv, il[L], &n, lb, (LPARAM)val[i], ThumbSprite(C3_TexBaked(&g_ra, tex[i]) ? ThumbNoBlend(ThumbCover(tex[i])) : ThumbCover(tex[i]), GroundSprites(tex[i], -1))); } }   /* (road painted in: no blend; a sprite mark) */
+        else if (L == 5) { for (i = 0; i < g_ra.nground; i++) if (GroundIsWall(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), ThumbCover(g_ra.ground0 + i)); }   /* (Walls: the cliffs -
+                                                                     user, 2026-11-22 "another wall vertical list ... the cliff ones like in penisula course ... one that goes into the ocean and the other one that goes off into p2") */
         else if (L == 1) { BlockAdd(lv, il[L], &n, "original", BLK_ROADORIG, Thumb(-1));   /* (one-line names: a second line took a whole row - user, 2026-11-19 "reduce the spacing") */
             m = RoadList(val, tex, 4096);
             for (i = 0; i < m; i++) BlockAdd(lv, il[L], &n, RoadName(val[i], tex[i]), (LPARAM)val[i], (val[i] & RRC_TEXG) ? ThumbRoad(tex[i]) : ThumbCover(tex[i]));   /* (the lane lines shown) */
@@ -3537,9 +3698,9 @@ static void BlockSet(int b)   /* the block chosen (0: none - clicks choose piece
         else if (b == 4 && g_bpVal >= BLK_KERB0 && g_bpVal < BLK_KERB0 + 5) Status("Footpath %s: click / drag the ground beside a footpath (a City street side, or one made with the Footpath tool) - "
                                                                           "that side's footpath %s; T3D shows it (P3D: its label on the chosen piece) - Esc to stop", g_bpVal == BLK_KERB0 ? "raised" : "flush", g_bpVal == BLK_KERB0 ? "a step up from the road" : "level with the road");
         else if (b == 4) Status("%s block: click / drag %s in the 3D view to paint it - Esc or Stop painting to stop", g_bCat == 0 ? "Road" : g_bCat == 1 ? "Curb" : g_bCat == 3 ? "Footpath" : "Ground",
-                           g_bCat == 0 ? "beside the road (its lanes on that side)" : g_bCat == 1 ? "along a side (its curb)" : g_bCat == 3 ? "the footpath beside the road (the verge; amber step: raised, cyan bar: flush)" : "the ground cells (verge, P0, P1, P2, beyond)");
+                           g_bCat == 0 ? "beside the road (its lanes on that side)" : g_bCat == 1 ? "along a side (its curb)" : g_bCat == 3 ? "the footpath beside the road (the verge; amber step: raised, cyan bar: flush)" : "the ground cells (verge, P0, P1, P2, P3)");
         else Status("%s: click / drag beside the road in the 3D view (P0 / P1 / P2 of the terrain) to paint it - Esc or Stop painting to stop", b == 1 ? "City Side" : b == 2 ? "Terrain Side" : "Footpath"); }
-    else { if (g_bpaint) { g_bpaint = 0; g_tpaint = 0; Status("Painting stopped: clicks choose pieces again"); } for (i = 0; i < 5; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
+    else { if (g_bpaint) { g_bpaint = 0; g_tpaint = 0; Status("Painting stopped: clicks choose pieces again"); } for (i = 0; i < 6; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
     if (g_stopBtn) EnableWindow(g_stopBtn, g_bpaint != 0);
     for (i = 0; i < 3; i++) if (g_hBtn[i]) SendMessageA(g_hBtn[i], BM_SETCHECK, g_bpaint == 5 + i ? BST_CHECKED : BST_UNCHECKED, 0);
     if (g_hFlat) SendMessageA(g_hFlat, BM_SETCHECK, g_bpaint == 9 ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -3548,9 +3709,9 @@ static void BlockChoose(int list, int item, int toggle)   /* item `item` of list
 {   LVITEMA it; int i; if (item < 0) { if (toggle) BlockSet(0); return; }
     memset(&it, 0, sizeof it); it.mask = LVIF_PARAM; it.iItem = item; ListView_GetItem(g_blk[list], &it);
     if (toggle && list == g_bList && it.lParam == BlockCur()) { BlockSet(0); return; }
-    for (i = 0; i < 5; i++) if (i != list) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED);
+    for (i = 0; i < 6; i++) if (i != list) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED);
     g_bList = list;
-    g_bCat = list == 1 ? 0 : list == 4 ? 1 : list == 3 ? 3 : 2;   /* (Road the lanes, Curbs the curb, Footpaths the footpath, Ground / Buildings the cells) */   /* (Road / curbs: the curb's blocks paint curbs) */
+    g_bCat = list == 1 ? 0 : list == 4 ? 1 : list == 3 ? 3 : 2;   /* (Walls: ground pictures - its cells) */   /* (Road the lanes, Curbs the curb, Footpaths the footpath, Ground / Buildings the cells) */   /* (Road / curbs: the curb's blocks paint curbs) */
     if (it.lParam == BLK_ROADORIG) it.lParam = BLK_ORIG;
     g_bpVal = (unsigned)it.lParam; BlockSet(4); }
 static void BlockDrop(void)   /* a block dragged from the list let go: over the 3D view, painted there */
@@ -3609,7 +3770,7 @@ static LRESULT CALLBACK MainProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         case ID_WDRAG: BlockSet(g_bpaint == 10 ? 0 : 10); SetFocus(g_view); return 0;
         case ID_HNOTE: NoteDraw(); return 0;
 
-        case ID_GRID: g_grid = SendMessageA(g_gridChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_grid ? "Grid on: the cells beside the road (road side, P0, P1, P2, past P2) - right-click one for its pictures" : "Grid off"); return 0;
+        case ID_GRID: g_grid = SendMessageA(g_gridChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_grid ? "Grid on: the cells beside the road (road side, P0, P1, P2, P3 - past P2) - right-click one for its pictures" : "Grid off"); return 0;
         case ID_BIGPLAN: PlanBigToggle(); return 0;
         case ID_CLEAR: if (g_open && (getenv("CE_TESTCLEAR") || MessageBoxA(g_main, "Clear the course: every side becomes flat grass - its buildings, walls, trees and lamps gone, the road kept.\n\nCtrl+Z undoes it.", "Clear course", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)) ClearCourse(0); return 0;
         case ID_NEWTRACK: if (g_open && (getenv("CE_TESTNEW") || getenv("CE_TESTPLANNEW") || MessageBoxA(g_main, "New track: the open course becomes a straight, level road on flat grass - every bend, hill, cross street, building, wall, tree and lamp gone; "
@@ -3629,7 +3790,7 @@ static LRESULT CALLBACK MainProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
     case WM_CAPTURECHANGED: g_bdrag = 0; break;
     case WM_NOTIFY: {
         NMHDR *n = (NMHDR *)lp;
-        {   int L = -1, q; for (q = 0; q < 5; q++) if (n->hwndFrom == g_blk[q]) L = q;   /* (the five lists of blocks) */
+        {   int L = -1, q; for (q = 0; q < 6; q++) if (n->hwndFrom == g_blk[q]) L = q;   /* (the six lists of blocks) */
             if (L >= 0 && n->code == NM_CLICK) { BlockChoose(L, ((NMITEMACTIVATE *)lp)->iItem, 1); return 0; }
             if (L >= 0 && n->code == LVN_BEGINDRAG) { BlockChoose(L, ((NMLISTVIEW *)lp)->iItem, 0); g_bdrag = 1; SetCapture(g_main); SetCursor(LoadCursor(NULL, IDC_CROSS)); return 0; }
             if (L >= 0 && n->code == LVN_ITEMCHANGING) { NMLISTVIEW *l = (NMLISTVIEW *)lp; return (l->uNewState & LVIS_SELECTED) && !(L == g_bList && l->lParam == BlockCur()); } }   /* (chosen by BlockChoose only) */
@@ -3758,8 +3919,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     SendMessageA(g_textChk, BM_SETCHECK, BST_CHECKED, 0);
     g_fpRaiseChk = CreateWindowA("BUTTON", "Raised", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g_main, (HMENU)ID_FPRAISE, inst, NULL); SendMessageA(g_fpRaiseChk, WM_SETFONT, (WPARAM)g_font, 0);
     SendMessageA(g_fpRaiseChk, BM_SETCHECK, BST_CHECKED, 0);
-    {   static const char *const fl[5] = { "Ground", "Road", "Buildings", "Footpaths", "Curbs" }; int i;
-        for (i = 0; i < 5; i++) { g_blkLab[i] = CreateWindowA("STATIC", fl[i], WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkLab[i], WM_SETFONT, (WPARAM)g_font, 0); } }
+    {   static const char *const fl[6] = { "Ground", "Road", "Buildings", "Footpaths", "Curbs", "Walls" }; int i;
+        for (i = 0; i < 6; i++) { g_blkLab[i] = CreateWindowA("STATIC", fl[i], WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkLab[i], WM_SETFONT, (WPARAM)g_font, 0); } }
     {   static const char *const hn[3] = { "Raise", "Lower", "Level" }; static const int st[5] = { 25, 50, 100, 200, 400 }; int i; char t[16]; WNDCLASSA wc; RECT vr;   /* (the Heights toolbar) */
         memset(&wc, 0, sizeof wc); wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpfnWndProc = HBarProc; wc.lpszClassName = "CEHeightBar"; RegisterClassA(&wc);
         g_hBar = CreateWindowExA(WS_EX_TOOLWINDOW, "CEHeightBar", "Heights", WS_POPUP | WS_CAPTION, 0, 0, 404, 66, g_main, NULL, inst, NULL);
@@ -3775,11 +3936,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         g_noteBtn = CreateWindowA("BUTTON", "Note", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, g_main, (HMENU)ID_HNOTE, inst, NULL); SendMessageA(g_noteBtn, WM_SETFONT, (WPARAM)g_font, 0);
         (void)vr; }
     g_stopBtn = CreateWindowA("BUTTON", "Stop painting  (Esc)", WS_CHILD | WS_VISIBLE | WS_DISABLED, 0, 0, 10, 10, g_main, (HMENU)ID_STOPPAINT, inst, NULL); SendMessageA(g_stopBtn, WM_SETFONT, (WPARAM)g_font, 0);
-    {   int i; for (i = 0; i < 5; i++) {   /* (one column each) */
+    {   int i; for (i = 0; i < 6; i++) {   /* (one column each) */
         g_blk[i] = CreateWindowA(WC_LISTVIEWA, "", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_ICON | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS | LVS_AUTOARRANGE, 0, 0, 10, 10, g_main, (HMENU)(INT_PTR)(ID_BLOCKS), inst, NULL);
         ListView_SetExtendedListViewStyle(g_blk[i], LVS_EX_DOUBLEBUFFER); ListView_SetIconSpacing(g_blk[i], 92, PAL_TS + 30); SendMessageA(g_blk[i], WM_SETFONT, (WPARAM)g_font, 0); }
         g_blocks = g_blk[0]; }
-    g_blkHint = CreateWindowA("STATIC", "Click a block (or drag it onto the 3D view), then click / drag the grid. Right-click a cell: its pictures. Esc: stop. Red corner: does not blend.", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkHint, WM_SETFONT, (WPARAM)g_font, 0);
+    g_blkHint = CreateWindowA("STATIC", "Click a block (or drag it onto the 3D view), then click / drag the grid. Right-click a cell: its pictures. Esc: stop. Red corner: does not blend. Bricks: stands up as a wall on P3 (past P2). Bottom left: grows by itself on P0..P2 - trees, grass tufts, dry scrub and rocks.", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkHint, WM_SETFONT, (WPARAM)g_font, 0);
     ListView_SetExtendedListViewStyle(g_props, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER); SendMessageA(g_props, WM_SETFONT, (WPARAM)g_font, 0);
     { static const char *const h[4] = { "Field", "Value", "Original", "What it is" }; static const int cw[4] = { 130, 84, 64, 600 };
       for (i = 0; i < 4; i++) { memset(&col, 0, sizeof col); col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = (char *)h[i]; col.cx = cw[i]; ListView_InsertColumn(g_props, i, &col); } }
@@ -3819,7 +3980,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             LOG("test height: tool %d pieces %d..%d side %d cell %d: %s; %s", tool, k, k + cnt - 1, side, cell, o, g_status); BlockSet(0); } }
     if (getenv("CE_TESTPLANNEW")) { SendMessageA(g_main, WM_COMMAND, ID_NEWTRACK, 0); LOG("test new: %s", g_status); }   /* (tests: the drag on a New track - CE_TESTNEW comes later) */
     if (getenv("CE_TESTPLANEXT")) { const char *gp = getenv("CE_TESTPLANEXT"); double fw, sd;   /* (tests) "<ahead> <right>;...": Shift+clicks that far from the road's end (world units, along / across its heading) */
-        while (gp && sscanf(gp, "%lf %lf", &fw, &sd) == 2) { int e = g_pEnd >= 0 ? g_pEnd : g_c.start; double h = g_c.frame[e > 0 ? e - 1 : 0].heading;
+        while (gp && sscanf(gp, "%lf %lf", &fw, &sd) == 2) { int e = g_pEnd >= 0 ? PlanBuildEnd() : g_c.start; double h = g_c.frame[e > 0 ? e - 1 : 0].heading;
             PlanExtend(g_c.frame[e].x + sin(h) * fw + cos(h) * sd, g_c.frame[e].z + cos(h) * fw - sin(h) * sd); LOG("test plan extend %.0f %.0f: end %d; %s", fw, sd, g_pEnd, g_status);
             gp = strchr(gp, ';'); if (gp) gp++; } }
     if (getenv("CE_TESTBLOCKRUNS") && g_pcur0) { int i, a = 0; for (i = 1; i <= g_n0 && a < g_n0; i++) if (i == g_n0 || g_pcur0[i][0] != g_pcur0[a][0]) { LOG("test block run: originals %d..%d (%d) word %08x", a, i - 1, i - a, g_pcur0[a][0]); a = i; } }   /* (tests: the course data's blocks?) */
@@ -3842,7 +4003,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         for (li = 0; li < 2; li++) if (g_lock[li] >= 0) LOG("test plan lock %d after: moved %.2f, heading %.6f -> %.6f", g_lock[li], hypot(g_c.frame[g_lock[li]].x - lx[li], g_c.frame[g_lock[li]].z - lz[li]), lh[li], g_c.frame[g_lock[li]].heading);
         if (g_lock[0] >= 0) { int f = g_lock[1] >= 0 && g_lock[1] < g_lock[0] ? g_lock[1] : g_lock[0]; LOG("test plan lock: before the first lock moved %.2f, piece %d (past the locks) moved %.2f", hypot(g_c.frame[f > 2 ? f - 2 : 0].x - b0x, g_c.frame[f > 2 ? f - 2 : 0].z - b0z), last, hypot(g_c.frame[last].x - e0x, g_c.frame[last].z - e0z)); } }
     if (getenv("CE_TESTPLANAT")) { int kz = 0; float z = 1; sscanf(getenv("CE_TESTPLANAT"), "%d %f", &kz, &z); if (kz >= 0 && kz < g_c.n) { g_pZoom = z; g_pFit = 0; g_pCx = g_c.frame[kz].x; g_pCz = g_c.frame[kz].z; PlanInv(); } }   /* (tests: "<piece> <zoom>": the plan there) */
-    if (getenv("CE_TESTRESHAPE")) { PlanReshapeAt(atoi(getenv("CE_TESTRESHAPE"))); LOG("test reshape: %s", g_status); if (getenv("CE_TESTSAVEAS")) LOG("test reshape: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); if (getenv("CE_TESTRESHAPEK")) { int kk = 0, hb = 0; sscanf(getenv("CE_TESTRESHAPEK"), "%d %d", &kk, &hb); PlanChoose(kk, hb); } }   /* (CE_TESTRESHAPEK "<piece> <half>": the view there after)   /* (tests: Shape the fork again at that piece) */
+    if (getenv("CE_TESTRESHAPE")) { if (getenv("CE_TESTFLATTEN")) PlanFlattenAt(atoi(getenv("CE_TESTRESHAPE"))); else PlanReshapeAt(atoi(getenv("CE_TESTRESHAPE"))); LOG("test reshape: %s", g_status); if (getenv("CE_TESTSAVEAS")) LOG("test reshape: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); if (getenv("CE_TESTRESHAPEK")) { int kk = 0, hb = 0; sscanf(getenv("CE_TESTRESHAPEK"), "%d %d", &kk, &hb); PlanChoose(kk, hb); } }   /* (CE_TESTRESHAPEK "<piece> <half>": the view there after)   /* (tests: Shape the fork again at that piece) */
     if (getenv("CE_TESTFORKLANES")) { FILE *fl = fopen(getenv("CE_TESTFORKLANES"), "w"); int ks, k;   /* (tests: every split's lanes / edges, A and B, round the fork and the join) */
         if (fl) { fprintf(fl, "split,k,lay,A:lanesL,lanesR,laneL,laneR,edgeL,edgeR,laneEdgeL,laneEdgeR,outerL,outerR,kind,arg0,arg3,half | B:same\n");
             for (ks = 1; ks < g_c.n; ks++) if (g_c.piece[ks].layout == 2 && g_c.piece[ks - 1].layout != 2) { int kj; for (kj = ks; kj < g_c.n && g_c.piece[kj].layout == 2; kj++) ;
@@ -3853,6 +4014,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                         fprintf(fl, "%s%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", hh ? " | " : ",", x->lanesL, x->lanesR, x->laneL, x->laneR, x->edgeL, x->edgeR, x->laneEdgeL, x->laneEdgeR, x->outerL, x->outerR, x->kind, x->kindArg[0], x->kindArg[3], x->half); }
                     fprintf(fl, "\n"); } }
             fclose(fl); LOG("test fork lanes: %s", getenv("CE_TESTFORKLANES")); } }
+    if (getenv("CE_TESTLANEEASE")) { int ks = 0, n = 0, d; Undo *u; sscanf(getenv("CE_TESTLANEEASE"), "%d %d", &ks, &n);   /* (tests / a course mended) "<piece> <pieces>": PlanLanesEase */
+        u = UndoBeginWhole(); d = PlanLanesEase(ks, n); UndoEnd(u); g_dirty = 1; LOG("test lane ease %d: %d pieces", ks, d);
+        if (getenv("CE_TESTSAVEAS")) LOG("test lane ease: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); }
+    if (getenv("CE_TESTLANEDUMP")) { int a = 0, b = -1, k; char fn[MAX_PATH] = ""; FILE *fl;   /* (tests) "<a> <b> <file>": pieces a..b's lanes, A and B */
+        if (sscanf(getenv("CE_TESTLANEDUMP"), "%d %d %259s", &a, &b, fn) == 3 && (fl = fopen(fn, "w")) != NULL) { fprintf(fl, "k,lay,A:off,laneL,laneR,edgeL,edgeR,sh0,sh1 | B:same\n");
+            for (k = a < 0 ? 0 : a; k <= b && k < g_c.n; k++) { const RoadPiece *pc = &g_c.piece[k]; int hh; fprintf(fl, "%d,%d", k, pc->layout);
+                for (hh = 0; hh < 2; hh++) { const RoadSection *x = hh ? &pc->halfB : &pc->halfA; fprintf(fl, "%s%d,%d,%d,%d,%d,%d,%d", hh ? " | " : ",", x->offset, x->laneL, x->laneR, x->edgeL, x->edgeR, x->shoulderW[0], x->shoulderW[1]); }
+                fprintf(fl, " | kind %d outerL %d L0..2 x %d %d %d\n", pc->halfA.kind, pc->halfA.outerL, pc->halfA.profile[0], pc->halfA.profile[4], pc->halfA.profile[8]); }   /* (and the left terrain points) */
+            fclose(fl); } }
     if (getenv("CE_TESTFORKLOG") && g_c.frameB) { FILE *fl = fopen(getenv("CE_TESTFORKLOG"), "w"); int k, ks;   /* (tests: every split's real shape, as True 3D builds it - k, A's piece beside, B's side offset off A, nearest A, heading B - A in degrees, curves, B ended) */
         if (fl) { fprintf(fl, "split,k,j,pa,off,near,dh,ca,cb,dead,len\n");
             for (ks = 0; ks < g_c.n; ) { int kj; if (g_c.piece[ks].layout != 2) { ks++; continue; }
@@ -3911,7 +4081,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         while (gp && *gp) { int cat = 2, item = 0, k = 0, side = 0, cell = 0, cnt = 1, i, lane = -1; char spec[120]; const char *sc = strchr(gp, ';');   /* (several: ";" between) */
         sprintf(spec, "%.*s", sc ? (int)(sc - gp) : 100, gp); gp = sc ? sc + 1 : NULL;   /* (tests) "<category> <block item> <piece> <side> <cell> [pieces [lane]]": that block painted there */
         if (sscanf(spec, "%d %d %d %d %d %d %d", &cat, &item, &k, &side, &cell, &cnt, &lane) >= 5) { char nm[40] = ""; LVITEMA it;
-            {   int L = cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1;   /* (category 0 Road, 1 Curbs, 2 Ground, 3 Buildings, 4 Footpaths) */
+            {   int L = cat == 5 ? 5 : cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1;   /* (category 0 Road, 1 Curbs, 2 Ground, 3 Buildings, 5 Walls, 4 Footpaths) */
                 g_bFill = -1; BlocksFill();
                 { const char *bar = strchr(spec, '|'); static char gbn[40]; if (bar) { sprintf(gbn, "%.39s", bar + 1); SetEnvironmentVariableA("CE_TESTGBNAME", gbn); _putenv_s("CE_TESTGBNAME", gbn); } }   /* (tests: "...|NAME" - this entry's block by name) */
                 if (item < 0 && getenv("CE_TESTGBNAME")) { int j, nb = ListView_GetItemCount(g_blk[L]); for (j = 0; j < nb; j++) { char b2[40] = ""; LVITEMA gi; memset(&gi, 0, sizeof gi); gi.pszText = b2; gi.cchTextMax = 40; SendMessageA(g_blk[L], LVM_GETITEMTEXTA, (WPARAM)j, (LPARAM)&gi);   /* (tests: item -1 = the block of that name) */
@@ -3928,7 +4098,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                 cell >= 0 && cell <= 6 ? *CellVal(&g_ra.ext[k], g_half && g_c.piece[k].layout == 2, side, cell, &(unsigned short *){0}) : 0, g_status);   /* (the half painted: CE_TESTHALF) */
             if (getenv("CE_TESTSAVEAS") && !gp) LOG("test gb: saved as %s: %d", getenv("CE_TESTSAVEAS"), SaveRrcTo(getenv("CE_TESTSAVEAS"))); } } }   /* (tests: the course with it, for the game) */
 
-    if (getenv("CE_TESTCAM")) sscanf(getenv("CE_TESTCAM"), "%f %f %f", &g_yaw, &g_pitch, &g_dist);   /* (tests: "yaw pitch distance" of the 3D camera) */
+    if (getenv("CE_TESTCAM")) { float s, u;   /* (tests: "yaw pitch distance [s u]" of the 3D camera - s u: the point it orbits, as a note's camera) */
+        if (sscanf(getenv("CE_TESTCAM"), "%f %f %f %f %f", &g_yaw, &g_pitch, &g_dist, &s, &u) == 5) { g_camFor = g_focus; g_camS = s; g_camU = u; } }
     if (getenv("CE_TESTGRID")) BlockSet(atoi(getenv("CE_TESTGRID")));   /* (tests: a block chosen - its grid shown) */
     if (getenv("CE_TESTHOVER")) sscanf(getenv("CE_TESTHOVER"), "%d %d", &g_hx, &g_hy);   /* (tests: the mouse there) */
     if (getenv("CE_TESTBLOCK")) { int k = 0, side = 0, band = 0, b = 0, tk, cnt = 1, i;   /* (tests) "<piece> <side 0/1> <band -1..2> <block 1/2> [pieces]": the block painted there */
@@ -3994,8 +4165,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                 else if (e.type == SDL_EVENT_WINDOW_MOUSE_LEAVE) { g_hx = g_hy = -1; busy = 1; }
                 if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) { SetFocus(g_view); g_lsel = 1; g_cx = (int)e.button.x; g_cy = (int)e.button.y;   /* left: choose the piece there (Shift: from the anchor) */
                     if (g_tpaint) TerrBegin(); else if (g_paint) PaintBegin();
-                    ViewPick((int)e.button.x, (int)e.button.y, !g_paint && !g_tpaint && (SDL_GetModState() & SDL_KMOD_SHIFT) != 0); }
-                else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) { g_lsel = 0; if (g_tpaint) TerrEnd(); else if (g_paint) PaintEnd(); }
+                    if (g_tpaint && g_bpaint == 4 && !g_vwShown) { int ww = 0, wh = 0, pt, cl, kb; float sc; SDL_GetWindowSize(g_sw, &ww, &wh); sc = ww > 0 && g_lastW > 0 ? (float)g_lastW / ww : 1.0f;   /* (a block: a box */
+                        kb = CellPickAny((int)(e.button.x * sc), (int)(e.button.y * sc), &pt, &cl);                                                                                         /*  from the cell pressed) */
+                        if (kb >= 0 && pt) { g_boxOn = 1; g_boxK0 = g_boxK1 = kb; g_boxQ0 = g_boxQ1 = BoxCol(pt - 1, cl); } }
+                    else ViewPick((int)e.button.x, (int)e.button.y, !g_paint && !g_tpaint && (SDL_GetModState() & SDL_KMOD_SHIFT) != 0); }
+                else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_LEFT) { g_lsel = 0;
+                    if (g_boxOn) { g_boxOn = 0; busy = 1;
+                        if (g_boxK1 == g_boxK0 && g_boxQ1 == g_boxQ0) ViewPick(g_cx, g_cy, 0);   /* (let go on the cell pressed: that cell) */
+                        else { int nb = BoxEach(1); Status(nb ? "Block painted on %d cells: pieces %d..%d (Ctrl+Z: undo them all)" : "No cell in the box takes this block", nb, g_boxK0 < g_boxK1 ? g_boxK0 : g_boxK1, g_boxK0 < g_boxK1 ? g_boxK1 : g_boxK0); } }
+                    if (g_tpaint) TerrEnd(); else if (g_paint) PaintEnd(); }
+                else if (e.type == SDL_EVENT_MOUSE_MOTION && g_lsel && g_boxOn) { int ww = 0, wh = 0, pt, cl, kb; float sc; SDL_GetWindowSize(g_sw, &ww, &wh); sc = ww > 0 && g_lastW > 0 ? (float)g_lastW / ww : 1.0f;
+                    kb = CellPickAt((int)(e.motion.x * sc), (int)(e.motion.y * sc), &pt, &cl); if (kb >= 0 && pt) { g_boxK1 = kb; g_boxQ1 = BoxCol(pt - 1, cl); } busy = 1; }   /* (the box out to the cell here - off the grid: as it was) */
                 else if (e.type == SDL_EVENT_MOUSE_MOTION && g_lsel && (g_paint || g_tpaint || abs((int)e.motion.x - g_cx) >= 4 || abs((int)e.motion.y - g_cy) >= 4)) { ViewPick((int)e.motion.x, (int)e.motion.y, !g_paint && !g_tpaint); busy = 1; }   /* held: the range out to here */
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT) { g_drag = 1; g_dx = g_rx = (int)e.button.x; g_dy = g_ry = (int)e.button.y; SetFocus(g_view); }   /* right-drag: look round */
                 else if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) { g_drag = 0;
@@ -4019,6 +4199,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             if (!vhDone && g_lastOk && getenv("CE_TESTVHOV") && sscanf(getenv("CE_TESTVHOV"), "%d %d %d %f", &vk, &vs, &vv, &t) >= 3) { const C3Frame *F = g_half && g_vc->frameB ? g_vc->frameB : g_vc->frame; int ww = 0, wh = 0; float sc;
                 vhDone = 1; SDL_GetWindowSize(g_sw, &ww, &wh); sc = ww > 0 && g_lastW > 0 ? (float)g_lastW / ww : 1.0f;
                 if (VtxScreen(F, vk, vs, vv, &ax, &ay) && VtxScreen(F, vk + 1, vs, vv, &bx, &by)) { g_hx = (int)((ax + (bx - ax) * t) / sc); g_hy = (int)((ay + (by - ay) * t) / sc); LOG("test vhov: %d,%d", g_hx, g_hy); Render3D(); } } }
+        {   static int boxDone; int b[6];   /* (tests: "k0 side0 cell0 k1 side1 cell1" - the block chosen (CE_TESTGB "... 0" paints none) painted by a box from the one cell to the other, held a moment lit first) */
+            if (!boxDone && g_lastOk && getenv("CE_TESTBOX") && sscanf(getenv("CE_TESTBOX"), "%d %d %d %d %d %d", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6) { static DWORD held;
+                g_boxK0 = b[0]; g_boxQ0 = BoxCol(b[1], b[2]); g_boxK1 = b[3]; g_boxQ1 = BoxCol(b[4], b[5]);
+                if (!held) { g_boxOn = 1; held = GetTickCount(); }
+                else if (GetTickCount() - held > 10000) { int nb; boxDone = 1; g_boxOn = 0; TerrBegin(); nb = BoxEach(1); TerrEnd(); LOG("test box %d %d %d .. %d %d %d: %d cells, block cat %d; %s", b[0], b[1], b[2], b[3], b[4], b[5], nb, g_bCat, g_status); } } }
         {   static int pickN; int px, py, pp = 0, pc = -1, pk; const char *gp = getenv("CE_TESTPICK");   /* (tests: "x y;x y...": frame pixels clicked - CellPickAny, logged) */
             if (gp && g_lastOk && pickN < 8) { int i; for (i = 0; i < pickN && gp; i++) { gp = strchr(gp, ';'); if (gp) gp++; }
                 if (gp && sscanf(gp, "%d %d", &px, &py) == 2) { pk = CellPickAny(px, py, &pp, &pc); LOG("test pick %d %d: piece %d side %d cell %d half %d", px, py, pk, pp, pc, g_half); }

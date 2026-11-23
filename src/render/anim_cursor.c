@@ -4,6 +4,7 @@
 #include "../rr.h"
 #include "../data/records.h"
 #include "../legacy_decls.h"
+#include "../road/course_edit.h"
 #include <mmsystem.h>
 
 RR_DATA(char,          g_roadBuilding);
@@ -489,6 +490,10 @@ void __fastcall rr_ScriptRowEmit(int *cur, int obj)
                     else                  ofs = v | 0xfffff000u;
                     base = I32(obj, 0xcc);
                     spread = (v & 0xff0000u) >> 14;
+                    {   int sx_, ss_, h = *(unsigned char *)(obj + 0x36) & 3, x = base + (int)ofs;   /* on a Course Editor fork: nothing on this road's inner side - B reads A's entries
+                                                                                     (A's left-side hitchhikers landed left of B, past A: user, 2026-11-23 "why is this hitch hiker so far to the
+                                                                                     left?"); left unused, so the other road can still place it on its outer side */
+                        if (*(char *)(I32(obj, 0x28) + 0x1c) == 2 && rr_CeForkSplit(I32(I32(obj, 0x28), 8), &sx_, &ss_) && ((h == 1 && x > I32(obj, 0xe4)) || (h == 2 && x < I32(obj, 0xe0)))) continue; }
                     rnd = Random();
                     DebrisSpawn((int)(e[0] & 0xf), (int)(e[0] >> 8 & 0xff),
                                  (int)((base + ofs) * 0x100 + spread * (unsigned)-2 + rnd % (spread * 4 + 1)),

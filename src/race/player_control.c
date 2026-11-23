@@ -35,6 +35,10 @@ unsigned __fastcall RRF_RiderLeanMode (int ctl, int v);  __pragma(comment(linker
 unsigned __fastcall RRF_CameraNudge (int ctl, int a, int b);  __pragma(comment(linker, "/alternatename:@RRF_CameraNudge@12=CameraNudge"))
 unsigned __fastcall RRF_RiderCameraAnimStep (int ctl);  __pragma(comment(linker, "/alternatename:@RRF_RiderCameraAnimStep@4=RiderCameraAnimStep"))
 
+/* 1 = the player's rider is on road B of a split (its section's half bits +0x36): the painted ground / lanes it is checked against are B's, and there is no tram
+   (they run on A's lanes only) */
+static int PlayerOnB(int ctl) { int sec = I32(ctl, 0x2c); return (unsigned)sec >= 0x10000u && (*(unsigned char *)(sec + 0x36) & 3) == 2; }
+
 /* the player's control tick: reads the input bits (g_inputBits) and drives the rider */
 RR_REPLACE_FAST(PlayerControlTick, rr_PlayerControlTick, 4);
 void __fastcall rr_PlayerControlTick(int self)
@@ -58,13 +62,13 @@ void __fastcall rr_PlayerControlTick(int self)
            car; user, 2026-11-20 "do the 3 above" - the tram made solid) */
         static int (__stdcall *tramAt)(unsigned, int); static int looked;
         if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); tramAt = sh ? (int (__stdcall *)(unsigned, int))GetProcAddress(sh, "RR_TramAt") : 0; looked = 1; }
-        if (tramAt && I32(ctl, 0x2f4) == 0 && tramAt((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+        if (tramAt && I32(ctl, 0x2f4) == 0 && !PlayerOnB(ctl) && tramAt((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
             int fly[3] = { (int)0xffffff00, 0, 0x700 }, bike[3] = { 0, 0, 0x400 }; RRF_RiderApplyHit(ctl, (int)fly, (int)bike, 2); }   /* (thrown off as RiderCollide does - not its damage: that wrecks the bike and ends the race) */
     }
     if (rec_sndPlayerEngine.g_raceState == 1) {   /* a speed bump (rr_CourseEditBump): once a crossing - a fifth of the speed off (at speed), a thump, the True 3D camera jolted (the shim's RR_Bump) */
-        int rr_CourseEditBump(unsigned pos, int lat); static unsigned last; static void (__stdcall *cob)(float); static void (__stdcall *bump)(float); static int looked;
+        int rr_CourseEditBump(unsigned pos, int lat, int half); static unsigned last; static void (__stdcall *cob)(float); static void (__stdcall *bump)(float); static int looked;
         unsigned pc = (unsigned)I32(self, 0x44) >> 8;
-        if (I32(ctl, 0x2f4) == 0 && pc != last && rr_CourseEditBump((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) { int sp = I32(ctl, 0xec); last = pc;
+        if (I32(ctl, 0x2f4) == 0 && pc != last && rr_CourseEditBump((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8, PlayerOnB(ctl))) { int sp = I32(ctl, 0xec); last = pc;
             if (sp > 3000) I32(ctl, 0xec) = sp * 4 / 5;
             if (!cob) { HMODULE m = GetModuleHandleA("rrdsound.dll"); cob = m ? (void (__stdcall *)(float))GetProcAddress(m, "RR_Cobble") : 0; }
             if (cob) cob(1.0f);
@@ -78,14 +82,14 @@ void __fastcall rr_PlayerControlTick(int self)
     }
     {   /* painted water (road\course_edit.c rr_CourseEditWater; user, 2026-11-18: "if the player lands in the water its instant game lost"): out of the race at once,
            as over the edge of Pacific Highway's coast (ai.c: the bike meter 0, race state 5) */
-        int rr_CourseEditWater(unsigned pos, int lat);
-        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditWater((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+        int rr_CourseEditWater(unsigned pos, int lat, int half);
+        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditWater((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8, PlayerOnB(ctl))) {
             RiderCollide(ctl, 0x2000000, 0x2000000, 2); I32(ctl, 0x2f0) = 0; RRF_RaceStateSet(5, 0xb4); return; }
     }
     {   /* cobbles (road\course_edit.c rr_CourseEditCobble): their rattle while the player rides on them (rrdsound.dll RR_Cobble, synthesised there; the speed
            +0xec, 0 .. ~16000 at full) */
-        int rr_CourseEditCobble(unsigned pos, int lat); static void (__stdcall *cob)(float);
-        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditCobble((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) {
+        int rr_CourseEditCobble(unsigned pos, int lat, int half); static void (__stdcall *cob)(float);
+        if (I32(ctl, 0x2f4) == 0 && rr_CourseEditCobble((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8, PlayerOnB(ctl))) {
             if (!cob) { HMODULE m = GetModuleHandleA("rrdsound.dll"); cob = m ? (void (__stdcall *)(float))GetProcAddress(m, "RR_Cobble") : 0; }
             if (cob) cob((float)I32(ctl, 0xec) / 16000.0f); }
     }

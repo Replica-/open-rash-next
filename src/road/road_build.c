@@ -243,7 +243,9 @@ unsigned __fastcall rr_RoadGenStep(unsigned *param_1, int param_2)
       uVar6 = CursorBankMove((int)(param_1 + 10),uVar7 + param_2);
       return 1;
     }
-    *(unsigned char *)((int)param_1 + 9) = 1;
+    if (!(param_1[7] == 2 && param_1[4] && rr_CeForkNodeLen((const int *)param_1[4])))   /* (into the next course block: the split dropped to the followed road (BufferObjectRestore) -
+                                                                                              a Course Editor fork runs over several blocks: on with both roads, road\course_edit.c) */
+      *(unsigned char *)((int)param_1 + 9) = 1;
   }
   if (param_1[7] == 2) {
     CursorBankMove((int)(param_1 + param_1[1] * -0x7d + 0x87),param_2);
@@ -846,6 +848,7 @@ void __fastcall rr_RoadBlockBuild(unsigned key, int d)
     } else {
         b[10] = I32(d, 0x14);
         b[9] = I32(d, 0x18);
+        { int sx, ss; if (rr_CeForkSplit(b[2], &sx, &ss)) { b[9] = sx; b[10] = ss; } }   /* (a Course Editor fork: B's offsets as the editor has them - road\course_edit.c) */
         *(char *)((char *)b + 0x1d) = *(char *)(d + 4);
         t = I32(d, 0xc);
         if (t < -0x7f)

@@ -40,10 +40,11 @@ typedef struct RrGpuQuad {
 } RrGpuQuad;
 #define RRQ_SHADOW 1                        /* a bike's shadow pass (rider_sprites.c rr_PlayerSpriteDraw): the 3D world casts its own shadow instead */
 #define RRQ_BRAKE  2                        /* RRO_PLAYER: the brake is held (g_inputBits & 2) - its brake light */
+#define RRQ_ONB    4                        /* the object is on carriageway B of a split road (its section's half: world3d_feed.c rr_World3DObjHalf) */
+#define RRQ_SPLIT  8                        /* the object is on a split road (A or B: RRQ_ONB) - the shim places one on the other carriageway of a Course Editor fork
+                                               on that carriageway's own path (world3d.inc W3MapObj) */
 
-/* object kinds (RrGpuQuad.objKind).  Traffic models (Video Options > Traffic = 3D models, GPU races with the 3D world): the game still runs every
- * car's draw hook exactly as before (game state untouched); the shim draws a 3D car (src\platform\world3d\car3d.h) in place of the car's sprite
- * polygons - placed and sized from them (their foot on the road, their screen size) and painted in the sprite's own body colour. */
+/* object kinds (RrGpuQuad.objKind): the true-3D world places each object's pictures on the 3D road (world3d.inc W3MapObj) and gives riders their lights */
 #define RRO_NONE 0
 #define RRO_CAR  1                          /* traffic car: draw hook rr_ShadowMarkerDraw (src\render\rider_sprites.c); record +0x44 road position,
                                                +0x50 lateral (24.8), +0x48 height (24.8), +0x68 yaw (0x1000000 = a turn; the sprite angle, rr_CameraYawRate) */

@@ -81,6 +81,7 @@ static MMRESULT WINAPI HkMsOpen(LPHMIDISTRM h, LPUINT dev, DWORD n, DWORD_PTR cb
 static MMRESULT WINAPI HkMsRestart(HMIDISTRM h)
 {   if (g_sgActive && h == g_sgStrm) { midiStreamPause(h); g_sgStrmPaused = 1; return MMSYSERR_NOERROR; }   /* (songs on: the game's music stays paused) */
     return g_rMsRestart(h); }
+static MMRESULT WINAPI HkMsSilent(HMIDISTRM h) { (void)h; return MMSYSERR_NOERROR; }   /* (silent runs: the stream stays paused, the game is told it plays) */
 static MMRESULT WINAPI HkMsClose(HMIDISTRM h) { if (h == g_sgStrm) { g_sgStrm = NULL; g_sgStrmPaused = 0; } return g_rMsClose(h); }
 static void SgGameMusic(int on)   /* from the song thread: pause / resume the game's MIDI stream */
 {   HMIDISTRM h = g_sgStrm; if (!h) return;
@@ -140,9 +141,10 @@ static DWORD WINAPI SgThread(LPVOID p)
     }
     return 0; }
 static void StartSongs(void)
-{   static int started; const char *a = getenv("RR_AUDIO");
+{   static int started; const char *a = getenv("RR_AUDIO"), *hl = getenv("RR_HEADLESS");
     if (started) return; started = 1;
-    if (a && !_stricmp(a, "off")) return;   /* (silent test runs) */
+    if ((a && !_stricmp(a, "off")) || (hl && (*hl == '1' || *hl == '2') && !(a && !_stricmp(a, "on")))) {   /* silent test runs (as the dsound shim: rrdsound.c g_nodev): */
+        HookImportByName("winmm.dll", "midiStreamRestart", (void *)HkMsSilent, (void **)&g_rMsRestart); return; }   /* the game's MIDI music never starts */
     HookImportByName("winmm.dll", "midiStreamOpen", (void *)HkMsOpen, (void **)&g_rMsOpen);
     HookImportByName("winmm.dll", "midiStreamRestart", (void *)HkMsRestart, (void **)&g_rMsRestart);
     HookImportByName("winmm.dll", "midiStreamClose", (void *)HkMsClose, (void **)&g_rMsClose);

@@ -103,4 +103,7 @@ static void RrcExtraWiden(RrcExtra *x, int n, unsigned size)   /* n extras read 
 static unsigned RrcHashMore(unsigned h, const void *p, unsigned n) { const unsigned char *b = (const unsigned char *)p; while (n--) h = (h ^ *b++) * 16777619u; return h; }
 static unsigned RrcHash(const void *p, unsigned n) { return RrcHashMore(2166136261u, p, n); }   /* (version 2: over the records, then on over the extras) */
 
+int rr_CeForkNodeLen(const int *node);
+int rr_CeForkSplit(int pos, int *sx, int *ss);   /* (the game: a Course Editor fork piece's B offsets - splitX / splitSlope - from the edited curves) */   /* (the game: a Course Editor fork's open / close node - both roads all its length; road\course_edit.c) */
+
 #endif

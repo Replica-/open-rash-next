@@ -5,6 +5,7 @@
 #include "../data/records.h"
 #include "../road/road_ring.h"
 #include "../legacy_decls.h"
+#include "../road/course_edit.h"
 
 RR_DATA(int,      g_playerRider);
 RR_DATA(int,      g_startCountdown);
@@ -43,7 +44,14 @@ void __stdcall rr_CameraFollow(void)
     int *sec = *(int **)(*ownerp + 0x2c);
     int mid = (sec[0x38] + sec[0x39]) / 2;
     int off, adj, a, b;
-    if (*(char *)(sec[10] + 0x1c) == 2) {
+    if (rr_CeForkSplit(I32(sec[10], 8), &off, &adj)) {   /* a Course Editor fork (user, 2026-11-23 "it was the camera that jolted" near 518 / 540): its course blocks each open / close
+                                                       the split, so the blend below swung the camera on B to A's lanes and back at every block change (~117 units); here the blend is
+                                                       to the single road's middle where the fork ends - its join ahead, its turn-off behind - over the same 16 pieces (the join had jumped ~60) */
+        int pos = I32(sec[10], 8), d, t = 0;
+        for (d = 1; d < 0x10 && !t; d++) { if (!rr_CeForkSplit(pos + d * 0x100, &off, &adj)) t = pos + d * 0x100; else if (!rr_CeForkSplit(pos - d * 0x100, &off, &adj)) t = pos - d * 0x100; }
+        if (t) { int row = I32((int)RR_RING(t), 0xc); d--;
+            row = (I32(row, 0xe0) + I32(row, 0xe4)) / 2; a = (mid - row) * d; mid = row + ((a + ((a >> 31) & 0xf)) >> 4); }
+    } else if (*(char *)(sec[10] + 0x1c) == 2) {
         switch (I32(sec[10], 0x2c)) {
         case 2:
         case 5:

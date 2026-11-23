@@ -65,3 +65,4 @@ RR_TramAt=_RR_TramAt@8
 RR_Bump=_RR_Bump@4
 RR_TramAhead=_RR_TramAhead@16
 RR_SetForks=_RR_SetForks@4
+RR_SetForkPieces=_RR_SetForkPieces@8
