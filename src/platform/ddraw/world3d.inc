@@ -1516,7 +1516,7 @@ static int W3Signals(R3Vert *v, int cap, double vp)   /* this frame's lit lamps 
     if (!g_w3c.lp || g_w3c.obN < g_w3c.n) return 0;
     if (k0 < 0) k0 = 0; if (k1 > g_w3c.n) k1 = g_w3c.n;
     for (k = k0; k < k1; k++) for (sd = 0; sd < 2; sd++) { const float *e = g_w3c.lp[k][sd]; int j, st, q, i; float pt[4][3]; double y, p; unsigned col;
-        if (e[0] == 0 || n + 12 > cap || (j = W3SigFor(k, e[0] > 0 ? 1 : -1)) < 0) continue;
+        if ((e[0] != 1 && e[0] != -1) || n + 12 > cap || (j = W3SigFor(k, e[0] > 0 ? 1 : -1)) < 0) continue;
         st = W3SigState(j, g_w3cam.raceTime); y = e[3] + 86 - (st == 0 ? 0 : st == 1 ? 1 : 2) * 34; p = e[1] - e[0] * 0.8 / g_w3c.L;   /* (a hair in front of the dim lamp) */
         col = st == 0 ? 0xff2828ffu : st == 1 ? 0xff1ab4ffu : 0xff58ff50u;   /* (ABGR: red, amber, green - bright) */
         C3_PointF(&g_w3c, g_w3c.frame, p, e[2] - 11, y - 11, pt[0]); C3_PointF(&g_w3c, g_w3c.frame, p, e[2] + 11, y - 11, pt[1]);
@@ -1530,14 +1530,26 @@ __declspec(dllexport) int __stdcall RR_SignalAhead(unsigned pos, int lat, int di
     if (!g_w3c.lp || g_w3c.obN < g_w3c.n) return 0;
     if (g_w3nj < 0 || g_w3jExt != g_w3a.ext || g_w3jN != g_w3c.n) W3SigScan();
     for (j = 0; j < g_w3nj; j++) { int k, has = 0, st; double d;
-        if (dir > 0) { d = g_w3jk[j][0] - kp; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][0] - 8; k < g_w3jk[j][0]; k++) if (k >= 0 && (g_w3c.lp[k][0][0] > 0 || g_w3c.lp[k][1][0] > 0)) has = 1; }
-        else { d = kp - g_w3jk[j][1]; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][1]; k < g_w3jk[j][1] + 8 && k < g_w3c.n; k++) if (g_w3c.lp[k][0][0] < 0 || g_w3c.lp[k][1][0] < 0) has = 1; }
+        if (dir > 0) { d = g_w3jk[j][0] - kp; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][0] - 8; k < g_w3jk[j][0]; k++) if (k >= 0 && (g_w3c.lp[k][0][0] == 1 || g_w3c.lp[k][1][0] == 1)) has = 1; }
+        else { d = kp - g_w3jk[j][1]; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][1]; k < g_w3jk[j][1] + 8 && k < g_w3c.n; k++) if (g_w3c.lp[k][0][0] == -1 || g_w3c.lp[k][1][0] == -1) has = 1; }
         if (!has) continue;
         st = W3SigState(j, t);
         if (st == 2 || (st == 1 && d < 1.5)) continue;   /* (green; amber with the line too near to stop: on through) */
         *stop = dir > 0 ? g_w3jk[j][0] * 256 - 0x50 : g_w3jk[j][1] * 256 + 0x50;
         { static int lg = -1, m; if (lg < 0) lg = getenv("RR_SIGLOG") != NULL; if (lg && m++ < 60) LOG("signal: a car at %.2f going %+d held at junction %d (%s), its line %.2f", kp, dir, g_w3jk[j][0], st ? "amber" : "red", *stop / 256.0); }   /* (test switch RR_SIGLOG=1) */
         return 1; }
+    return 0; }
+/* stop signs (the Junction collection's STOP SIGN - course3d.h C3_JunctionPost records them, lp = +-2): RR_StopAhead(pos, dir, &line) = 1 when a car at pos going dir has a
+   stop sign's junction ahead within 7 pieces - *line its stop line (24.8); physics.c holds the car there a moment, then lets it on */
+__declspec(dllexport) int __stdcall RR_StopAhead(unsigned pos, int dir, int *line)
+{   int j; double kp = pos / 256.0;
+    if (!g_w3c.lp || g_w3c.obN < g_w3c.n) return 0;
+    if (g_w3nj < 0 || g_w3jExt != g_w3a.ext || g_w3jN != g_w3c.n) W3SigScan();
+    for (j = 0; j < g_w3nj; j++) { int k, has = 0; double d;
+        if (dir > 0) { d = g_w3jk[j][0] - kp; if (d <= -0.3 || d > 7) continue; for (k = g_w3jk[j][0] - 8; k < g_w3jk[j][0]; k++) if (k >= 0 && (g_w3c.lp[k][0][0] == 2 || g_w3c.lp[k][1][0] == 2)) has = 1; }
+        else { d = kp - g_w3jk[j][1]; if (d <= -0.3 || d > 7) continue; for (k = g_w3jk[j][1]; k < g_w3jk[j][1] + 8 && k < g_w3c.n; k++) if (g_w3c.lp[k][0][0] == -2 || g_w3c.lp[k][1][0] == -2) has = 1; }
+        if (!has) continue;
+        *line = dir > 0 ? g_w3jk[j][0] * 256 - 0x50 : g_w3jk[j][1] * 256 + 0x50; return 1; }
     return 0; }
 /* solid things (user, 2026-11-24 "if i ride into obstacles defined in the redwood sprites i should get smacked off the bike as per like a normal obstacle"): REDWOOD's
    trunks, boulders and stumps, a RAIL FENCE's posts and rails (course3d.h C3_Obst, carriageway A) - RR_ObstacleAt: 1 = the bike at pos / lat is in one */

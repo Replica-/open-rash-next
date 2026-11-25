@@ -557,6 +557,19 @@ void __fastcall rr_RiderApplyImpulse(int o)
                                                           (user, 2026-11-24 "make cars just automatically obey traffic lights") */
         static int (__stdcall *sig)(unsigned, int, int, int, int *); static int looked2; int stop = 0, dir = (int)step > 0 ? 1 : -1;
         if (!looked2) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); sig = sh ? (int (__stdcall *)(unsigned, int, int, int, int *))GetProcAddress(sh, "RR_SignalAhead") : 0; looked2 = 1; }
+        {   /* a stop sign (world3d.inc RR_StopAhead): the car stops at its line, waits ~40 race ticks, then goes on (the line remembered, so it does not stop there again) */
+            static int (__stdcall *sa)(unsigned, int, int *); static int lk; static struct { int car, line, t0; } w[32]; int line = 0, i, t = (int)rec_featureAccum1.g_raceTime;
+            if (!lk) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); sa = sh ? (int (__stdcall *)(unsigned, int, int *))GetProcAddress(sh, "RR_StopAhead") : 0; lk = 1; }
+            if (sa && sa((unsigned)*(int *)(o + 0x1c), dir, &line) > 0) {
+                int room = (line - dir * (*(int *)(o + 0x178) + 0x20) - *(int *)(o + 0x1c)) * dir, held = 1;
+                for (i = 0; i < 32 && !(w[i].car == o && w[i].line == line); i++) ;
+                if (i < 32 && w[i].t0 >= 0 && t - w[i].t0 > 40) held = 0;   /* (it has waited: on) */
+                if (held && room < (int)step * dir) { int ns = room > 0 ? room * dir : 0;
+                    if (room <= 0x10 && i == 32) { for (i = 0; i < 32 && w[i].car && t - w[i].t0 < 2000; i++) ; if (i == 32) i = (t & 31); w[i].car = o; w[i].line = line; w[i].t0 = t;
+                        {   static int lg = -1; if (lg < 0) lg = GetEnvironmentVariableA("RR_SIGLOG", 0, 0) > 0;   /* (test switch RR_SIGLOG=1) */
+                            if (lg) { void (__stdcall *dl)(const char *) = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog"); char m[96];
+                                if (dl) { wsprintfA(m, "stop sign: car %08x waits at %d.%03d (going %d), tick %d", (unsigned)o, line >> 8, (line & 255) * 1000 / 256, dir, t); dl(m); } } } }   /* (at the line: the wait starts) */
+                    *(int *)(o + 0xec) = (int)((__int64)*(int *)(o + 0xec) * ns / (int)step); step = (unsigned)ns; } } }
         if (sig && sig((unsigned)*(int *)(o + 0x1c), *(int *)(o + 0x28) >> 8, dir, (int)rec_featureAccum1.g_raceTime, &stop) > 0) {
             int room = (stop - dir * (*(int *)(o + 0x178) + 0x20) - *(int *)(o + 0x1c)) * dir;   /* (how far it may go: its nose at the line) */
             if (room < (int)step * dir) { int ns = room > 0 ? room * dir : 0; *(int *)(o + 0xec) = (int)((__int64)*(int *)(o + 0xec) * ns / (int)step); step = (unsigned)ns; } } }

@@ -966,6 +966,7 @@ static void C3_JunctionPost(C3Course *c, int k, const C3Row *r0, const C3Row *r1
     else {   /* a stop sign: a 230 high pole, an octagon 76 across (white rim) facing the oncoming traffic */
         double R, a, fr = kp - fd * 3.0 / c->L, fw = kp - fd * 2.5 / c->L, hc = h + 255; int w;
         C3_PBox(c, kp, u, h, 4, 4, 230, pole);
+        if (!c->obH && C3_ObRoom(c) && !c->lp[k][side][0]) { float *e = c->lp[k][side]; e[0] = (float)(2 * fd); e[1] = (float)kp; e[2] = (float)u; e[3] = (float)h; }   /* (a stop sign: +-2 - the cars stop at its line a moment: world3d.inc RR_StopAhead) */
         for (w = 0; w < 2; w++) { double kk = w ? fr : fw; unsigned col = w ? 0xff2020c8u : 0xffeaeaeau; R = w ? 34 : 38; a = R * 0.4142;
             { double m[4][2] = { { -R, -a }, { R, -a }, { R, a }, { -R, a } }, t[4][2] = { { -R, a }, { R, a }, { a, R }, { -a, R } }, b[4][2] = { { -a, -R }, { a, -R }, { R, -a }, { -R, -a } };
               C3_PFace(c, kk, u, hc, m, 4, col); C3_PFace(c, kk, u, hc, t, 4, col); C3_PFace(c, kk, u, hc, b, 4, col); } } } }
