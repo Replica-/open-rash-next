@@ -52,7 +52,7 @@ static void GpuAddTri(int a,int b,int c){ GpuBatch *bt=&g_gb[g_gnb-1]; int base=
 #define GPU_TEXSLOTS 8192
 typedef struct GpuTex { const BYTE *bits; int rspr; int w, h, pitch, key; DWORD hash; int nl; SDL_Texture *lv[RRG_MAXMIP + 4]; unsigned used; int hd, hdg, lox, loy; } GpuTex;   /* hd = extra fine levels (2: lv[0] is the 4x picture, hdtex.inc); hdg = g_hdGen it was made with; lox, loy = where the sprite's own pixel 0, 0 is in the picture (an HD Rider in-between: hdrider.inc), else 0 */
 static const DWORD *RcTrueLut(void); static const DWORD *RcOrigLut(void); static const DWORD *RcRacePal(void);   /* ridercol.inc */
-static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen;   /* hdtex.inc */
+static int HdTexOn(void); static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits, int pitch); static int g_hdGen, g_hdPolice;   /* hdtex.inc */
 static int HdCarVariants(const char *name8); static const DWORD *HdCarVariantPx(const char *name8, int w, int h, int var);   /* hdtex.inc: more traffic cars */
 static void HrStats(void);   /* hdrider.inc: RR_SCENELOG */
 static int g_hdTrackHint;   /* hdtex.inc HdTrack: the track to look in instead of the game's (world3d.inc W3Tex, around its look-ups; 0 = the game's) */
@@ -200,8 +200,14 @@ static GpuTex *GpuTexFor(const RrGpuQuad *q)
           if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
     { static int wl=-1; if(wl<0) wl=getenv("RR_WPLOG")!=NULL; if(wl && q->riderSprite>=0) LOG("rider texture: HiBob sprite %d %dx%d key %d", q->riderSprite, w, h, key); }   /* (test switch RR_WPLOG=1, weapons.inc) */
     e->bits=q->bits[0]; e->rspr=q->riderSprite; e->w=w; e->h=h; e->pitch=pitch; e->key=key; e->hash=hs; e->used=g_gpuFrame; e->nl=0; e->hd=0; e->hdg=g_hdGen; e->lox=e->loy=0;
-    if(HdTexOn() && !(q->flags&RRG_SNAP)){ const DWORD *hp=HdTexFind(q->name,w,h,q->bits[0],pitch), *hv=(hp && cv)?HdCarVariantPx(q->name,w,h,cv):NULL; DWORD *hx;   /* (hv: the variant's picture, coloured by the original picture's scale below) */   /* "slightly upscaled": the 4x picture (never the rider tiles) */
+    int cop=q->objKind==RRO_COP && q->riderSprite<0 && (q->flags&RRG_SNAP)!=0;   /* the police rider: raw tiles (not HiBob sprites, so not HD Rider's) - their 4x pictures from hd\police (hdtex.inc; user, 2026-11-24 "upscale the police sprites") */
+    if(HdTexOn() && (!(q->flags&RRG_SNAP) || cop)){ const DWORD *hp=(g_hdPolice=cop, HdTexFind(cop && !q->name[0] ? "POLICE" : q->name,w,h,q->bits[0],pitch)), *hv=(g_hdPolice=0, (hp && cv)?HdCarVariantPx(q->name,w,h,cv):NULL); DWORD *hx;   /* (hv: the variant's picture, coloured by the original picture's scale below) */   /* "slightly upscaled": the 4x picture (never the rider tiles) */
         if(getenv("RR_HDLOG")) LOG("hdtex scene %u: new '%.8s' %dx%d hash %08lx bits %p world %d -> %s", g_gpuFrame, q->name, w, h, (unsigned long)hs, q->bits[0], q->world, hp?"4x":"original");   /* test switch RR_HDLOG=1 */
+        if(cop && !hp){ static int pd=-1; static char pdd[MAX_PATH]; if(pd<0){ const char *s=getenv("RR_POLICEDUMP"); pd=s && *s; if(pd){ strncpy(pdd,s,MAX_PATH-1); CreateDirectoryA(pdd,NULL); } }   /* test switch RR_POLICEDUMP=<dir>:
+                                                                    each police tile without a picture as POLICE_<w>x<h>_<hash>.raw (int w, int h, ARGB) - the hash HdTexFind looks up (analysis\police_hd) */
+            if(pd){ DWORD fh=2166136261u; int x,y; char fn[MAX_PATH+64]; FILE *f; for(y=0;y<h;y++) for(x=0;x<w;x++) fh=(fh^q->bits[0][(size_t)y*pitch+x])*16777619u;
+                _snprintf(fn,sizeof fn-1,"%s\\POLICE_%dx%d_%08lx.raw",pdd,w,h,(unsigned long)fh); fn[sizeof fn-1]=0;
+                if(GetFileAttributesA(fn)==INVALID_FILE_ATTRIBUTES && (f=fopen(fn,"wb"))!=NULL){ fwrite(&w,4,1,f); fwrite(&h,4,1,f); fwrite(px,4,(size_t)w*h,f); fclose(f); } } }
         DWORD *rp=NULL;
         if(hp && (hx=(DWORD*)malloc((size_t)16*w*h*4))!=NULL){
             /* per channel: the picture's mean colour scaled to the texture's through the CURRENT palette (fades, palette variants) */

@@ -6,6 +6,7 @@
  *   <dir>\hd\horizons\<NAME>.png          sky panoramas (hdsky.inc)
  * <dir> as for the menu strips (menuwide.inc MwDirs: RR_WIDE_DIR, <exe folder>\mod\widescreen, mod\widescreen).  The rider / bike sprites are never replaced
  * (they are recoloured per rider through a palette remap: analysis\RIDER_COLOURS.md).  A picture whose size is not 4 x the texture's is ignored. ---- */
+static int g_hdPolice;   /* HdTexFind: looking up a police rider tile (gpuscene.inc GpuTexFor) */
 static int g_hdGen = 1;   /* +1 when the setting changes: GpuTexFor rebuilds its textures */
 static int HdTexOn(void)
 {   static int env = -2; if (env == -2) { const char *e = getenv("RR_HDTEX"); env = (e && *e) ? (*e != '0') : -1; }
@@ -39,7 +40,7 @@ static DWORD *HdLoad(const char *path, int w, int h)
    two different textures with the same name (files <NAME>@<set>...): the one whose hash matches the texture being drawn is used */
 typedef struct HdHash { char file[40]; char name[9]; DWORD hash; } HdHash;
 typedef struct HdDir { char path[MAX_PATH]; HdHash *h; int n, loaded; } HdDir;
-static HdDir g_hdDirs[12];   /* [0..5] hd\t<track>, [6..11] hd\cars\<file of track> */
+static HdDir g_hdDirs[13];   /* [0..5] hd\t<track>, [6..11] hd\cars\<file of track>, [12] hd\police (every track) */
 static void HdDirLoad(HdDir *dd, const char *sub)
 {   int d; FILE *f = NULL; char line[128];
     dd->loaded = 1; dd->path[0] = 0;
@@ -75,6 +76,7 @@ static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits,
 {   static const char *const car[6] = { "", "CITY", "HIWAY", "MEDLY", "NAPA", "CANYN" };
     char nm[9], path[MAX_PATH], sub[32]; int i, x, y, t = HdTrack(); unsigned k; HdEntry *e; DWORD hs = 2166136261u;
     if (!t || !name8 || !name8[0] || w <= 0 || h <= 0 || !bits) return NULL;
+    if (g_hdPolice) t = 9;   /* (the police rider's raw tiles: one set for every track, hd\police - its own cache entries) */
     for (i = 0; i < 8 && name8[i] && name8[i] != ' '; i++) nm[i] = (char)toupper((unsigned char)name8[i]);
     nm[i] = 0; if (!i) return NULL;
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) hs = (hs ^ bits[(size_t)y * pitch + x]) * 16777619u;
@@ -85,9 +87,12 @@ static const DWORD *HdTexFind(const char *name8, int w, int h, const BYTE *bits,
         if (e->track == t && e->w == w && e->h == h && e->hash == hs && !strcmp(e->name, nm)) return e->px; }
     if (i == 64 || g_hdN >= HD_CACHE * 3 / 4) return NULL;   /* (cache full: originals) */
     e->track = t; strcpy(e->name, nm); e->w = w; e->h = h; e->hash = hs; e->px = NULL; g_hdN++;
-    if (!g_hdDirs[t].loaded) { _snprintf(sub, sizeof sub - 1, "t%d", t); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[t], sub); }
-    if (!g_hdDirs[6 + t].loaded) { _snprintf(sub, sizeof sub - 1, "cars\\%s", car[t]); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[6 + t], sub); }
-    if (HdDirPick(&g_hdDirs[t], nm, hs, path) || HdDirPick(&g_hdDirs[6 + t], nm, hs, path)) e->px = HdLoad(path, w, h);
+    if (t == 9) { if (!g_hdDirs[12].loaded) HdDirLoad(&g_hdDirs[12], "police");
+        if (HdDirPick(&g_hdDirs[12], nm, hs, path)) e->px = HdLoad(path, w, h); }
+    else {
+        if (!g_hdDirs[t].loaded) { _snprintf(sub, sizeof sub - 1, "t%d", t); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[t], sub); }
+        if (!g_hdDirs[6 + t].loaded) { _snprintf(sub, sizeof sub - 1, "cars\\%s", car[t]); sub[sizeof sub - 1] = 0; HdDirLoad(&g_hdDirs[6 + t], sub); }
+        if (HdDirPick(&g_hdDirs[t], nm, hs, path) || HdDirPick(&g_hdDirs[6 + t], nm, hs, path)) e->px = HdLoad(path, w, h); }
     if (!e->px && getenv("RR_HDLOG")) LOG("hd texture: no picture for %s %dx%d hash %08x (track %d)", nm, w, h, (unsigned)hs, t);   /* RR_HDLOG=1: which textures stay original */
     return e->px; }
 
