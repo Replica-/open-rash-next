@@ -3911,6 +3911,10 @@ static void SampleBend(int k0, int P, double C)   /* curves C sin over P pieces:
 {   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->curve += (int)floor(C * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xb8); BlockSync(k0 + j); } }
 static void SampleHill(int k0, int P, double H)   /* a crest (H > 0) or a dip over P pieces: the height back where it was */
 {   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->hill += (int)floor(H * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xbc); BlockSync(k0 + j); } }
+static double SampleForkGap(int fs, int fe)   /* how near B's centre line comes to A's anywhere past the turn-off and before the join */
+{   double mind = 1e30; int a, b;
+    for (b = fs + 30; b < fe - 30; b++) for (a = fs - 50; a < fe + 50; a++) { double dx = g_c.frameB[b].x - g_c.frame[a].x, dz = g_c.frameB[b].z - g_c.frame[a].z, d = sqrt(dx * dx + dz * dz); if (d < mind) mind = d; }
+    return mind; }
 static void SampleCourse(const char *path)
 {   int S, F, D, fl, fs, fe, ok = 0, k, a, b, i; double mind = 1e30;
     if (!g_open) { LOG("sample: no course open"); return; }
@@ -3928,18 +3932,42 @@ static void SampleCourse(const char *path)
     if (D < 900) { LOG("sample: level 1 too short"); return; }
 #define AT(f) (S + (int)((f) * D))
     /* the road: bends and hills (none over the fork, the bridge or the lake's shore) */
-    {   /* the redwood: a winding road over the hills (user, 2026-11-24 "make the redwood more curved and more hilly"; the photo: one bend into the next) */
-        int r0 = AT(0.04), r1 = AT(0.20), nb = 6, nh = 3, j, L = (r1 - r0) / nb, Lh = (r1 - r0) / nh;
-        for (j = 0; j < nb; j++) SampleBend(r0 + j * L, L, j & 1 ? -19 : 19);
-        for (j = 0; j < nh; j++) SampleHill(r0 + j * Lh, Lh, j == 1 ? -40 : 46); }
-    SampleBend(AT(0.60), AT(0.72) - AT(0.60), -5);
-    SampleBend(AT(0.75), AT(0.87) - AT(0.75), 8); SampleHill(AT(0.76), AT(0.81) - AT(0.76), 25); SampleHill(AT(0.81), AT(0.86) - AT(0.81), 25);
+    {   /* the redwood: a winding road over the hills (user, 2026-11-24 "make the redwood more curved and more hilly"; the photo: one bend into the next;
+           2026-11-26 "make the course more curvy please and more hilly": 8 bends, 4 hills) */
+        int r0 = AT(0.04), r1 = AT(0.20), nb = 8, nh = 4, j, L = (r1 - r0) / nb, Lh = (r1 - r0) / nh;
+        for (j = 0; j < nb; j++) SampleBend(r0 + j * L, L, j & 1 ? -25 : 25);
+        for (j = 0; j < nh; j++) SampleHill(r0 + j * Lh, Lh, j & 1 ? -45 : 55); }
+    SampleBend(AT(0.60), (AT(0.72) - AT(0.60)) / 2, -12); SampleBend(AT(0.60) + (AT(0.72) - AT(0.60)) / 2, AT(0.72) - AT(0.60) - (AT(0.72) - AT(0.60)) / 2, 12);   /* the lake: two bends, level by the water */
+    {   /* the dunes: three bends, three hills */
+        int d0 = AT(0.75), d1 = AT(0.87), j, L = (d1 - d0) / 3;
+        for (j = 0; j < 3; j++) { SampleBend(d0 + j * L, L, j & 1 ? -14 : 14); SampleHill(d0 + j * L, L, j == 1 ? -30 : 40); } }
+    SampleHill(AT(0.90), AT(0.97) - AT(0.90), 35); SampleBend(AT(0.90), AT(0.97) - AT(0.90), 6);   /* the town: up over a hill, a gentle bend (clear of the junction at AT(0.875)) */
     g_noRedraw = 0; Redraw(); g_noRedraw = 1;
     /* the fork: A straight, B one gentle sweep to the right and back in (flattened - it stays on its side) */
     fl = D / 4 > 600 ? 600 : D / 4; if (fl < 2 * CE_SAME + 30) fl = 2 * CE_SAME + 30;
     for (fs = AT(0.22); fs < AT(0.22) + 60 && !ok; fs++) { fe = fs + fl; ok = PlanForkRange(fs, fe); if (!ok && fs == AT(0.22)) LOG("sample: fork %d..%d: %s", fs, fe, g_status); }
     fs--; fe = fs + fl;
     if (ok) { PlanFlattenAt(fs + fl / 2); LOG("sample: fork %d..%d: %s", fs, fe, g_status); } else LOG("sample: no fork: %s", g_status);
+    if (ok) {   /* the left fork (A; B sweeps out to the right) winding over two hills (user, 2026-11-26 "in the course left fork make it curvy and hilly also make it go
+                   through a town"): two swings out and back to the same line (each a bend and its opposite: A meets B again where it did), away from B - the side
+                   whose swings keep B as far from A as before; then a crest and a dip */
+        int m0 = fs + 40, n = (fe - 40) - m0, P = n / 4, j, t, best = -1, *sv = (int *)malloc(sizeof(int) * (n > 0 ? n : 1)); double g0, g[2], mean[2];
+        g_noRedraw = 0; Redraw(); g_noRedraw = 1; g0 = SampleForkGap(fs, fe);
+        for (j = 0; j < n; j++) sv[j] = g_c.piece[m0 + j].halfA.curve;
+        for (t = 0; t < 3 && P > 20; t++) { double C = (t == 2 ? best : t) ? -10 : 10;   /* (both sides tried, then the better one made) */
+            for (j = 0; j < n; j++) { RoadSection *s = &g_c.piece[m0 + j].halfA; s->curve = sv[j]; Derive(s, 0xb8); BlockSync(m0 + j); }
+            SampleBend(m0, P, C); SampleBend(m0 + P, P, -C); SampleBend(m0 + 2 * P, P, C); SampleBend(m0 + 3 * P, P, -C);
+            g_noRedraw = 0; Redraw(); g_noRedraw = 1;
+            if (t == 2) break;
+            g[t] = SampleForkGap(fs, fe); mean[t] = 0;
+            for (j = 0; j < n; j++) { double dx = g_c.frameB[m0 + j].x - g_c.frame[m0 + j].x, dz = g_c.frameB[m0 + j].z - g_c.frame[m0 + j].z; mean[t] += sqrt(dx * dx + dz * dz) / n; }
+            LOG("sample: left fork bends %+.0f: B at least %.0f from A (was %.0f), %.0f on average beside the bends", C, g[t], g0, mean[t]);
+            if (t == 1) best = (g[1] >= g0 - 50 && (mean[1] > mean[0] || g[0] < g0 - 50)) ? 1 : 0; }
+        free(sv);
+        for (j = 0; j < 4; j++) SampleHill(m0 + j * P, P, j & 1 ? -35 : 40); }   /* (four short hills: two long ones climbed ~2000 units - the ground's edge showed from the top) */
+    {   /* past the join, up to the bridge's pavement (AT(0.55) - 26): two bends over a crest */
+        int a0 = (ok ? fe : AT(0.47)) + 8, a1 = AT(0.55) - 30, L = (a1 - a0) / 2;
+        if (L > 15) { SampleBend(a0, L, 14); SampleBend(a0 + L, L, -14); SampleHill(a0, 2 * L, 40); LOG("sample: bends %d..%d", a0, a0 + 2 * L); } }
     g_noRedraw = 0; Redraw(); g_noRedraw = 1;
     if (ok) {   /* B against A: the nearest B comes to any of A's pieces (centre lines), past the turn-off and before the join */
         for (b = fs + 30; b < fe - 30; b++) for (a = fs - 50; a < fe + 50; a++) { double dx = g_c.frameB[b].x - g_c.frame[a].x, dz = g_c.frameB[b].z - g_c.frame[a].z, d = sqrt(dx * dx + dz * dz); if (d < mind) mind = d; }
@@ -3953,7 +3981,11 @@ static void SampleCourse(const char *path)
         SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 0, 0); SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 1, 0);
         SamplePaint(2, "RAIL FENCE", r0 + 6, rm - r0 - 6, 0, 1, 1); SamplePaint(2, "RAIL FENCE", rm + 10, r1 - rm - 16, 0, 0, 1);
         SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 0, 5); SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 1, 5); }
-    if (ok) { SampleCells(2, "SHRUB", fs, fl / 2, 0, 0, 1, 4); SampleCells(2, "GREEN SHRUB", fs + fl / 2, fl - fl / 2, 0, 0, 1, 4);   /* (A's outer side: the red hedge, then the dark green one) */
+    if (ok) { int q = fl / 4;   /* the left fork (A): the red hedge, a town (user, 2026-11-26: pavement on the verge and P0, the buildings from P1, both sides), the dark green hedge */
+        SampleCells(2, "SHRUB", fs, q, 0, 0, 1, 4); SampleCells(2, "GREEN SHRUB", fs + 3 * q, fl - 3 * q, 0, 0, 1, 4);
+        SampleCells(2, "CONCRETE", fs + q, 2 * q, 0, 0, 0, 1); SampleCells(2, "CONCRETE", fs + q, 2 * q, 0, 1, 0, 1);
+        SamplePaint(3, "mix", fs + q, 2 * q, 0, 0, 2); SamplePaint(3, "mix", fs + q, 2 * q, 0, 1, 2);
+        LOG("sample: left fork town %d..%d", fs + q, fs + 3 * q);
         SampleCells(2, "SANDG", fs, fl, 1, 1, 1, 4); SamplePaint(4, "SANDPATH", fs, fl, 1, 1, 0); }   /* (B's outer side) */
     k = AT(0.55); i = 40;   /* the bridge: a gorge with a river in it (hole cells: water at the default depth), railings on both verges */
     SampleCells(2, "CLIFF HOLE", k, i, 0, 0, 1, 4); SampleCells(2, "CLIFF HOLE", k, i, 0, 1, 1, 4);
