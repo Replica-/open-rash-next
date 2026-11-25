@@ -15,17 +15,42 @@ static SDL_Texture *g_lsBg; static int g_lsBgW, g_lsBgH, g_lsBgTried;   /* the b
                                                                          default to one of the wacky backgrounds the game has instead of that plain background") - a new pick each race start */
 __declspec(dllexport) unsigned char * __stdcall RR_DecodeJpeg(const void *data, unsigned size, int *w, int *h);   /* jpeg.c */
 __declspec(dllexport) void __stdcall RR_FreeImage(void *p);
+/* the widescreen strips of a loading picture (menuwide.inc's mod\widescreen\Images\<name>.png, 854x480, the middle 640 columns empty), loaded as ARGB8888:
+   NULL when the widescreen mod is not installed or the picture has none (user, 2026-11-26: "with the loading screen just do the screens with wide screen options") */
+static SDL_Surface *LsStrips(const char *name)
+{   char p[MAX_PATH]; int i; DWORD at; SDL_Surface *s, *c;
+    if (g_mwNDir < 0) MwDirs(); if (g_mwOff || !VidHdArt()) return NULL;
+    for (i = 0; i < g_mwNDir; i++) { _snprintf(p, sizeof p - 1, "%s\\Images\\%s.png", g_mwDir[i], name); p[sizeof p - 1] = 0;
+        at = GetFileAttributesA(p); if (at == INVALID_FILE_ATTRIBUTES || (at & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (!(s = SDL_LoadPNG(p))) continue;
+        c = SDL_ConvertSurface(s, SDL_PIXELFORMAT_ARGB8888); SDL_DestroySurface(s);
+        if (c && (c->w != MW_W || c->h != 480)) { SDL_DestroySurface(c); c = NULL; }
+        if (c) return c; }
+    return NULL; }
 static void LsBgLoad(void)
 {   static const char *const pic[] = { "Images\\Street.RRI", "Images\\Panzer.RRI", "Images\\Olleys.RRI", "Images\\Credits.RRI" };   /* (the street, the Panzer Klub, Olley's, the gang) */
-    FILE *f; long n; unsigned char *buf, *px; int w, h, i;
+    static const char *const strip[] = { "STREET", "PANZER", "OLLEYS", "SPLASH" };   /* (their widescreen strips: the credits picture is the splash picture) */
+    FILE *f; long n; unsigned char *buf, *px; int w, h, i, pass, wide;
     if (g_lsBgTried) return; g_lsBgTried = 1;
-    for (i = 0; i < 4 && !g_lsBg; i++) { const char *p = pic[(GetTickCount() / 7 + i) % 4];   /* (the next one when a picture is missing) */
-        if (!(f = fopen(p, "rb"))) continue;
+    if (g_mwNDir < 0) MwDirs(); wide = !g_mwOff && VidHdArt();
+    for (pass = wide ? 0 : 1; pass < 2 && !g_lsBg; pass++)   /* (with the widescreen mod: only the pictures that have strips; then any, if none of those could be read) */
+    for (i = 0; i < 4 && !g_lsBg; i++) { int j = (GetTickCount() / 7 + i) % 4; const char *p = pic[j]; SDL_Surface *st = pass ? NULL : LsStrips(strip[j]);   /* (the next one when a picture is missing) */
+        if (!pass && !st) continue;
+        if (!(f = fopen(p, "rb"))) { if (st) SDL_DestroySurface(st); continue; }
         fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET); buf = (unsigned char *)malloc(n > 0 ? n : 1);
-        if (!buf || fread(buf, 1, n, f) != (size_t)n) { fclose(f); free(buf); continue; } fclose(f);
-        px = RR_DecodeJpeg(buf, (unsigned)n, &w, &h); free(buf); if (!px) continue;
-        if ((g_lsBg = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, w, h)) != NULL) {   /* (the decoder's B, G, R bytes) */
+        if (!buf || fread(buf, 1, n, f) != (size_t)n) { fclose(f); free(buf); if (st) SDL_DestroySurface(st); continue; } fclose(f);
+        px = RR_DecodeJpeg(buf, (unsigned)n, &w, &h); free(buf); if (!px) { if (st) SDL_DestroySurface(st); continue; }
+        if (st && w == 640 && h == 480) {   /* the widescreen picture: strips left and right of the 640x480 picture, 854x480 */
+            DWORD *o = (DWORD *)malloc((size_t)MW_W * 480 * 4); int x, y;
+            if (o) { for (y = 0; y < 480; y++) { const DWORD *sr = (const DWORD *)((const BYTE *)st->pixels + (size_t)y * st->pitch); DWORD *d = o + (size_t)y * MW_W;
+                    for (x = 0; x < MW_W; x++) d[x] = 0xff000000u | (sr[x] & 0xffffffu);
+                    for (x = 0; x < 640; x++) { const unsigned char *q = px + ((size_t)y * 640 + x) * 3; d[MW_SIDE + x] = 0xff000000u | ((DWORD)q[2] << 16) | ((DWORD)q[1] << 8) | q[0]; } }
+                if ((g_lsBg = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, MW_W, 480)) != NULL) {
+                    SDL_UpdateTexture(g_lsBg, NULL, o, MW_W * 4); SDL_SetTextureScaleMode(g_lsBg, SDL_SCALEMODE_LINEAR); g_lsBgW = MW_W; g_lsBgH = 480; }
+                free(o); } }
+        else if ((g_lsBg = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, w, h)) != NULL) {   /* (the decoder's B, G, R bytes) */
             SDL_UpdateTexture(g_lsBg, NULL, px, w * 3); SDL_SetTextureScaleMode(g_lsBg, SDL_SCALEMODE_LINEAR); g_lsBgW = w; g_lsBgH = h; }
+        if (st) SDL_DestroySurface(st);
         RR_FreeImage(px); } }
 static void LsBgFree(void) { if (g_lsBg) SDL_DestroyTexture(g_lsBg); g_lsBg = NULL; g_lsBgTried = 0; }   /* (the race is on: the next load picks again) */
 static int LsWanted(void)
@@ -66,7 +91,7 @@ static void LsDraw(void)
     if (ow > 0 && oh > 0) {
         SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
         LsBgLoad(); SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255); SDL_RenderClear(g_ren);
-        if (g_lsBg) {   /* the picture: the window's height, centred (black bars beside it on a wide window), a dark band behind the text and the bar */
+        if (g_lsBg) {   /* the picture: the window's height, centred (the widescreen picture fills a 16:9 window; a narrower window cuts its strips, a wider one has black bars), a dark band behind the text and the bar */
             r.h = (float)oh; r.w = (float)oh * g_lsBgW / g_lsBgH; r.x = (ow - r.w) / 2; r.y = 0; SDL_RenderTexture(g_ren, g_lsBg, NULL, &r);
             SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
             for (k = 0; k < 24; k++) { float q = k / 23.0f, a = 0.72f * (1 - (2 * q - 1) * (2 * q - 1) * (2 * q - 1) * (2 * q - 1));   /* (soft top and bottom edges) */
