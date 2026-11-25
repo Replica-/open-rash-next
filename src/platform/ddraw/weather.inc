@@ -416,6 +416,59 @@ static void WxParticles(int fw, int fh)
             SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); }
         SDL_SetRenderClipRect(g_ren, NULL); } }
 
+/* ---- leaves (user, 2026-11-24: "in the red wood, can you make leaves fly down from the trees please, and the more trees there are the more it should blow leaves
+ * around"): bits of redwood foliage and dry leaves drifting down round the camera - as many as the REDWOOD trees near it (course3d.h C3Course.ntr, from the pieces
+ * just behind to a dozen ahead), each fluttering, turning over, carried by a breeze that gusts; drawn as the rain is (over the world, under the HUD) ---- */
+#define WX_NL 1600
+typedef struct WxLeaf { float x, y, z, ph, sp, sz; unsigned col; } WxLeaf;
+static WxLeaf g_wxl[WX_NL]; static unsigned g_wxlSeed = 4243; static int g_wxlOn;
+static void WxLeafSpawn(WxLeaf *l, float ground, int top)
+{   static const unsigned cols[6] = { 0xc06a2e, 0x9a4a22, 0xd89a3a, 0x6e7a2a, 0x8a5a2a, 0xb07a40 };   /* (RGB: rust, bark brown, gold, olive, tan) */
+    l->x = (WxRf(&g_wxlSeed) * 2 - 1) * 3200; l->z = 80 + WxRf(&g_wxlSeed) * 4200; l->y = top ? 2600 + WxRf(&g_wxlSeed) * 600 : ground + WxRf(&g_wxlSeed) * (3000 - ground);
+    l->ph = WxRf(&g_wxlSeed) * 6.283f; l->sp = 0.6f + WxRf(&g_wxlSeed) * 1.4f; l->sz = 7 + WxRf(&g_wxlSeed) * 9; l->col = cols[(int)(WxRf(&g_wxlSeed) * 5.99f)]; }
+static void WxLeaves(int fw, int fh)
+{   static double lastT = -1; static int lastPos; static double lastHd; static SDL_Vertex *vx; static int *ix, cap;
+    int n = 0, i, nq = 0, k, k0, k1; float dt, F, cx, hy, ground, speed, dh, ca, sa, bx, bz; double hd, vp;
+    (void)fw; (void)fh;
+    if (!g_w3On || !g_w3HaveCam || !g_w3c.ntr || g_w3c.obN < g_w3c.n) { g_wxlOn = 0; return; }
+    vp = (g_w3cam.viewPos - g_w3Piece0) / 256.0; k0 = (int)vp - 2; k1 = (int)vp + 12; if (k0 < 0) k0 = 0; if (k1 > g_w3c.n) k1 = g_w3c.n;
+    for (k = k0; k < k1; k++) { int a = g_w3c.ntr[k], b = g_w3lo >= 0 && g_w3l.ntr && k < g_w3l.obN ? g_w3l.ntr[k] : 0; n += a > b ? a : b; }   /* (the live stretch's trees: its own build) */
+    n *= 9; if (n > WX_NL) n = WX_NL; if (g_vid.wxfx == 1) n = n * 2 / 5;
+    if (n <= 0) { g_wxlOn = 0; return; }
+    F = (float)(W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1)); cx = (float)g_w3cam.centreX; hy = (float)g_w3cam.horizonY;
+    ground = (float)-g_w3cam.camY; if (ground > -50) ground = -50;
+    {   int kk = (int)floor(vp); const C3Frame *Fr = W3Fr(); double fr = vp - kk; if (kk < 0) kk = 0; if (kk >= g_w3c.n) kk = g_w3c.n - 1; hd = Fr[kk].heading + (Fr[kk + 1].heading - Fr[kk].heading) * fr; }
+    if (!g_wxlOn) { for (i = 0; i < WX_NL; i++) WxLeafSpawn(&g_wxl[i], ground, 0); g_wxlOn = 1; lastT = -1; }
+    dt = lastT < 0 ? 0 : (float)(g_wxTime - lastT); if (dt > 0.1f) dt = 0.1f;
+    speed = lastT < 0 || dt <= 0 ? 0 : (float)((g_w3cam.viewPos - lastPos) / 256.0 * W3_L); if (speed < 0 || speed > 4000) speed = 0;
+    dh = lastT < 0 ? 0 : (float)(hd - lastHd); if (dh > 0.3f || dh < -0.3f) dh = 0;
+    lastT = g_wxTime; lastPos = g_w3cam.viewPos; lastHd = hd; ca = (float)cos(dh); sa = (float)sin(dh);
+    {   float t = (float)g_wxTime, g = 0.6f + 0.4f * sinf(t * 0.23f) + 0.35f * sinf(t * 0.61f + 1.1f), dir = 0.9f + 0.6f * sinf(t * 0.05f);   /* the breeze: gusting, slowly veering */
+        bx = 140 * g * sinf(dir - (float)hd); bz = 140 * g * cosf(dir - (float)hd); }
+    if (cap < n) { cap = n; vx = (SDL_Vertex *)realloc(vx, sizeof(SDL_Vertex) * 4 * cap); ix = (int *)realloc(ix, sizeof(int) * 6 * cap); if (!vx || !ix) { cap = 0; return; } }
+    for (i = 0; i < n; i++) {
+        WxLeaf *l = &g_wxl[i]; float x, z, sx, sy, w, h, an, c0, s0, flip; SDL_FColor c; int q;
+        x = l->x * ca - l->z * sa; z = l->x * sa + l->z * ca; l->x = x; l->z = z;
+        l->z -= speed; l->y -= (55 + 45 * l->sp) * dt;   /* (slow: a leaf, not a drop) */
+        l->x += (bx * l->sp + sinf((float)g_wxTime * 1.7f * l->sp + l->ph) * 90) * dt; l->z += bz * l->sp * dt;   /* flutter, carried by the breeze */
+        if (l->z < 80) { l->z += 4200; l->x = (WxRf(&g_wxlSeed) * 2 - 1) * 3200; } else if (l->z > 4280) l->z -= 4200;
+        if (l->x < -3200) l->x += 6400; else if (l->x > 3200) l->x -= 6400;
+        if (l->y < ground) WxLeafSpawn(l, ground, 1);
+        sx = cx + F * l->x / l->z; sy = hy - F * l->y / l->z;
+        if (sx < g_gpuClip[0] - 20 || sx > g_gpuClip[2] + 20 || sy < g_gpuClip[1] - 20 || sy > g_gpuClip[3] + 20) continue;
+        w = F * l->sz / l->z; if (w < 0.6f) w = 0.6f; if (w > 14) w = 14;
+        flip = cosf((float)g_wxTime * 3.1f * l->sp + l->ph); h = w * (0.25f + 0.45f * fabsf(flip));   /* (turning over: thin edge-on, wide face-on) */
+        an = (float)g_wxTime * 1.3f * l->sp + l->ph * 2; c0 = cosf(an); s0 = sinf(an);
+        c.r = ((l->col >> 16) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.g = ((l->col >> 8) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.b = (l->col & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f);
+        c.a = 0.95f * (1 - l->z / 4400) * (1 - g_wxShelter);
+        for (q = 0; q < 4; q++) { SDL_Vertex *o = &vx[nq * 4 + q]; float px = (q & 1) ? w : -w, py = (q & 2) ? h : -h; if (q == 1 || q == 2) px *= 0.6f;   /* (a little lopsided: a leaf) */
+            o->position.x = sx + px * c0 - py * s0; o->position.y = sy + px * s0 + py * c0; o->color = c; o->tex_coord.x = 0.5f; o->tex_coord.y = 0.5f; }
+        ix[nq * 6] = nq * 4; ix[nq * 6 + 1] = nq * 4 + 1; ix[nq * 6 + 2] = nq * 4 + 2; ix[nq * 6 + 3] = nq * 4 + 1; ix[nq * 6 + 4] = nq * 4 + 3; ix[nq * 6 + 5] = nq * 4 + 2; nq++;
+    }
+    if (nq) { SDL_Rect vr; vr.x = g_gpuClip[0]; vr.y = g_gpuClip[1]; vr.w = g_gpuClip[2] - g_gpuClip[0]; vr.h = g_gpuClip[3] - g_gpuClip[1] + 1;
+        SDL_SetRenderClipRect(g_ren, &vr); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
+        SDL_RenderGeometry(g_ren, NULL, vx, nq * 4, ix, nq * 6); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); SDL_SetRenderClipRect(g_ren, NULL); } }
+
 /* ---- the race's Esc pause: the settings panel (drawn with GDI at twice the frame's resolution, shown under the game's own question) ---- */
 static void IcBox(HDC dc, int x, int y, int w, int h, COLORREF fill, COLORREF frame, int r);   /* inputcfg.inc */
 static void IcPoly(HDC dc, const POINT *pt, int n, COLORREF fill, COLORREF frame);

@@ -69,6 +69,7 @@ static const char r3_hlsl[] =
     "  if (right.w > 0) { float2 tc = i.t * sz; float m = max(length(dx * sz), length(dy * sz));\n"   /* right.w = crisp: a magnified texel (bigger than a pixel) */
     "    uv = lerp(i.t, (floor(tc) + 0.5) / sz, saturate((1 - m) * 4)); dx *= 0.4; dy *= 0.4; }\n"       /* in its own colour, as the game draws (unfiltered); minified: a sharper mip (the game */
                                                                                                        /* has none: its ground's grain is the full texture's) */
+    "  if (abs(i.c.a - 0.9098) < 0.0015) { float m = 0.5 * max(abs(dx.y), abs(dy.y)) + 0.5 / sz.y; uv.y = clamp(uv.y, m, 1 - m); }\n"   /* a cut-out picture standing up (vertex alpha 232, course3d.h C3_CUTV): v kept a footprint off its top / bottom - the wrap took the other edge's texels in (a thin dark line over far hedges) */
     "  float4 c = T.SampleGrad(S, uv, dx, dy) * i.c;\n"
     "  if (abs(i.c.a - 0.9294) < 0.0015) c.a = min(c.a * (1 + opt.w * max(0, log2(max(length(dx * sz), length(dy * sz))))), i.c.a);\n"   /* grass tufts (vertex alpha 237): far off the smaller mips average the thin blades with the gaps between them and the cut-out lost them - the tufts thinned out with distance until the rider came near (user, 2026-11-15); alpha raised by the mip level */
     "  if (c.a < 0.5 || (rfl.y > 0 && (i.w.y < rfl.x - 40 || abs(normalize(n).y) > 0.8))) discard;\n"   /* (the mirror pass: only what stands up above the mirror - buildings, hillsides; not the road / ground) */

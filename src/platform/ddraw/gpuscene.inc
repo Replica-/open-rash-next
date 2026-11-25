@@ -16,7 +16,7 @@
 static void W3Blood(int fw, int fh); static void W3Draw(int w, int h, const SDL_FRect *r); static void W3RaceEnd(void); static int W3Replaces(const RrGpuQuad *q); static void W3SceneBegin(void);   /* world3d.inc (true-3D world) */
 static const PALETTEENTRY *volatile g_cdPal;   /* the race start countdown (weather.inc RR_RaceCountdown): its frames drawn with the race palette, not the dimmed one */
 static Pal *GpuCdPal(void){ static Pal p; const PALETTEENTRY *e=g_cdPal; if(!e) return g_primary?g_primary->pal:NULL; memcpy(p.e,e,sizeof p.e); return &p; }
-static void WxUpdate(void); static void WxBatchMod(SDL_Texture *t, int on); static void WxParticles(int fw, int fh); static void WxPanel(int w, int h); static void WxGlare(int fw, int fh); static void CdDraw(int fw, int fh);   /* weather.inc */
+static void WxUpdate(void); static void WxBatchMod(SDL_Texture *t, int on); static void WxParticles(int fw, int fh); static void WxLeaves(int fw, int fh); static void WxPanel(int w, int h); static void WxGlare(int fw, int fh); static void CdDraw(int fw, int fh);   /* weather.inc */
 static int WpClubSprite(int spr); static int WpPicture(void); static void WpClubSwap(DWORD *px, int w, int h, int spr, int wpn);   /* weapons.inc */
 static int g_gpuOn;                    /* this race is drawn by the GPU renderer (RR_GpuRace at the race start) */
 static int g_gpuScene;                 /* a scene (background + polygon list) is ready to compose */
@@ -464,6 +464,7 @@ static int GpuCompose(Surf *s)
         if(cr.w<=0 || cr.h<=0) continue; SDL_SetRenderClipRect(g_ren,&cr); WxBatchMod(b->t,1); SDL_RenderGeometry(g_ren,b->t,g_gv+b->v0,b->nv,g_gi+b->i0,b->ni); WxBatchMod(b->t,0); }
     SDL_SetRenderClipRect(g_ren,NULL);
     WxParticles(w,h);          /* rain / snow in front of the world, under the HUD */
+    WxLeaves(w,h);             /* leaves falling in a redwood forest (weather.inc) */
     WxGlare(w,h);              /* the sun's glare (weather.inc) */
     if(g_gpuOv){ SDL_UpdateTexture(g_gpuOv,NULL,ov,w*4); SDL_RenderTexture(g_ren,g_gpuOv,NULL,&g_fullRect); }
     PF_ADD(PF_POLYS, pfP); { PF_T0(pfU); HhDraw(s,lut); PF_ADD(PF_HUD, pfU); }   /* the HD dashboard + the HUD over it (hdhud.inc) */

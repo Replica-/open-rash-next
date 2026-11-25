@@ -153,10 +153,12 @@ static GpuTex *HrTexGet(HrPic *p, const char *pic, const char *lab, int spr, DWO
         if (!fr && g_gpuFrame - e->t.used > 120) fr = e; }
     if (g_hrUpScene != g_gpuFrame) { g_hrUpScene = g_gpuFrame; g_hrUploads = 0; }
     {   int nfree = 0;
-        for (i = 0; i < HR_JOBS; i++) { j = &g_hrJob[i];
-            if ((j->state == 3 || j->state == 4 || (j->state == 1 && !j->prio)) && g_gpuFrame - j->asked > 300) {   /* (nobody asked for 300 scenes: a rider out of sight) */
-                if (j->state == 1) InterlockedCompareExchange(&j->state, 0, 1);   /* (the worker may be taking it this moment: then it stays) */
-                else { HrJobFree(j); InterlockedExchange(&j->state, 0); } }
+        for (i = 0; i < HR_JOBS; i++) { LONG s; j = &g_hrJob[i]; s = j->state;   /* (one read: the worker can take a queued job between two - it was freed while being made,
+                                                                    its slot given out again, its levels freed twice: the game's objects written over with picture rows, a crash in
+                                                                    TileCopy256; user, 2026-11-23 "i think the game crashed") */
+            if ((s == 3 || s == 4 || (s == 1 && !j->prio)) && g_gpuFrame - j->asked > 300) {   /* (nobody asked for 300 scenes: a rider out of sight) */
+                if (s == 1) InterlockedCompareExchange(&j->state, 0, 1);   /* (the worker may be taking it this moment: then it stays) */
+                else { HrJobFree(j); InterlockedExchange(&j->state, 0); } }   /* (3 / 4: only this thread changes them) */
             if (j->state && j->key == key && j->p == p && j->spr == spr) break;
             if (!j->state) { nfree++; if (!jf) jf = j; } }
         if (i == HR_JOBS && (!jf || (!prio && nfree <= HR_JOBS / 4))) return NULL; }   /* (prefetches leave a quarter of the ring to the pictures shown now) */

@@ -1494,6 +1494,73 @@ static void W3TramScan(void)   /* the course's tram lines (again when the course
 static double W3LaneMid(int k, int j)   /* lane j's middle across piece k (C3_Lanes' grid) */
 {   const RoadSection *s = &g_w3c.piece[k < 0 ? 0 : k >= g_w3c.n ? g_w3c.n - 1 : k].halfA;
     return -250.0 * s->lanesL + s->laneEdgeL + s->laneL * (250.0 / 256) + (j + 0.5) * 250; }
+/* traffic lights that change (user, 2026-11-24 "can we make cars just automatically obey traffic lights" - "yes do the light cycles"): every Course Editor junction
+   (a run of pieces whose road is the Junction block's - course3d.h C3_JctAt) has one light cycle, on the game's race clock (g_w3cam.raceTime: the same in the
+   game, physics.c - no frames drawn in it): green W3_SIGG ticks, amber W3_SIGA, red W3_SIGR, each junction a little out of step with the others.  W3Signals draws
+   the lit lamp of each post (course3d.h C3_JunctionPost records them: g_w3c.lp); RR_SignalAhead tells a traffic car whether to stop at the line */
+#define W3_SIGG 600
+#define W3_SIGA 90
+#define W3_SIGR 450
+static int g_w3nj = -1, g_w3jk[256][2]; static const RrcExtra *g_w3jExt; static int g_w3jN;
+static void W3SigScan(void)
+{   int k; g_w3nj = 0; g_w3jExt = g_w3a.ext; g_w3jN = g_w3c.n;
+    for (k = 0; k < g_w3c.n && g_w3nj < 256; k++) if (C3_JctAt(&g_w3a, k) && !C3_JctAt(&g_w3a, k - 1)) { int e = k; while (C3_JctAt(&g_w3a, e)) e++; g_w3jk[g_w3nj][0] = k; g_w3jk[g_w3nj][1] = e; g_w3nj++; } }
+static int W3SigState(int j, int t)   /* 2 green, 1 amber, 0 red */
+{   int cyc = W3_SIGG + W3_SIGA + W3_SIGR, ph = ((t + g_w3jk[j][0] * 37) % cyc + cyc) % cyc; return ph < W3_SIGG ? 2 : ph < W3_SIGG + W3_SIGA ? 1 : 0; }
+static int W3SigFor(int k, int fd)   /* the junction a post at piece k facing fd holds the traffic for (-1 none) */
+{   int j; if (g_w3nj < 0 || g_w3jExt != g_w3a.ext || g_w3jN != g_w3c.n) W3SigScan();
+    for (j = 0; j < g_w3nj; j++) { if (fd > 0 && g_w3jk[j][0] > k && g_w3jk[j][0] - k <= 8) return j; if (fd < 0 && k >= g_w3jk[j][1] && k - g_w3jk[j][1] < 8) return j; } return -1; }
+static int W3SolidTex(void);
+static int W3Signals(R3Vert *v, int cap, double vp)   /* this frame's lit lamps into v (W3SolidTex); returns the vertices */
+{   int k, sd, n = 0, k0 = (int)vp - 4, k1 = (int)vp + 160;
+    if (!g_w3c.lp || g_w3c.obN < g_w3c.n) return 0;
+    if (k0 < 0) k0 = 0; if (k1 > g_w3c.n) k1 = g_w3c.n;
+    for (k = k0; k < k1; k++) for (sd = 0; sd < 2; sd++) { const float *e = g_w3c.lp[k][sd]; int j, st, q, i; float pt[4][3]; double y, p; unsigned col;
+        if (e[0] == 0 || n + 12 > cap || (j = W3SigFor(k, e[0] > 0 ? 1 : -1)) < 0) continue;
+        st = W3SigState(j, g_w3cam.raceTime); y = e[3] + 86 - (st == 0 ? 0 : st == 1 ? 1 : 2) * 34; p = e[1] - e[0] * 0.8 / g_w3c.L;   /* (a hair in front of the dim lamp) */
+        col = st == 0 ? 0xff2828ffu : st == 1 ? 0xff1ab4ffu : 0xff58ff50u;   /* (ABGR: red, amber, green - bright) */
+        C3_PointF(&g_w3c, g_w3c.frame, p, e[2] - 11, y - 11, pt[0]); C3_PointF(&g_w3c, g_w3c.frame, p, e[2] + 11, y - 11, pt[1]);
+        C3_PointF(&g_w3c, g_w3c.frame, p, e[2] + 11, y + 11, pt[2]); C3_PointF(&g_w3c, g_w3c.frame, p, e[2] - 11, y + 11, pt[3]);
+        for (q = 0; q < 2; q++) { static const int o[2][6] = { { 0, 1, 2, 0, 2, 3 }, { 0, 2, 1, 0, 3, 2 } };   /* (both faces) */
+            for (i = 0; i < 6; i++) { R3Vert *w = &v[n++]; const float *P = pt[o[q][i]]; memset(w, 0, sizeof *w); w->x = P[0]; w->y = P[1]; w->z = P[2]; w->u = 0.5f; w->v = 0.5f; w->rgba = col; } } }
+    return n; }
+__declspec(dllexport) int __stdcall RR_SignalAhead(unsigned pos, int lat, int dir, int t, int *stop)   /* a car at road position pos (24.8) going dir (+1 up the road): 1 = a red (or
+                                                                    amber, not yet at it) light ahead within 7 pieces - *stop its line; 0 = go on */
+{   int j; double kp = pos / 256.0; (void)lat;
+    if (!g_w3c.lp || g_w3c.obN < g_w3c.n) return 0;
+    if (g_w3nj < 0 || g_w3jExt != g_w3a.ext || g_w3jN != g_w3c.n) W3SigScan();
+    for (j = 0; j < g_w3nj; j++) { int k, has = 0, st; double d;
+        if (dir > 0) { d = g_w3jk[j][0] - kp; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][0] - 8; k < g_w3jk[j][0]; k++) if (k >= 0 && (g_w3c.lp[k][0][0] > 0 || g_w3c.lp[k][1][0] > 0)) has = 1; }
+        else { d = kp - g_w3jk[j][1]; if (d <= 0 || d > 7) continue; for (k = g_w3jk[j][1]; k < g_w3jk[j][1] + 8 && k < g_w3c.n; k++) if (g_w3c.lp[k][0][0] < 0 || g_w3c.lp[k][1][0] < 0) has = 1; }
+        if (!has) continue;
+        st = W3SigState(j, t);
+        if (st == 2 || (st == 1 && d < 1.5)) continue;   /* (green; amber with the line too near to stop: on through) */
+        *stop = dir > 0 ? g_w3jk[j][0] * 256 - 0x50 : g_w3jk[j][1] * 256 + 0x50;
+        { static int lg = -1, m; if (lg < 0) lg = getenv("RR_SIGLOG") != NULL; if (lg && m++ < 60) LOG("signal: a car at %.2f going %+d held at junction %d (%s), its line %.2f", kp, dir, g_w3jk[j][0], st ? "amber" : "red", *stop / 256.0); }   /* (test switch RR_SIGLOG=1) */
+        return 1; }
+    return 0; }
+/* solid things (user, 2026-11-24 "if i ride into obstacles defined in the redwood sprites i should get smacked off the bike as per like a normal obstacle"): REDWOOD's
+   trunks, boulders and stumps, a RAIL FENCE's posts and rails (course3d.h C3_Obst, carriageway A) - RR_ObstacleAt: 1 = the bike at pos / lat is in one */
+static int W3ObstIn(const C3Course *c, unsigned pos, int lat)   /* (one course's tables: the whole course's - the fences, posts - or the live stretch's - the trees, boulders) */
+{   int k = (int)(pos >> 8), q, i; double kp = pos / 256.0;
+    if (!c->nob || c->obN < c->n) return 0;
+    for (q = k - 1; q <= k + 1; q++) if (q >= 0 && q < c->n) for (i = 0; i < c->nob[q]; i++) { const float *e = c->ob[q][i]; double da = (e[0] - kp) * c->L, dl = e[1] - lat, r = e[2] + 45;
+        if (da * da + dl * dl < r * r) { static int lg = -1; if (lg < 0) lg = getenv("RR_OBSTLOG") != NULL; if (lg) LOG("obstacle: the bike at %.2f x %d hit piece %.2f x %.0f r %.0f", kp, lat, e[0], e[1], e[2]); return 1; } }   /* (test switch RR_OBSTLOG=1) */
+    return 0; }
+__declspec(dllexport) int __stdcall RR_ObstacleAt(unsigned pos, int lat)
+{   {   static int lg = -1, m; char e[8] = ""; if (lg < 0) { const char *v = getenv("RR_OBSTLOG"); lg = v && v[0] == '2'; } (void)e;   /* (RR_OBSTLOG=2: the bike every 30 calls) */
+        if (lg && !(m++ % 30)) { int k = (int)(pos >> 8); LOG("obstacle trace: bike %.2f x %d, live %d..%d (%d here), whole course %d here", pos / 256.0, lat, g_w3lo, g_w3hi,
+            g_w3lo >= 0 && g_w3l.nob && k < g_w3l.obN ? g_w3l.nob[k] : -1, g_w3c.nob && k < g_w3c.obN ? g_w3c.nob[k] : -1); } }
+    if (g_w3lo >= 0 && W3ObstIn(&g_w3l, pos, lat)) return 1;
+    if (!g_w3c.nob || g_w3c.obN < g_w3c.n) return 0;
+    {   static int once; if (!once && g_w3lo >= 0 && getenv("RR_OBSTLOG")) { int a, tot = 0, first = -1, fi = 0; once = 1;   /* (test switch RR_OBSTLOG=1: how many, and one found again) */
+            for (a = 0; a < g_w3c.n; a++) { tot += g_w3c.nob[a]; if (first < 0 && g_w3c.nob[a]) first = a; }
+            if (first >= 0) { const float *e = g_w3c.ob[first][0]; once = 2; fi = RR_ObstacleAt((unsigned)(e[0] * 256), (int)e[1]); }
+            LOG("obstacle: %d in all, the first on piece %d - found again: %d", tot, first, fi);
+            {   int lt = 0, lf = -1, lfi = 0; if (g_w3l.nob) for (a = 0; a < g_w3l.obN; a++) { lt += g_w3l.nob[a]; if (lf < 0 && g_w3l.nob[a]) lf = a; }
+                if (lf >= 0) { const float *e = g_w3l.ob[lf][0]; lfi = W3ObstIn(&g_w3l, (unsigned)(e[0] * 256), (int)e[1]); }
+                LOG("obstacle: the live stretch %d..%d: %d, the first on piece %d (radius %.0f) - found again: %d", g_w3lo, g_w3hi, lt, lf, lf >= 0 ? g_w3l.ob[lf][0][2] : 0.0, lfi); } } }
+    return W3ObstIn(&g_w3c, pos, lat); }
 static int W3Trams(R3Vert *v, int cap, double vp)   /* this frame's trams into v (W3TramTex's texture); returns the vertices */
 {   Mesh3DOut o; int r, t, tex; static unsigned char near_[64][16]; double pl = vp + 1.0, L = g_w3c.L, TL = W3_TRAML / L;
     if (g_w3ntr < 0 || g_w3trExt != g_w3a.ext || g_w3trN != g_w3c.n) W3TramScan();
@@ -2450,12 +2517,13 @@ static void W3Draw(int w, int h, const SDL_FRect *r)
         float a[3]; C3_PointF(&g_w3c, W3Fr(), p + 2.0, g_w3camB ? W3MidB(p + 2.0) : C3_RoadMid(&g_w3c, p + 2.0), 0, a); f.reflect = 1; f.reflectY = a[1]; }
     {   /* per-frame geometry of the world pass: trams, then the light halos (their point lights into f) */
         static R3Vert *cv; static int ccap; static R3Batch cb[66 + 256]; int i, nb = 0, nv = 0, need, nh;
-        need = W3_TRAMVX + 18 * 400 + 512 * 6 * W3_SHL * W3_SHW + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (trams, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
+        need = W3_TRAMVX + 12 * 128 + 18 * 400 + 512 * 6 * W3_SHL * W3_SHW + W3_BLDGSH * 36 + W3_GRMAX * 6 + 6 * (16 + 210 * 12);   /* (trams, halos, the casters' and the buildings' shadows, grass, broken hydrants) */
         W3HydCheck(p);   /* (a rider on a fire hydrant breaks it) */
         if (ccap < need) { ccap = need; cv = (R3Vert *)realloc(cv, sizeof(R3Vert) * ccap); if (!cv) ccap = 0; }
         if (cv) {
             PF_T0(pfX);   /* (RR_PROFILE: extras - grass included) */
             {   int nt = W3Trams(cv + nv, W3_TRAMVX, vp); if (nt > 0) { cb[nb].first = nv; cb[nb].count = nt; cb[nb].tex = W3TramTex(); cb[nb].alpha = 0; nb++; nv += nt; } }   /* (trams) */
+            if (W3SolidTex() >= 0) { int ns = W3Signals(cv + nv, 12 * 128, vp); if (ns > 0) { cb[nb].first = nv; cb[nb].count = ns; cb[nb].tex = W3SolidTex(); cb[nb].alpha = 0; nb++; nv += ns; } }   /* (the traffic lights' lit lamps) */
             if (g_w3ngr && W3GrassTex() >= 0) { PF_T0(pfG); LARGE_INTEGER g0, g1, gf; int ng; QueryPerformanceCounter(&g0); ng = W3Grass(cv + nv, W3_GRMAX * 6, eye); QueryPerformanceCounter(&g1); QueryPerformanceFrequency(&gf);
                 g_grLast = ng / 6; g_grLastMs = (float)((g1.QuadPart - g0.QuadPart) * 1000.0 / gf.QuadPart); PF_ADD(PF_GRASS, pfG); if (ng > 0) { cb[nb].first = nv; cb[nb].count = ng; cb[nb].tex = W3GrassTex(); cb[nb].alpha = 0; nb++; nv += ng; } }   /* grass tufts on the green ground */
             nv += W3HydDraw(cv, nv, nv + 6 * (16 + 210 * 12), cb, &nb, 64 + 180, eye);   /* broken hydrants: the stumps, the water */

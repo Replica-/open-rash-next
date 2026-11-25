@@ -11,6 +11,23 @@
 static int g_lsOn = -1;   /* -1 = not decided yet */
 static DWORD g_lsLast; static char g_lsWhat[64]; static int g_lsPm, g_lsTrack, g_lsLevel;   /* (the track 1..5 and level 1..5: the title) */
 static SDL_Texture *g_lsTex[4]; static int g_lsTexW[4], g_lsTexH[4], g_lsTexPx[4]; static char g_lsTexStr[4][64];   /* (0 title, 1 track, 2 stage, 3 percentage) */
+static SDL_Texture *g_lsBg; static int g_lsBgW, g_lsBgH, g_lsBgTried;   /* the background: one of the game's cartoon pictures (user, 2026-11-23: "during loading screen it should just
+                                                                         default to one of the wacky backgrounds the game has instead of that plain background") - a new pick each race start */
+__declspec(dllexport) unsigned char * __stdcall RR_DecodeJpeg(const void *data, unsigned size, int *w, int *h);   /* jpeg.c */
+__declspec(dllexport) void __stdcall RR_FreeImage(void *p);
+static void LsBgLoad(void)
+{   static const char *const pic[] = { "Images\\Street.RRI", "Images\\Panzer.RRI", "Images\\Olleys.RRI", "Images\\Credits.RRI" };   /* (the street, the Panzer Klub, Olley's, the gang) */
+    FILE *f; long n; unsigned char *buf, *px; int w, h, i;
+    if (g_lsBgTried) return; g_lsBgTried = 1;
+    for (i = 0; i < 4 && !g_lsBg; i++) { const char *p = pic[(GetTickCount() / 7 + i) % 4];   /* (the next one when a picture is missing) */
+        if (!(f = fopen(p, "rb"))) continue;
+        fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET); buf = (unsigned char *)malloc(n > 0 ? n : 1);
+        if (!buf || fread(buf, 1, n, f) != (size_t)n) { fclose(f); free(buf); continue; } fclose(f);
+        px = RR_DecodeJpeg(buf, (unsigned)n, &w, &h); free(buf); if (!px) continue;
+        if ((g_lsBg = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_BGR24, SDL_TEXTUREACCESS_STATIC, w, h)) != NULL) {   /* (the decoder's B, G, R bytes) */
+            SDL_UpdateTexture(g_lsBg, NULL, px, w * 3); SDL_SetTextureScaleMode(g_lsBg, SDL_SCALEMODE_LINEAR); g_lsBgW = w; g_lsBgH = h; }
+        RR_FreeImage(px); } }
+static void LsBgFree(void) { if (g_lsBg) SDL_DestroyTexture(g_lsBg); g_lsBg = NULL; g_lsBgTried = 0; }   /* (the race is on: the next load picks again) */
 static int LsWanted(void)
 {   if (g_lsOn < 0) { const char *e = getenv("RR_LOADSCREEN"); g_lsOn = (e && *e) ? *e == '1' : !(g_headless || getenv("RR_DETERMINISTIC")); }
     return g_lsOn && g_ren && !g_vpPlaying; }
@@ -48,7 +65,15 @@ static void LsDraw(void)
     SDL_GetCurrentRenderOutputSize(g_ren, &ow, &oh);
     if (ow > 0 && oh > 0) {
         SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE);
-        for (k = 0; k < 32; k++) {   /* the background: night blue at the top to near black, in bands */
+        LsBgLoad(); SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255); SDL_RenderClear(g_ren);
+        if (g_lsBg) {   /* the picture: the window's height, centred (black bars beside it on a wide window), a dark band behind the text and the bar */
+            r.h = (float)oh; r.w = (float)oh * g_lsBgW / g_lsBgH; r.x = (ow - r.w) / 2; r.y = 0; SDL_RenderTexture(g_ren, g_lsBg, NULL, &r);
+            SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
+            for (k = 0; k < 24; k++) { float q = k / 23.0f, a = 0.72f * (1 - (2 * q - 1) * (2 * q - 1) * (2 * q - 1) * (2 * q - 1));   /* (soft top and bottom edges) */
+                float y0 = (float)floor(oh * (0.24f + 0.50f * k / 24.0f)), y1 = (float)floor(oh * (0.24f + 0.50f * (k + 1) / 24.0f));   /* (whole rows, no overlap: overlapping slices showed as stripes) */
+                r.x = 0; r.w = (float)ow; r.y = y0; r.h = y1 - y0; SDL_SetRenderDrawColorFloat(g_ren, 0, 0, 0, a); SDL_RenderFillRect(g_ren, &r); }
+            SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); }
+        else for (k = 0; k < 32; k++) {   /* (no picture: night blue at the top to near black, in bands) */
             float q = k / 31.0f; r.x = 0; r.y = oh * k / 32.0f; r.w = (float)ow; r.h = oh / 32.0f + 1;
             SDL_SetRenderDrawColorFloat(g_ren, 0.10f - 0.08f * q, 0.09f - 0.07f * q, 0.20f - 0.16f * q, 1); SDL_RenderFillRect(g_ren, &r); }
         LsText(0, "LOADING", oh / 9, 0); _snprintf(tl, sizeof tl, t >= 1 && t <= 5 ? (g_lsLevel >= 1 && g_lsLevel <= 5 ? "%s  -  Level %d" : "%s") : "", track[t >= 1 && t <= 5 ? t : 0], g_lsLevel); tl[sizeof tl - 1] = 0; LsText(1, tl, oh / 22, 0);
@@ -81,6 +106,7 @@ static void LsStep(int permille, const char *what)
     if (newWhat) lstrcpynA(g_lsWhat, what, sizeof g_lsWhat);
     g_lsPm = permille;
     if (!newWhat && now - g_lsLast < 30 && permille < 1000) return;
-    g_lsLast = now; LsDraw(); }
+    g_lsLast = now; LsDraw();
+    if (permille >= 1000) LsBgFree(); }
 /* the game's stages (system\race_session.c, render\world3d_feed.c) */
 __declspec(dllexport) void __stdcall RR_LoadProgress(int permille, const char *what, int track, int level) { g_lsTrack = track; g_lsLevel = level; LsStep(permille, what); }

@@ -86,6 +86,12 @@ void __fastcall rr_PlayerControlTick(int self)
         if (I32(ctl, 0x2f4) == 0 && rr_CourseEditWater((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8, PlayerOnB(ctl))) {
             RiderCollide(ctl, 0x2000000, 0x2000000, 2); I32(ctl, 0x2f0) = 0; RRF_RaceStateSet(5, 0xb4); return; }
     }
+    {   /* the Course Editor's solid scenery (REDWOOD's trunks, boulders, stumps, a RAIL FENCE - the shim's True 3D course, world3d.inc RR_ObstacleAt): ridden into, the
+           player is knocked off the bike as at any obstacle (user, 2026-11-24) - carriageway A only */
+        static int (__stdcall *obst)(unsigned, int); static int looked;
+        if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); obst = sh ? (int (__stdcall *)(unsigned, int))GetProcAddress(sh, "RR_ObstacleAt") : 0; looked = 1; }
+        if (obst && I32(ctl, 0x2f4) == 0 && !PlayerOnB(ctl) && obst((unsigned)I32(self, 0x44), I32(self, 0x50) >> 8)) { RiderCollide(ctl, 0x2000000, 0x2000000, 2); return; }
+    }
     {   /* cobbles (road\course_edit.c rr_CourseEditCobble): their rattle while the player rides on them (rrdsound.dll RR_Cobble, synthesised there; the speed
            +0xec, 0 .. ~16000 at full) */
         int rr_CourseEditCobble(unsigned pos, int lat, int half); static void (__stdcall *cob)(float);

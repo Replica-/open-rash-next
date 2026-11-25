@@ -387,8 +387,10 @@ static void Title(void) { char t[200]; sprintf(t, "Open Rash Course Editor - tra
 static void PlanInv(void);   /* (the plan, small and big: drawn again) */
 static int PlanNewFork(int k); static void PlanForkFields(void);   /* (the forks made in the editor: below) */
 static void ForestFill(int k);   /* (the Terrain toolbar, below: a forest piece's object row from its terrain points) */
+static int g_noRedraw;   /* (the sample course being built: one Redraw at the end) */
 static void Redraw(void)   /* everything that shows the course */
-{   if (g_list) { ListView_SetItemCountEx(g_list, g_open ? g_c.n : 0, LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL); InvalidateRect(g_list, NULL, FALSE); }
+{   if (g_noRedraw) return;
+    if (g_list) { ListView_SetItemCountEx(g_list, g_open ? g_c.n : 0, LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL); InvalidateRect(g_list, NULL, FALSE); }
     if (g_open) { int k; for (k = 0; g_ra.ext && k < g_c.n && k < g_ra.next; k++) if (g_ra.ext[k].forest[0] | g_ra.ext[k].forest[1]) ForestFill(k);   /* (the trees follow the terrain points) */
         PlanForkFields(); C3_Frames(&g_c); C3_FramesB(&g_c); }
     PlanInv(); InvalidateRect(g_prof, NULL, FALSE); g_meshDirty = 1; Title(); }
@@ -492,7 +494,8 @@ static int g_bpaint, g_bdrag;   /* a block chosen (1 City side, 2 Terrain side, 
 static unsigned g_bpVal;   /* the block chosen (g_bpaint 4): a picture (RRC_BAND value | set id << 16, as GroundFill) or one of BLK_ */
 #define BLK_FPUP 0x2000u    /* (on a picture's RRC_BAND value, Footpaths list only: painted with its footpath raised / flush - the editor's, never saved: PicPaintAt) */
 #define BLK_FPFLAT 0x4000u
-enum { BLK_ORIG = 1, BLK_BUILD, BLK_GUTON, BLK_GUTOFF, BLK_GUTORIG, BLK_ROADORIG, BLK_KERB0, BLK_GSTY0 = BLK_KERB0 + 5, BLK_FAC0 = 0x1000 };   /* (BLK_KERB0 + n: curb style n, BLK_GSTY0 + n: gutter style n - course3d.h C3_EdgeStyle) */   /* (BLK_FAC0 + i: buildings with facade i of FacList) */
+enum { BLK_ORIG = 1, BLK_BUILD, BLK_GUTON, BLK_GUTOFF, BLK_GUTORIG, BLK_ROADORIG, BLK_KERB0, BLK_GSTY0 = BLK_KERB0 + 5, BLK_JUNCTION = BLK_GSTY0 + 3, BLK_KRET, BLK_FEDGE, BLK_FAC0 = 0x1000 };   /* (BLK_FEDGE: FOREST EDGE - flush, no gutter, a white edge line: RrcExtra.gutter bit 7) */   /* (BLK_JUNCTION, BLK_KRET:
+                                                                     the Junction collection's road and curb blocks - BlockColl) */   /* (BLK_KERB0 + n: curb style n, BLK_GSTY0 + n: gutter style n - course3d.h C3_EdgeStyle) */   /* (BLK_FAC0 + i: buildings with facade i of FacList) */
 static unsigned g_facVal[512]; static unsigned short g_facSet[512]; static int g_facTex[512], g_nFac;   /* the course's facades (FacList: RrcExtra.fac / facSet values, textures) */
 /* Raise / Lower / Level (user, 2026-11-18: "can you give me 3 buttons, raise, level and lower - when i use level the first part is the start of the leveller and i drag it to
    other parts to level them too"): g_bpaint 5 / 6 / 7 - a ground cell's height is its outer terrain point's (P0, P1, P2; beyond: P2's), on terrain sides */
@@ -2762,6 +2765,25 @@ static int FacDonorCode(int k)   /* the facade code of the street side nearest p
         for (e = 0; e < 63; e++) for (k2 = 0; k2 < g_ra.nset; k2++) { RxSet *st = &g_ra.set[k2]; const unsigned char *g = (const unsigned char *)RX_W(st, RX_Entry(st, 1, (unsigned)e, NULL, 0), 0x20);
             if (st->id <= 0xffff && g && *(const unsigned *)g == 0x434c4750 && g[0x16] * 16 > 0x10 && RX_Lookup(st, 1, (unsigned)e, NULL, 0)) return e; } }
     return -1; }
+/* the Junction collection's road block (user, 2026-11-23): piece k's road a crossing - both sides' lanes the track's cross street surface (TEXG 5, no lane
+   lines); the piece before gets kind flag 8, the one after 0x10 - True 3D lays the stop line and zebra there, facing the junction (course3d.h C3_Lanes) */
+#define JCT_ROAD (RRC_BAND | RRC_TEXG | 5u << 2)
+static int JunctionAt(int k) { return k >= 0 && k < g_c.n && g_ra.ext && k < g_ra.next && g_ra.ext[k].road[0][0] == JCT_ROAD && g_ra.ext[k].road[0][1] == JCT_ROAD; }
+static void JunctionMarks(int j)   /* piece j's stop line / zebra flags as its neighbours want them (a crossing of the course's own, kind flag 0x20, kept as it was) */
+{   RoadSection *s; unsigned char f;
+    if (j < 0 || j >= g_c.n) return;
+    s = &g_c.piece[j].halfA; f = s->kindFlags & ~0x18;
+    if (!JunctionAt(j)) { if (JunctionAt(j + 1) || (j + 1 < g_c.n && (g_c.piece[j + 1].halfA.kindFlags & 0x20))) f |= 0x08; if (JunctionAt(j - 1) || (j > 0 && (g_c.piece[j - 1].halfA.kindFlags & 0x20))) f |= 0x10; }
+    if (f != s->kindFlags) { s->kindFlags = f; if (g_c.piece[j].layout == 2) g_c.piece[j].halfB.kindFlags = (g_c.piece[j].halfB.kindFlags & ~0x18) | (f & 0x18); BlockSync(j); } }
+static void JunctionSet(int k, int on)   /* piece k made a crossing (on) or its road as the course has it again */
+{   int j, sd;
+    for (j = k - 1; j <= k + 1; j++) if (j >= 0 && j < g_c.n && !TerrRec(j)) return;
+    for (sd = 0; sd < 2; sd++) { g_ra.ext[k].road[0][sd] = (unsigned short)(on ? JCT_ROAD : 0); if (g_c.piece[k].layout == 2) g_ra.ext[k].road[1][sd] = g_ra.ext[k].road[0][sd]; }
+    { int l; for (l = 0; l < 8; l++) g_ra.ext[k].lane[0][l] = g_ra.ext[k].lane[1][l] = 0; }   /* (its lanes' own surfaces go) */
+    for (j = k - 1; j <= k + 1; j++) JunctionMarks(j);
+    BlockSync(k); g_dirty = 1; Redraw();
+    Status(on ? "Junction (Junction collection): piece %d a crossing - stop lines on %d and %d.  Paint SIDE STREET on its cells (one side: a T, both: a crossroads), KERB RETURN on the corners, TRAFFIC LIGHTS / STOP SIGN on the verges before it"
+              : "Piece %d's road as the course has it again (its junction gone)", k, k - 1, k + 1); }
 static void PicPaintAt(int k, int part, int cell)   /* the block chosen (g_bpVal) onto cell `cell` of piece k's side part - 1: its category's cell - Road the road, Curbs the
                                                        curb (and the gutter), Ground the cell clicked: a picture there (buildings in the way moved out past it: on a street the
                                                        side made terrain from there on), or Buildings from there out (the mix, or one facade: RrcExtra.fac) */
@@ -2771,9 +2793,21 @@ static void PicPaintAt(int k, int part, int cell)   /* the block chosen (g_bpVal
     if (part != 1 && part != 2) { Status("Click a cell of the grid beside the road"); return; }
     if (g_bCat == 0) cell = 6; else if (g_bCat == 1) cell = 5; else if (cell < 0 || cell > 4) return;   /* (Ground: only its cells) */
     if (g_bCat == 3 && cell != 0) { Status("Footpaths go on the footpath - the strip beside the road (the verge) - not P0 and beyond"); return; }   /* (user, 2026-11-19: "footpaths only exist for the footpaths") */
+    if (val == BLK_JUNCTION) { JunctionSet(k, 1); return; }   /* (the Junction collection: its blocks - JunctionSet, below for KERB RETURN) */
+    if (val == BLK_ORIG && g_bCat == 0 && JunctionAt(k)) { JunctionSet(k, 0); return; }   /* (a junction's road "original" again: the junction gone, both sides, its stop lines too) */
+    if ((val & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) && (int)(val & 0xff) == C3_GFENCE && cell > 1) { Status("RAIL FENCE runs along the road: paint it on the verge or P0"); return; }
+    if ((val & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) && C3_GroundVergeOnly((int)(val & 0xff)) && cell != 0) { Status("%s stands at the kerb: paint it on the verge (the strip next to the road)", C3_GroundLabel((int)(val & 0xff))); return; }
     side = part - 1; hh = g_half && g_c.piece[k].layout == 2; s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA;
     if (!TerrRec(k)) return;
     if (val >= BLK_GUTON && val <= BLK_GUTORIG) { unsigned char *g = &g_ra.ext[k].gutter[hh][side]; *g = val == BLK_GUTORIG ? 0 : (unsigned char)((*g & ~3) | (val == BLK_GUTON ? 1 : 2)); g_dirty = 1; Redraw(); return; }   /* (original: the curb's height and the gutter as the course has them) */
+    if (val == BLK_FEDGE) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* FOREST EDGE: the road's edge flush with the ground, no gutter, a white line along it (course3d.h) */
+        *g = (unsigned char)((*g & ~(7 << 2) & ~3) | 4 << 2 | 2 | 0x80); g_ra.ext[k].lift[hh][side][0] = 0; g_dirty = 1; Redraw();
+        Status("Forest edge: piece %d's %s road edge flush, no gutter, a white edge line (True 3D)", k, side ? "right" : "left"); return; }
+    if (val == BLK_KRET) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* KERB RETURN (the Junction collection): the footpath flush, no gutter - it comes down to the road at a corner
+                                                                     (a flush piece next to a raised one ramps: course3d.h C3_Roadside) */
+        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no footpath - paint one first (Footpaths)", k, side ? "right" : "left"); return; }
+        *g = (unsigned char)((*g & ~(7 << 2) & ~3) | 4 << 2 | 2); g_ra.ext[k].lift[hh][side][0] = g_ra.ext[k].lift[hh][side][1] = 0; g_dirty = 1; Redraw();
+        Status("Kerb return (Junction collection): piece %d's %s footpath down to the road", k, side ? "right" : "left"); return; }
     if (val >= BLK_KERB0 && val < BLK_KERB0 + 5) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];
         if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no footpath - paint one first (Footpath)", k, side ? "right" : "left"); return; }
         *g =(unsigned char)((*g & ~(7 << 2)) | (val - BLK_KERB0) << 2); g_dirty = 1; Redraw(); return; }   /* (the curb's style: RrcExtra.gutter bits 2..4) */
@@ -3262,11 +3296,30 @@ static HBITMAP ThumbNoBlend(HBITMAP src)
         d[y * PK_TS + x] = bar ? 0xffffffffu : 0xffe02424u; }
     if (n < 512) { from[n] = src; to[n] = b; n++; }
     return b; }
+/* a collection's badge (user, 2026-11-23: "put a tag on them that makes them a collection so we can identify them later, even give them all a little symbol"): the
+   top left corner - Junction (ground_art.h C3_COLL_JUNCTION): a yellow disc, a black crossroads in it */
+static int BlockColl(unsigned v)   /* the collection block value v belongs to (0 none) */
+{   if (v == BLK_JUNCTION || v == BLK_KRET) return C3_COLL_JUNCTION;
+    if ((v & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN)) return C3_GroundColl((int)(v & 0xff));
+    return C3_COLL_NONE; }
+static HBITMAP ThumbColl(HBITMAP src, int coll)
+{   static HBITMAP from[256], to[256]; static int n; BITMAPINFO bi; unsigned *d = NULL; HDC dc, sd, dd; HBITMAP b; int i, x, y, R = PK_TS / 6, cx = R + 1, cy = R + 1;
+    if (!coll) return src;
+    for (i = 0; i < n; i++) if (from[i] == src) return to[i];
+    memset(&bi, 0, sizeof bi); bi.bmiHeader.biSize = sizeof bi.bmiHeader; bi.bmiHeader.biWidth = PK_TS; bi.bmiHeader.biHeight = -PK_TS; bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32;
+    dc = GetDC(NULL); b = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&d, NULL, 0); sd = CreateCompatibleDC(dc); dd = CreateCompatibleDC(dc); ReleaseDC(NULL, dc);
+    if (!b || !d) { DeleteDC(sd); DeleteDC(dd); return src; }
+    SelectObject(sd, src); SelectObject(dd, b); BitBlt(dd, 0, 0, PK_TS, PK_TS, sd, 0, 0, SRCCOPY); GdiFlush(); DeleteDC(sd); DeleteDC(dd);
+    for (y = cy - R - 1; y <= cy + R + 1; y++) for (x = cx - R - 1; x <= cx + R + 1; x++) { int dx = x - cx, dy = y - cy, r2 = dx * dx + dy * dy, w = R / 3 > 1 ? R / 3 : 1;
+        if (x < 0 || y < 0 || x >= PK_TS || y >= PK_TS || r2 > (R + 1) * (R + 1)) continue;
+        d[y * PK_TS + x] = r2 > R * R ? 0xff000000u : (abs(dx) <= w / 2 + 0 && abs(dy) < R - 1) || (abs(dy) <= w / 2 && abs(dx) < R - 1) ? 0xff101010u : 0xfff2c81eu; }   /* (a black rim, the disc, the crossroads) */
+    if (n < 256) { from[n] = src; to[n] = b; n++; }
+    return b; }
 /* a ground that stands up as a wall on P3 (user, 2026-11-22: "some ground textures have walls if they are placed beyond p2. can you put a symbol on those in the
    brushes ... Forest is one of them"; course3d.h: FOREST and SHRUB their blocks, REDWOOD its hedge - GroundWalls): a dark square in the bottom right corner, a brick
    wall in it */
 static int GroundIsWall(int i) { return i == C3_GCLIFF || i == C3_GSEACLIFF; }   /* (the Walls list's: CLIFF rises, SEA CLIFF drops into the sea - course3d.h) */
-static int GroundWalls(int i) { return i == C3_GFOREST || i == C3_GSHRUB || (i >= 0 && i < 4 && g_ra.groundHedge[i]); }
+static int GroundWalls(int i) { return i == C3_GFOREST || i == C3_GSHRUB || i == C3_GSHRUBG || (i >= 0 && i < 4 && g_ra.groundHedge[i]); }
 static HBITMAP ThumbWall(HBITMAP src)
 {   static HBITMAP from[64], to[64]; static int n; BITMAPINFO bi; unsigned *d = NULL; HDC dc, sd, dd; HBITMAP b; int i, x, y, S = PK_TS / 3, x0 = PK_TS - S - 3, y0 = PK_TS - S - 3;
     for (i = 0; i < n; i++) if (from[i] == src) return to[i];
@@ -3657,7 +3710,7 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
         SendMessageA(lv, WM_SETREDRAW, FALSE, 0); ListView_DeleteAllItems(lv); if (il[L]) ImageList_Destroy(il[L]);
         il[L] = ImageList_Create(PAL_TS, PAL_TS, ILC_COLOR32, 64, 64); ListView_SetImageList(lv, il[L], LVSIL_NORMAL); ListView_SetIconSpacing(lv, 82, PAL_TS + 34);   /* (two lines of name, the column's width; little room between - user, 2026-11-19 "reduce the spacing between elements more") */
         if (L == 0) { BlockAdd(lv, il[L], &n, "original", BLK_ORIG, Thumb(-1));
-            for (i = 0; i < g_ra.nground; i++) if (!C3_GroundIsPath(i) && !GroundIsWall(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), ThumbSprite(i == C3_GBRIDGE ? ThumbNoBlend(ThumbCover(g_ra.ground0 + i)) : GroundWalls(i) ? ThumbWall(ThumbCover(g_ra.ground0 + i)) : ThumbCover(g_ra.ground0 + i), GroundSprites(g_ra.ground0 + i, i)));   /* (REDWOOD ...: ground_art.h; a bridge's deck:
+            for (i = 0; i < g_ra.nground; i++) if (!C3_GroundIsPath(i) && !GroundIsWall(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), ThumbColl(ThumbSprite(i == C3_GBRIDGE || C3_GroundSharp(i) ? ThumbNoBlend(ThumbCover(g_ra.ground0 + i)) : GroundWalls(i) ? ThumbWall(ThumbCover(g_ra.ground0 + i)) : ThumbCover(g_ra.ground0 + i), GroundSprites(g_ra.ground0 + i, i)), C3_GroundColl(i)));   /* (REDWOOD ...: ground_art.h; a bridge's deck:
                                                                      no blend; a wall on P3: its mark) */
             m = PicList(-1, 0, 0, val, tex, wh, 4096);
             for (i = 0; i < m; i++) if ((wh[i] & 0x7c) && !(val[i] & RRC_CAT5)) { PicName(lb, val[i], tex[i], 0); BlockAdd(lv, il[L], &n, lb, (LPARAM)val[i], ThumbSprite(C3_TexBaked(&g_ra, tex[i]) ? ThumbNoBlend(ThumbCover(tex[i])) : ThumbCover(tex[i]), GroundSprites(tex[i], -1))); } }   /* (road painted in: no blend; a sprite mark) */
@@ -3666,6 +3719,7 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
         else if (L == 1) { BlockAdd(lv, il[L], &n, "original", BLK_ROADORIG, Thumb(-1));   /* (one-line names: a second line took a whole row - user, 2026-11-19 "reduce the spacing") */
             m = RoadList(val, tex, 4096);
             for (i = 0; i < m; i++) BlockAdd(lv, il[L], &n, RoadName(val[i], tex[i]), (LPARAM)val[i], (val[i] & RRC_TEXG) ? ThumbRoad(tex[i]) : ThumbCover(tex[i]));   /* (the lane lines shown) */
+            if (g_ra.global[5] >= 0) BlockAdd(lv, il[L], &n, "JUNCTION", BLK_JUNCTION, ThumbColl(ThumbRoad(g_ra.global[5]), C3_COLL_JUNCTION));   /* (the Junction collection: a crossing - PicPaintAt) */
         }
         else if (L == 4) { int r;   /* Curbs (user, 2026-11-19: "put curbs into their own category too"): the gutter (none / standard / wide / channel - user, 2026-11-19 "i cant figure out
                                       how to customise the gutters"; T3D shows them, P3D names them on the chosen piece), the curb + gutter as the course had them, the curb faces */
@@ -3673,13 +3727,15 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
             {   static const char *const gn[3] = { "gutter", "wide gutter", "channel" };
                 for (r = 0; r < 3; r++) BlockAdd(lv, il[L], &n, gn[r], BLK_GSTY0 + r, ThumbEdge(1, r)); }
             BlockAdd(lv, il[L], &n, "original", BLK_GUTORIG, Thumb(-1));
+            BlockAdd(lv, il[L], &n, "KERB RETURN", BLK_KRET, ThumbColl(ThumbEdge(1, 3), C3_COLL_JUNCTION));
+            BlockAdd(lv, il[L], &n, "FOREST EDGE", BLK_FEDGE, ThumbEdge(1, 3));   /* (a country road's edge: no kerb, no gutter, a white line - user, 2026-11-24 redwood photo) */   /* (the Junction collection: the footpath down to the road at a corner) */
             m = PicList(-1, 0, 1, val, tex, wh, 4096);
             for (i = 0; i < m; i++) if (wh[i] & 0x02) { sprintf(lb, "%.8s", g_ra.tex[tex[i]].name); BlockAdd(lv, il[L], &n, lb, (LPARAM)val[i], ThumbNoBlend(ThumbCover(tex[i]))); } }   /* (curbs: no blend) */
         else if (L == 3) {   /* Footpaths (user, 2026-11-19: "all the footpath textures ... their own category ... and their own list"): the sand footpath (ground_art.h SANDPATH), a bridge's deck (BRIDGE - also in Ground: user, 2026-11-19 "i cant get the bridge footpath to be flush up against the kerb side"),
                                 the course's footpath pictures (set category 5: RRSSTA, SAND ...), each raised and flush - no blocks of height alone ("do i need the strictly
                                 footpath raised and flush ones now?": the other version of the same picture changes it) - painted on the footpath only (g_bCat 3) */
             {   int r = g_fpFlat; {   /* (each picture once, raised or flush as the switch above the list says - g_fpRaiseChk; ThumbFp marks them) */
-                for (i = 0; i < g_ra.nground; i++) if (C3_GroundIsPath(i) || i == C3_GBRIDGE) { sprintf(lb, "%s", k_c3Ground[i]); BlockAdd(lv, il[L], &n, lb, (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i | (r ? BLK_FPFLAT : BLK_FPUP)), ThumbFp(ThumbCover(g_ra.ground0 + i), !r)); }
+                for (i = 0; i < g_ra.nground; i++) if (C3_GroundIsPath(i) || i == C3_GBRIDGE || i == C3_GCONCRETE) { sprintf(lb, "%s", k_c3Ground[i]); BlockAdd(lv, il[L], &n, lb, (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i | (r ? BLK_FPFLAT : BLK_FPUP)), ThumbFp(ThumbCover(g_ra.ground0 + i), !r)); }
                 m = PicList(-1, 0, 1, val, tex, wh, 4096);
                 for (i = 0; i < m; i++) if ((wh[i] & 0x7c) && (val[i] & RRC_CAT5)) { sprintf(lb, "%.8s", g_ra.tex[tex[i]].name);
                     BlockAdd(lv, il[L], &n, lb, (LPARAM)(val[i] | (r ? BLK_FPFLAT : BLK_FPUP)), ThumbFp(C3_TexBaked(&g_ra, tex[i]) ? ThumbNoBlend(ThumbCover(tex[i])) : ThumbCover(tex[i]), !r)); } } } }
@@ -3713,7 +3769,8 @@ static void BlockChoose(int list, int item, int toggle)   /* item `item` of list
     g_bList = list;
     g_bCat = list == 1 ? 0 : list == 4 ? 1 : list == 3 ? 3 : 2;   /* (Walls: ground pictures - its cells) */   /* (Road the lanes, Curbs the curb, Footpaths the footpath, Ground / Buildings the cells) */   /* (Road / curbs: the curb's blocks paint curbs) */
     if (it.lParam == BLK_ROADORIG) it.lParam = BLK_ORIG;
-    g_bpVal = (unsigned)it.lParam; BlockSet(4); }
+    g_bpVal = (unsigned)it.lParam; BlockSet(4);
+    if (BlockColl(g_bpVal)) { char t[300]; lstrcpynA(t, g_status, sizeof t); Status("[%s collection] %s", k_c3CollName[BlockColl(g_bpVal)], t); } }
 static void BlockDrop(void)   /* a block dragged from the list let go: over the 3D view, painted there */
 {   POINT p; RECT r; g_bdrag = 0; ReleaseCapture(); GetCursorPos(&p); ScreenToClient(g_view, &p); GetClientRect(g_view, &r);
     if (p.x < 0 || p.y < 0 || p.x >= r.right || p.y >= r.bottom) return;
@@ -3838,9 +3895,92 @@ static void Defaults(void)   /* the data folder and the game next to the editor:
     if (GetFileAttributesA(g_dataDir) == INVALID_FILE_ATTRIBUTES) _snprintf(g_dataDir, sizeof g_dataDir - 1, "%s", exe);
     GetFullPathNameA(g_gameExe, MAX_PATH, exe, NULL); strcpy(g_gameExe, exe); GetFullPathNameA(g_dataDir, MAX_PATH, exe, NULL); strcpy(g_dataDir, exe); }
 
+/* the sample course (user, 2026-11-23: "replace the test level ... with a sample fork / join (dont overlap the roads) and sample terrains etc and a bridge and
+   water"): New track, then bends / hills, a flattened fork (B one sweep out to the right and back - never across A), and stretches of painted ground; saved to
+   CE_SAMPLE's path.  Everything laid out between the start and level 1's finish (Test drive races level 1) */
+static int SamplePaint(int cat, const char *name, int k0, int n, int half, int side, int cell)   /* the block `name` of category cat (as CE_TESTGB) on n pieces' cell */
+{   int L = cat == 5 ? 5 : cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1, j, nb, item = -1, i;
+    g_bFill = -1; BlocksFill(); nb = ListView_GetItemCount(g_blk[L]);
+    for (j = 0; j < nb; j++) { char b2[40] = ""; LVITEMA gi; memset(&gi, 0, sizeof gi); gi.pszText = b2; gi.cchTextMax = 40; SendMessageA(g_blk[L], LVM_GETITEMTEXTA, (WPARAM)j, (LPARAM)&gi); if (!strcmp(b2, name)) { item = j; break; } }
+    if (item < 0) { LOG("sample: no block \"%s\" in list %d", name, L); return 0; }
+    BlockChoose(L, item, 0); g_half = half;
+    TerrBegin(); for (i = 0; i < n && k0 + i < g_c.n; i++) if (!half || g_c.piece[k0 + i].layout == 2) PicPaintAt(k0 + i, side + 1, cell); TerrEnd(); g_half = 0;
+    return 1; }
+static void SampleCells(int cat, const char *name, int k0, int n, int half, int side, int c0, int c1) { int c; for (c = c0; c <= c1; c++) SamplePaint(cat, name, k0, n, half, side, c); }
+static void SampleBend(int k0, int P, double C)   /* curves C sin over P pieces: the heading out and back (the road shifted sideways, its way on the same) */
+{   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->curve += (int)floor(C * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xb8); BlockSync(k0 + j); } }
+static void SampleHill(int k0, int P, double H)   /* a crest (H > 0) or a dip over P pieces: the height back where it was */
+{   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->hill += (int)floor(H * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xbc); BlockSync(k0 + j); } }
+static void SampleCourse(const char *path)
+{   int S, F, D, fl, fs, fe, ok = 0, k, a, b, i; double mind = 1e30;
+    if (!g_open) { LOG("sample: no course open"); return; }
+    ClearCourse(1); g_noRedraw = 1;
+    S = g_c.start; F = g_lvFin[0] > S ? g_lvFin[0] : g_c.n - 1; D = F - S;
+    {   /* no junctions (user, 2026-11-23 "remove the junctions please in the test map"): New track takes the cross streets (kind flag 0x20) but left the pieces
+           either side of each with flags 8 / 0x10 - True 3D lays the stop line and zebra there (course3d.h C3_Lanes: the "start grid" strips, TEXG 13..15);
+           cleared everywhere but the start grid itself (the race's start piece and its neighbours) */
+        int nj = 0, keep = 0; char o[400], *w = o; o[0] = 0;
+        for (k = 0; k < g_c.n; k++) { RoadSection *s = &g_c.piece[k].halfA; if (!(s->kindFlags & 0x18)) continue;
+            if (k >= S - 12 && k <= S + 12) { keep++; if (w - o < 360) w += sprintf(w, " %d:%x", k, s->kindFlags & 0x18); continue; }
+            s->kindFlags &= ~0x18; BlockSync(k); nj++; }
+        LOG("sample: junction marks cleared on %d pieces, kept %d at the start:%s", nj, keep, o); }
+    LOG("sample: start %d level 1 finish %d (%d pieces), course %d", S, F, D, g_c.n);
+    if (D < 900) { LOG("sample: level 1 too short"); return; }
+#define AT(f) (S + (int)((f) * D))
+    /* the road: bends and hills (none over the fork, the bridge or the lake's shore) */
+    {   /* the redwood: a winding road over the hills (user, 2026-11-24 "make the redwood more curved and more hilly"; the photo: one bend into the next) */
+        int r0 = AT(0.04), r1 = AT(0.20), nb = 6, nh = 3, j, L = (r1 - r0) / nb, Lh = (r1 - r0) / nh;
+        for (j = 0; j < nb; j++) SampleBend(r0 + j * L, L, j & 1 ? -19 : 19);
+        for (j = 0; j < nh; j++) SampleHill(r0 + j * Lh, Lh, j == 1 ? -40 : 46); }
+    SampleBend(AT(0.60), AT(0.72) - AT(0.60), -5);
+    SampleBend(AT(0.75), AT(0.87) - AT(0.75), 8); SampleHill(AT(0.76), AT(0.81) - AT(0.76), 25); SampleHill(AT(0.81), AT(0.86) - AT(0.81), 25);
+    g_noRedraw = 0; Redraw(); g_noRedraw = 1;
+    /* the fork: A straight, B one gentle sweep to the right and back in (flattened - it stays on its side) */
+    fl = D / 4 > 600 ? 600 : D / 4; if (fl < 2 * CE_SAME + 30) fl = 2 * CE_SAME + 30;
+    for (fs = AT(0.22); fs < AT(0.22) + 60 && !ok; fs++) { fe = fs + fl; ok = PlanForkRange(fs, fe); if (!ok && fs == AT(0.22)) LOG("sample: fork %d..%d: %s", fs, fe, g_status); }
+    fs--; fe = fs + fl;
+    if (ok) { PlanFlattenAt(fs + fl / 2); LOG("sample: fork %d..%d: %s", fs, fe, g_status); } else LOG("sample: no fork: %s", g_status);
+    g_noRedraw = 0; Redraw(); g_noRedraw = 1;
+    if (ok) {   /* B against A: the nearest B comes to any of A's pieces (centre lines), past the turn-off and before the join */
+        for (b = fs + 30; b < fe - 30; b++) for (a = fs - 50; a < fe + 50; a++) { double dx = g_c.frameB[b].x - g_c.frame[a].x, dz = g_c.frameB[b].z - g_c.frame[a].z, d = sqrt(dx * dx + dz * dz); if (d < mind) mind = d; }
+        LOG("sample: B's centre at least %.0f units from A's between %d and %d (B's widest: piece %d %.0f)", mind, fs + 30, fe - 30, fs + fl / 2,
+            sqrt((g_c.frameB[fs + fl / 2].x - g_c.frame[fs + fl / 2].x) * (g_c.frameB[fs + fl / 2].x - g_c.frame[fs + fl / 2].x) + (g_c.frameB[fs + fl / 2].z - g_c.frame[fs + fl / 2].z) * (g_c.frameB[fs + fl / 2].z - g_c.frame[fs + fl / 2].z))); }
+    /* ground */
+    {   /* the redwood road (the photo): needle duff on the verges, the road's edge flush with a white line, a split-rail fence along P0 - on the right, then on the left -
+           the giants from P1 out (P0 too where there is no fence); boulders, stumps and stones come with them (course3d.h C3_RedwoodFloor) */
+        int r0 = AT(0.04), r1 = AT(0.20), rm = (r0 + r1) / 2;
+        SampleCells(2, "REDWOOD", r0, r1 - r0, 0, 0, 1, 4); SampleCells(2, "REDWOOD", r0, r1 - r0, 0, 1, 1, 4);
+        SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 0, 0); SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 1, 0);
+        SamplePaint(2, "RAIL FENCE", r0 + 6, rm - r0 - 6, 0, 1, 1); SamplePaint(2, "RAIL FENCE", rm + 10, r1 - rm - 16, 0, 0, 1);
+        SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 0, 5); SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 1, 5); }
+    if (ok) { SampleCells(2, "SHRUB", fs, fl / 2, 0, 0, 1, 4); SampleCells(2, "GREEN SHRUB", fs + fl / 2, fl - fl / 2, 0, 0, 1, 4);   /* (A's outer side: the red hedge, then the dark green one) */
+        SampleCells(2, "SANDG", fs, fl, 1, 1, 1, 4); SamplePaint(4, "SANDPATH", fs, fl, 1, 1, 0); }   /* (B's outer side) */
+    k = AT(0.55); i = 40;   /* the bridge: a gorge with a river in it (hole cells: water at the default depth), railings on both verges */
+    SampleCells(2, "CLIFF HOLE", k, i, 0, 0, 1, 4); SampleCells(2, "CLIFF HOLE", k, i, 0, 1, 1, 4);
+    SamplePaint(2, "BRIDGE", k - 2, i + 4, 0, 0, 0); SamplePaint(2, "BRIDGE", k - 2, i + 4, 0, 1, 0);
+    SamplePaint(2, "CONCRETE", k - 26, 24, 0, 0, 0); SamplePaint(2, "CONCRETE", k - 26, 24, 0, 1, 0); SamplePaint(2, "CONCRETE", k + i + 2, 24, 0, 0, 0); SamplePaint(2, "CONCRETE", k + i + 2, 24, 0, 1, 0);   /* (pavement up to the bridge and on from it) */
+    LOG("sample: bridge %d..%d", k - 2, k + i + 1);
+    SampleCells(2, "WATER", AT(0.62), AT(0.72) - AT(0.62), 0, 1, 1, 4); SamplePaint(2, "CONCRETE", AT(0.62), AT(0.72) - AT(0.62), 0, 1, 0);   /* (a concrete promenade along the lake) */ SampleCells(2, "FOREST", AT(0.62), AT(0.72) - AT(0.62), 0, 0, 1, 4);   /* the lake (right) */
+    SampleCells(2, "DUNES", AT(0.75), AT(0.87) - AT(0.75), 0, 0, 1, 4); SampleCells(2, "DUNES", AT(0.75), AT(0.87) - AT(0.75), 0, 1, 1, 4);
+    SamplePaint(2, "SANDW", AT(0.75), AT(0.87) - AT(0.75), 0, 0, 0); SamplePaint(2, "SANDW", AT(0.75), AT(0.87) - AT(0.75), 0, 1, 0);
+    SampleCells(2, "CONCRETE", AT(0.89), AT(0.98) - AT(0.89), 0, 0, 0, 1); SampleCells(2, "CONCRETE", AT(0.89), AT(0.98) - AT(0.89), 0, 1, 0, 1);   /* a small town: concrete pavement on the verge and P0, */
+    SamplePaint(3, "mix", AT(0.89), AT(0.98) - AT(0.89), 0, 0, 2); SamplePaint(3, "mix", AT(0.89), AT(0.98) - AT(0.89), 0, 1, 2);   /* the buildings from P1 */
+    {   /* the way into town: a T junction (the Junction collection) - a side street on the right, traffic lights before it on both verges, a stop sign after it, kerb returns */
+        int jk = AT(0.875);
+        SampleCells(2, "CONCRETE", jk - 14, 30, 0, 0, 0, 1); SampleCells(2, "CONCRETE", jk - 14, 30, 0, 1, 0, 1);
+        SamplePaint(0, "JUNCTION", jk, 2, 0, 0, 6); SampleCells(2, "SIDE STREET", jk, 2, 0, 1, 0, 4);
+        SamplePaint(2, "TRAFFIC LIGHTS", jk - 2, 1, 0, 0, 0); SamplePaint(2, "TRAFFIC LIGHTS", jk - 2, 1, 0, 1, 0); SamplePaint(2, "TRAFFIC LIGHTS", jk + 3, 1, 0, 0, 0);
+        SamplePaint(2, "STOP SIGN", jk + 5, 1, 0, 1, 0);
+        LOG("sample: junction %d..%d", jk, jk + 1); }
+    LOG("sample: redwood %d..%d, fork %d..%d, bridge %d, lake %d..%d, dunes %d..%d, town %d..%d", AT(0.04), AT(0.20), fs, fe, k, AT(0.62), AT(0.72), AT(0.75), AT(0.87), AT(0.89), AT(0.98));
+#undef AT
+    g_noRedraw = 0; Redraw();
+    {   double hmin = 1e30, hmax = -1e30; for (k = 0; k <= g_c.n; k++) { if (g_c.frame[k].y < hmin) hmin = g_c.frame[k].y; if (g_c.frame[k].y > hmax) hmax = g_c.frame[k].y; } LOG("sample: heights %.0f .. %.0f", hmin, hmax); }
+    if (path) LOG("sample: saved as %s: %d", path, SaveRrcTo(path)); }
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {   WNDCLASSA wc; MSG msg; int i, argc = __argc; char **argv = __argv; LVCOLUMNA col; INITCOMMONCONTROLSEX ic; int x;
-    (void)prev; (void)cmd; g_c3Editor = 1;   /* (holes flat in the editor's own view: course3d.h C3_HoleRow) */
+    (void)prev; (void)cmd; g_c3Editor = 1; g_c3GroundSymbols = 1;   /* (holes flat in the editor's own view: course3d.h C3_HoleRow) */
     Defaults();
     for (i = 1; i + 1 < argc; i++) {
         if (!_stricmp(argv[i], "-data")) { GetFullPathNameA(argv[++i], MAX_PATH, g_dataDir, NULL); }
@@ -3940,7 +4080,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         g_blk[i] = CreateWindowA(WC_LISTVIEWA, "", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_ICON | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS | LVS_AUTOARRANGE, 0, 0, 10, 10, g_main, (HMENU)(INT_PTR)(ID_BLOCKS), inst, NULL);
         ListView_SetExtendedListViewStyle(g_blk[i], LVS_EX_DOUBLEBUFFER); ListView_SetIconSpacing(g_blk[i], 92, PAL_TS + 30); SendMessageA(g_blk[i], WM_SETFONT, (WPARAM)g_font, 0); }
         g_blocks = g_blk[0]; }
-    g_blkHint = CreateWindowA("STATIC", "Click a block (or drag it onto the 3D view), then click / drag the grid. Right-click a cell: its pictures. Esc: stop. Red corner: does not blend. Bricks: stands up as a wall on P3 (past P2). Bottom left: grows by itself on P0..P2 - trees, grass tufts, dry scrub and rocks.", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkHint, WM_SETFONT, (WPARAM)g_font, 0);
+    g_blkHint = CreateWindowA("STATIC", "Click a block (or drag it onto the 3D view), then click / drag the grid. Right-click a cell: its pictures. Esc: stop. Red corner: does not blend. Bricks: stands up as a wall on P3 (past P2). Bottom left: grows by itself on P0..P2 - trees, grass tufts, dry scrub and rocks. Top left, yellow disc with a cross: the Junction collection (JUNCTION, SIDE STREET, KERB RETURN, TRAFFIC LIGHTS, STOP SIGN).", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkHint, WM_SETFONT, (WPARAM)g_font, 0);
     ListView_SetExtendedListViewStyle(g_props, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER); SendMessageA(g_props, WM_SETFONT, (WPARAM)g_font, 0);
     { static const char *const h[4] = { "Field", "Value", "Original", "What it is" }; static const int cw[4] = { 130, 84, 64, 600 };
       for (i = 0; i < 4; i++) { memset(&col, 0, sizeof col); col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = (char *)h[i]; col.cx = cw[i]; ListView_InsertColumn(g_props, i, &col); } }
@@ -4073,6 +4213,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             for (i = 0; i < n && k + i < g_c.n; i++) { double o = VtxOut(k + i, sd, v); if (TerrRec(k + i)) { VtxOutSet(k + i, sd, v, o + du); BlockSync(k + i); } LOG("test wd: piece %d %.0f -> %.0f", k + i, o, VtxOut(k + i, sd, v)); }
             g_dirty = 1; Redraw(); TerrEnd(); BlockSet(0); } }
     if (getenv("CE_TESTNEW")) { SendMessageA(g_main, WM_COMMAND, ID_NEWTRACK, 0); LOG("test new: %s", g_status); }   /* (tests: New track) */
+    if (getenv("CE_SAMPLE")) SampleCourse(getenv("CE_SAMPLE"));   /* (the sample course, saved there) */
     HBarToggle();   /* (Heights and Widths: always shown) */
     if (getenv("CE_TESTTOOL")) { BlockSet(atoi(getenv("CE_TESTTOOL"))); }   /* (tests: a tool on - 5 Raise, 6 Lower, 7 Level) */
     if (getenv("CE_TESTNOGRID")) { g_grid = 0; SendMessageA(g_gridChk, BM_SETCHECK, BST_UNCHECKED, 0); }   /* (tests: no grid) */

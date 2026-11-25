@@ -296,6 +296,7 @@ static void ForkKeep(int o)
     if (!cur) return;
     if (*(char *)(I32(cur, 0x28) + 0x1c) == 2) {   /* inside the split: within the carriageway's own lane edges (less a margin) - the AI otherwise rode off it */
         int lo = (I32(cur, 0xe0) + 60) << 8, hi = (I32(cur, 0xe4) - 60) << 8; x = I32(o, 0x28);
+        if (ForkEnv()) return;   /* (RR_FORK: the player chose the road at the split and rides it freely - verge and grass too, as without the switch; user, 2026-11-23 "i couldnt ride on the grass" on B) */
         if (lo < hi) { if (x < lo) I32(o, 0x28) = x + (lo - x) / 3; else if (x > hi) I32(o, 0x28) = x - (x - hi) / 3; }
         return; }
     for (i = 1, s = I32(cur, 8); i <= 16 && s; i++, s = I32(s, 8)) if (*(char *)(I32(s, 0x28) + 0x1c) == 2) { d = i; ahead = 1; line = I32(s, 0xe4); break; }
@@ -551,6 +552,14 @@ void __fastcall rr_RiderApplyImpulse(int o)
                     if (lg) { void (__stdcall *dl)(const char *) = (void (__stdcall *)(const char *))GetProcAddress(GetModuleHandleA("rrddraw.dll"), "RR_DbgLog"); char m[120];
                         if (dl) { wsprintfA(m, "tram follow: car %08x at %d.%03d lane x %d, the tram's rear %d.%03d, step %d -> %d", (unsigned)o, *(int *)(o + 0x1c) >> 8, (*(int *)(o + 0x1c) & 255) * 1000 / 256, *(int *)(o + 0x28) >> 8, rear >> 8, (rear & 255) * 1000 / 256, (int)step, ns); dl(m); } } }
                 *(int *)(o + 0xec) = (int)((__int64)*(int *)(o + 0xec) * ns / (int)step); step = (unsigned)ns; } } }
+    if (*(int *)(o + 0xc4) == 0x10 && (int)step != 0) {   /* a traffic car coming up to a red light (the Course Editor's junctions: the shim's light cycles, world3d.inc RR_SignalAhead - on the
+                                                          race clock, as the lamps it draws): its move kept short of the stop line, its speed with it - it waits, and moves off at green
+                                                          (user, 2026-11-24 "make cars just automatically obey traffic lights") */
+        static int (__stdcall *sig)(unsigned, int, int, int, int *); static int looked2; int stop = 0, dir = (int)step > 0 ? 1 : -1;
+        if (!looked2) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); sig = sh ? (int (__stdcall *)(unsigned, int, int, int, int *))GetProcAddress(sh, "RR_SignalAhead") : 0; looked2 = 1; }
+        if (sig && sig((unsigned)*(int *)(o + 0x1c), *(int *)(o + 0x28) >> 8, dir, (int)rec_featureAccum1.g_raceTime, &stop) > 0) {
+            int room = (stop - dir * (*(int *)(o + 0x178) + 0x20) - *(int *)(o + 0x1c)) * dir;   /* (how far it may go: its nose at the line) */
+            if (room < (int)step * dir) { int ns = room > 0 ? room * dir : 0; *(int *)(o + 0xec) = (int)((__int64)*(int *)(o + 0xec) * ns / (int)step); step = (unsigned)ns; } } }
     RiderScrollStep(o, (int)step, 1);
     *(int *)(o + 0x28) = *(int *)(o + 0x28) + *(int *)(o + 0x18) * *(int *)(o + 0x10c);
 }
