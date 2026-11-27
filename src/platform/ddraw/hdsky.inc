@@ -10,9 +10,13 @@ static char g_hsWant[MAX_PATH], g_hsWantUp[MAX_PATH], g_hsCur[MAX_PATH]; static 
 __declspec(dllexport) void __stdcall RR_SkyInfo(int x, int yoff, int left, int top, int rows, int period)
 {   g_hsX=x; g_hsYoff=yoff; g_hsLeft=left; g_hsTop=top; g_hsRows=rows; g_hsPeriod=period; }
 /* the game opened a file (rel = path without "./"): a horizon picture selects the matching HD sky, or none */
+static char g_hsForce[16], g_hsLastRel[MAX_PATH];   /* a course's own horizon (HsCourse: another track's panorama - the Course Editor's course setting); the horizon file the game opened last */
 static void HsNoteOpen(const char *rel)
-{   char pic[MAX_PATH], cand[MAX_PATH], *p, *b; size_t n=strlen(rel); int i, k; DWORD at;
+{   char pic[MAX_PATH], cand[MAX_PATH], *p, *b, fr[MAX_PATH]; size_t n=strlen(rel); int i, k; DWORD at;
     if(n<5 || n>=sizeof pic || _stricmp(rel+n-4,".BOB") || !strstr(rel,"orizon")) return;   /* Images/Horizons/<name>.BOB */
+    if(rel!=g_hsLastRel){ strncpy(g_hsLastRel,rel,MAX_PATH-1); g_hsLastRel[MAX_PATH-1]=0; }
+    if(g_hsForce[0]){ const char *bb=strrchr(rel,'/'), *b2=strrchr(rel,0x5C); size_t pre; if(b2>bb) bb=b2; bb=bb?bb+1:rel; pre=(size_t)(bb-rel);   /* (the course's horizon in its place; a low-detail L<name> stays low-detail) */
+        if(pre+strlen(g_hsForce)+6<sizeof fr){ memcpy(fr,rel,pre); _snprintf(fr+pre,sizeof fr-pre-1,"%s%s.BOB",(bb[0]=='L'||bb[0]=='l')?"L":"",g_hsForce); fr[sizeof fr-1]=0; rel=fr; n=strlen(rel); } }
     if(!VidHdArt()){ AcquireSRWLockExclusive(&g_hsLk); g_hsWant[0]=0; g_hsWantUp[0]=0; ReleaseSRWLockExclusive(&g_hsLk); return; }   /* the widescreen mod switched off (Restroom > Game Options): no HD sky */
     if(g_mwNDir<0) MwDirs();
     memcpy(pic,rel,n-4); pic[n-4]=0; for(p=pic;*p;p++) if(*p=='/') *p=0x5C;
@@ -27,6 +31,9 @@ static void HsNoteOpen(const char *rel)
         for(i=0;i<g_mwNDir;i++){ if(_snprintf(cand,sizeof cand-1,"%s%c%s.png",g_mwDir[i],0x5C,pic)<0) continue; cand[sizeof cand-1]=0;
             at=GetFileAttributesA(cand); if(at!=INVALID_FILE_ATTRIBUTES && !(at&FILE_ATTRIBUTE_DIRECTORY)){ AcquireSRWLockExclusive(&g_hsLk); strcpy(g_hsWant,cand); ReleaseSRWLockExclusive(&g_hsLk); return; } } }
     AcquireSRWLockExclusive(&g_hsLk); g_hsWant[0]=0; ReleaseSRWLockExclusive(&g_hsLk); }   /* this track has no HD sky */
+static void HsCourse(int t)   /* the course's horizon (RrxAssets.opt[3], the Course Editor's: a track's, 1..5 - user, 2026-11-26 "mountain territory and snow peaks": The City's course with Sierra's peaks); 0 = its own */
+{   static const char *const nm[6]={ "", "CITY", "SIERRA", "PENIN", "NAPA", "PCH" }; char was[16]; strcpy(was,g_hsForce);
+    strcpy(g_hsForce,t>=1 && t<=5 ? nm[t] : ""); if(strcmp(was,g_hsForce) && g_hsLastRel[0]){ char r[MAX_PATH]; strcpy(r,g_hsLastRel); HsNoteOpen(r); } }
 static int HsOn(void){ static int env=-2; if(env==-2){ const char *e=getenv("RR_HDSKY"); env=(e && *e)?(*e!='0'):-1; } return env>=0?env:1; }   /* the HD picture where there is one (always; RR_HDSKY=0 = off, tests) */
 /* ---- moving clouds (Video Options > Clouds, video.ini clouds; RR_CLOUDS=0/1 overrides).  Shim side only: soft cloud pictures made from noise at start-up
  * (no game artwork), drifting slowly in panorama coordinates, so they turn with the view like the sky; time = the race frame (the same picture for the same frame).
@@ -112,10 +119,15 @@ static void HsPiece(SDL_Texture *t,float tw,float th,int P,int R,int u,int len,f
  * about a fifth more sky above it; much more sinks the hills behind the course's own) - the picture moved down by sh (its bottom sh rows not shown),
  * its top sh / 2 rows (plain sky) stretched over the top 1.5 sh */
 #define HS_LOWER 0.08f
+static float HsStretch(void);   /* weather.inc: the skyline taller up a mountain course */
 static void HsWrap(SDL_Texture *t,int P,int R,int y0,int y1)
-{   float tw, th, sh=HdTexOn()?HS_LOWER*R:0.0f, ym=g_hsTop+1.5f*sh, a, b; int s=g_gpuClip[0]-g_hsLeft, end=g_gpuClip[2]-g_hsLeft; SDL_GetTextureSize(t,&tw,&th); SDL_SetTextureScaleMode(t,SDL_SCALEMODE_LINEAR);
+{   float tw, th, sh=HdTexOn()?HS_LOWER*R:0.0f, ym=g_hsTop+1.5f*sh, a, b, st=HsStretch(); int s=g_gpuClip[0]-g_hsLeft, end=g_gpuClip[2]-g_hsLeft; SDL_GetTextureSize(t,&tw,&th); SDL_SetTextureScaleMode(t,SDL_SCALEMODE_LINEAR);
     while(s<end){ int u=(s-g_hsX)%P, len; float dx; if(u<0) u+=P; len=P-u; if(len>end-s) len=end-s;   /* one unwrapped piece of the panorama */
         dx=(float)(g_hsLeft+s);
+        if(st>1.001f){ float foot=(float)(g_hsTop+R), ys=foot-R*st;   /* (stretched up from its foot: the top row's sky above it, then the picture st times as tall) */
+            a=(float)y0; b=ys<y1?ys:(float)y1; HsPiece(t,tw,th,P,R,u,len,dx,a,b,0.0f,1.0f);
+            a=ys>y0?ys:(float)y0; b=(float)y1; HsPiece(t,tw,th,P,R,u,len,dx,a,b,R-(foot-a)/st,R-(foot-b)/st);
+            s+=len; continue; }
         a=(float)y0; b=ym<y1?ym:(float)y1; HsPiece(t,tw,th,P,R,u,len,dx,a,b,(a-g_hsTop)/3.0f,(b-g_hsTop)/3.0f);   /* the stretched sky (none when sh = 0) */
         a=ym>y0?ym:(float)y0; b=(float)y1; HsPiece(t,tw,th,P,R,u,len,dx,a,b,a-g_hsTop-sh,b-g_hsTop-sh);
         s+=len; } }

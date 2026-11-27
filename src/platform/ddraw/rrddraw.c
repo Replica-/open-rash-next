@@ -45,16 +45,23 @@ static FILE *g_log; static volatile int g_trAll;   /* RR_LOG_PRESENTS: log every
 enum { PF_GAME, PF_PRESENT, PF_W3DRAW, PF_LIVE, PF_GRASS, PF_EXTRAS, PF_RENDER, PF_SPRITES, PF_FLIP, PF_BASE, PF_SKY, PF_POLYS, PF_HUD, PF_PANELS, PF_N };
 static const char *const g_pfName[PF_N] = { "game", "present", "w3 draw", "live", "grass", "extras", "render", "sprites", "flip", "frame copy", "sky", "game polys", "hud", "panels" };
 static double g_pfSum[PF_N], g_pfMax[PF_N], g_pfLastEnd, g_pfFreqMs; static int g_pfOn = -1; static unsigned g_pfFrames;
+static double g_pfCur[PF_N]; static FILE *g_pfLog; static int g_pfPiece;   /* (test switch RR_FRAMELOG=<file>: every frame's stages in ms and the camera's piece - frame pacing; g_pfPiece set by world3d.inc) */
 static double g_pfGpu[3]; static int g_pfGpuN;   /* GPU milliseconds of the shadow map, the puddle mirror, the world (render3d.h R3_GpuMark) */
 static double PfNow(void) { LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart; }
 #define PF_T0(v) double v = g_pfOn > 0 ? PfNow() : 0
-#define PF_ADD(i, v) do { if (g_pfOn > 0) { double d_ = PfNow() - (v); g_pfSum[i] += d_; if (d_ > g_pfMax[i]) g_pfMax[i] = d_; } } while (0)
+#define PF_ADD(i, v) do { if (g_pfOn > 0) { double d_ = PfNow() - (v); g_pfSum[i] += d_; g_pfCur[i] += d_; if (d_ > g_pfMax[i]) g_pfMax[i] = d_; } } while (0)
 static void PfStart(void)   /* start of a present: the game's share since the last one */
-{   if (g_pfOn < 0) { LARGE_INTEGER f; g_pfOn = getenv("RR_PROFILE") != NULL; QueryPerformanceFrequency(&f); g_pfFreqMs = (double)f.QuadPart / 1000.0; }
-    if (g_pfOn > 0 && g_pfLastEnd > 0) { double d = PfNow() - g_pfLastEnd; g_pfSum[PF_GAME] += d; if (d > g_pfMax[PF_GAME]) g_pfMax[PF_GAME] = d; } }
+{   if (g_pfOn < 0) { LARGE_INTEGER f; const char *fl = getenv("RR_FRAMELOG"); g_pfOn = getenv("RR_PROFILE") != NULL || (fl && *fl); QueryPerformanceFrequency(&f); g_pfFreqMs = (double)f.QuadPart / 1000.0;
+        if (fl && *fl && (g_pfLog = fopen(fl, "w")) != NULL) fprintf(g_pfLog, "# frame total_ms game present w3draw live grass extras render sprites flip piece\n"); }
+    if (g_pfOn > 0 && g_pfLastEnd > 0) { double d = PfNow() - g_pfLastEnd; g_pfSum[PF_GAME] += d; g_pfCur[PF_GAME] += d; if (d > g_pfMax[PF_GAME]) g_pfMax[PF_GAME] = d; } }
 static void PfEnd(void)   /* end of a present: every 300, the averages (and the worst frame) in milliseconds */
 {   if (g_pfOn <= 0) return;
     g_pfLastEnd = PfNow();
+    if (g_pfLog) { static unsigned fr; double m = g_pfFreqMs;
+        fprintf(g_pfLog, "%u %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %d\n", fr++, (g_pfCur[PF_GAME] + g_pfCur[PF_PRESENT]) / m, g_pfCur[PF_GAME] / m, g_pfCur[PF_PRESENT] / m, g_pfCur[PF_W3DRAW] / m,
+                g_pfCur[PF_LIVE] / m, g_pfCur[PF_GRASS] / m, g_pfCur[PF_EXTRAS] / m, g_pfCur[PF_RENDER] / m, g_pfCur[PF_SPRITES] / m, g_pfCur[PF_FLIP] / m, g_pfPiece);
+        if (!(fr & 255)) fflush(g_pfLog); }
+    memset(g_pfCur, 0, sizeof g_pfCur);
     if (++g_pfFrames >= 300) { char t[900]; int i, n = 0; double all = (g_pfSum[PF_GAME] + g_pfSum[PF_PRESENT]) / g_pfFrames / g_pfFreqMs;
         n += _snprintf(t + n, sizeof t - n, "profile %u frames: %.1f fps |", g_pfFrames, all > 0 ? 1000.0 / all : 0);
         for (i = 0; i < PF_N && n < (int)sizeof t - 40; i++) n += _snprintf(t + n, sizeof t - n, " %s %.2f (max %.1f)", g_pfName[i], g_pfSum[i] / g_pfFrames / g_pfFreqMs, g_pfMax[i] / g_pfFreqMs);

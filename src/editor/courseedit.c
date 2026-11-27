@@ -48,7 +48,7 @@ static int g_pfOn = -1; static double g_pfGpu[3]; static int g_pfGpuN;   /* (ren
 #define CE_RANGE 200            /* pieces built round the 3D view's piece */
 
 /* ---------------------------------------------------------------- the course */
-static C3Course g_c; static RxAssets g_ra; static RoadPiece *g_orig; static int g_piece0, g_track = 1, g_level = 1, g_open, g_dirty;
+static C3Course g_c; static RxAssets g_ra; static RoadPiece *g_orig; static int g_piece0, g_track = 1, g_level = 5, g_open, g_dirty;
 /* pieces put in / taken out (the plan: a dragged point's stretches given the pieces their length needs): each piece is made from an original one (g_src;
    the same twice = one put in, one missed = one taken out); g_orig[i] = original piece g_src[i], so "changed" stays per piece (road\course_edit.h) */
 static int g_pEnd = -1;   /* (the plan: a course being built - the road drawn to this piece (New track: the start; Shift+click lays it on: PlanExtend); -1 the whole course) */
@@ -202,8 +202,12 @@ static int RunAndWait(const char *exe, const char *envAdd, int wait)   /* the ga
     CloseHandle(pi.hThread); if (wait == 2) g_runKeep = pi.hProcess; else if (wait == 3) { if (g_driveProc) CloseHandle(g_driveProc); g_driveProc = pi.hProcess; } else CloseHandle(pi.hProcess);
     return wait == 1 ? (int)code : 0; }
 static void RrcPath(char *out) { _snprintf(out, MAX_PATH - 1, "%s\\mods\\courses\\t%d.rrc", g_dataDir, g_track); out[MAX_PATH - 1] = 0; }   /* (one road per track, every level: as the original) */
+static int g_optNoTrackForks;   /* (RrcHeader.spare[7] bit 0: the track's own forks taken out - single road A; road\course_edit.c CeUnsplitTrack - a course ported from another track) */
+static int g_optSnow0, g_optSnow1, g_optTraffic, g_optHorizon, g_optCars;   /* (g_optCars: RrcHeader.spare[6] - the traffic variants left out, bit n = variant n: Map settings) */   /* (g_optHorizon: RrcHeader.spare[5] - the horizon of track 1..5, 0 the course's own: hdsky.inc HsCourse) */   /* the course's own settings (RrcHeader.spare[3], [4], [2]): snow starts / is full at piece + 1 (0 none) - the Road list's SNOW STARTS / FULL SNOW;
+                                                        its traffic, percent (0 = as the game has it) - user, 2026-11-26 */
 static int LoadRrc(void)   /* the saved edits over the original pieces: how many pieces */
 {   char path[MAX_PATH]; FILE *f; RrcHeader h; RrcPiece *r; int i, n = 0;
+    g_optSnow0 = g_optSnow1 = g_optTraffic = g_optHorizon = g_optCars = 0; g_optNoTrackForks = 0;
     RrcPath(path); if (!(f = fopen(path, "rb"))) return 0;
     if (fread(&h, sizeof h, 1, f) == 1 && h.magic == RRC_MAGIC && (h.version >= 1 && h.version <= RRC_VERSION) && h.secSize == RRC_SECSIZE && h.n > 0 && h.n < 65536 && (r = (RrcPiece *)malloc(sizeof(RrcPiece) * h.n)) != NULL) {
         int rd = fread(r, sizeof(RrcPiece), h.n, f) == (size_t)h.n; RrcExtra *x = NULL;
@@ -221,6 +225,9 @@ static int LoadRrc(void)   /* the saved edits over the original pieces: how many
                 if (x && g_ra.ext && k < g_ra.next) g_ra.ext[k] = x[i];
                 n++; }
         if (rd && h.spare[1] > 0 && h.spare[1] <= g_c.n + 1) { g_pEnd = h.spare[1] - 1; }   /* (a course being built: its end) */
+        if (rd) { g_optTraffic = h.spare[2]; g_optSnow0 = h.spare[3]; g_optSnow1 = h.spare[4]; g_optHorizon = h.spare[5]; g_optCars = h.spare[6]; g_optNoTrackForks = h.spare[7] & 1; }   /* (its own settings) */
+        if (rd && g_optNoTrackForks) { int k; for (k = 0; k < g_c.n; k++) if (g_c.piece[k].layout == 2 && !(k < h.n && (r[k].spare[1] & 1))) g_c.piece[k].layout = 0;   /* (the track's own forks: single road A) */
+            C3_Frames(&g_c); C3_FramesB(&g_c); g_c.fr = g_c.frame; }
         free(r); free(x); }
     fclose(f); return n; }
 static int SaveRrcTo(const char *path)
@@ -236,7 +243,8 @@ static int SaveRrcTo(const char *path)
         if (PlanNewFork(i)) { r[i].spare[1] = 1; r[i].used |= 2; }   /* (a fork made here: the game makes its block a split road - road\course_edit.c CeForkEdited - B as painted
                                                                    here, the fields the game works out for a carriageway of its own kept: rr_CourseEditApply) */
         memcpy(r[i].a, &g_c.piece[i].halfA, RRC_SECSIZE); memcpy(r[i].b, &g_c.piece[i].halfB, RRC_SECSIZE); }
-    memset(&h, 0, sizeof h); h.magic = RRC_MAGIC; h.version = RRC_VERSION; h.track = g_track; h.level = 0; h.n = g_c.n; h.piece0 = g_piece0; h.secSize = RRC_SECSIZE; h.spare[0] = mapped; h.spare[1] = g_pEnd + 1;   /* (spare[1]: a course being built - its end + 1, the plan's points kept in spare[2..]) */
+    memset(&h, 0, sizeof h); h.magic = RRC_MAGIC; h.version = RRC_VERSION; h.track = g_track; h.level = 0; h.n = g_c.n; h.piece0 = g_piece0; h.secSize = RRC_SECSIZE; h.spare[0] = mapped; h.spare[7] = g_optNoTrackForks; h.spare[1] = g_pEnd + 1;   /* (spare[1]: a course being built - its end + 1, the plan's points kept in spare[2..]) */
+    h.spare[2] = g_optTraffic; h.spare[3] = g_optSnow0; h.spare[4] = g_optSnow1; h.spare[5] = g_optHorizon; h.spare[6] = g_optCars;   /* (the course's own settings: the game reads them - road\course_edit.c rr_CourseEditOpt) */
     {   RrcExtra *x = (RrcExtra *)calloc(g_c.n, sizeof(RrcExtra));   /* (version 2: the extras after the records - painted terrain bands, the forest) */
         if (!x) { free(r); return 0; } if (g_ra.ext && g_ra.next == g_c.n) memcpy(x, g_ra.ext, sizeof(RrcExtra) * g_c.n);
         h.checksum = RrcHashMore(RrcHash(r, (unsigned)(sizeof(RrcPiece) * g_c.n)), x, (unsigned)(sizeof(RrcExtra) * g_c.n));
@@ -307,7 +315,7 @@ static int OpenCourse(int track, int level)
     g_piece0 = (int)hdr[5];
     if (!C3_LoadRrx(&g_c, rrx) || !RX_Load(&g_ra, rrx)) { Status("Cannot read %s", rrx); FreeCourse(); return 0; }
     g_ra.rockTex = -1;
-    {   char hd[MAX_PATH]; _snprintf(hd, sizeof hd - 1, "%s\\mod\\widescreen\\hd", g_dataDir); hd[sizeof hd - 1] = 0; C3_GroundArt(&g_ra, hd); }   /* (REDWOOD ...: ground_art.h) */
+    {   char hd[MAX_PATH]; _snprintf(hd, sizeof hd - 1, "%s\\mod\\widescreen\\hd", g_dataDir); hd[sizeof hd - 1] = 0; g_c3GroundTrack = g_track; C3_GroundArt(&g_ra, hd); }   /* (REDWOOD ...: ground_art.h; the track's own pictures first) */
     CityArt(&g_ra);
     free(g_ra.ext); g_ra.ext = (RrcExtra *)calloc(g_c.n + 1, sizeof(RrcExtra)); g_ra.next = g_ra.ext ? g_c.n : 0;   /* (the extras: none painted yet - LoadRrc) */
     g_c.L = CE_L; C3_Frames(&g_c); C3_FramesB(&g_c); g_c.fr = g_c.frame; g_c.forkPick = 0;   /* (the forks: both carriageways) */
@@ -327,7 +335,7 @@ static int OpenCourse(int track, int level)
     return 1; }
 
 /* ---------------------------------------------------------------- windows */
-enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_TEXTCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE, ID_PLANSTART };
+enum { ID_TRACK = 100, ID_LEVEL, ID_OPEN, ID_SAVE, ID_UNDO, ID_REDO, ID_REVSEL, ID_REVALL, ID_COPY, ID_PASTE, ID_DRIVE, ID_HALF, ID_LIST, ID_PROPS, ID_EDIT, ID_STATUS, ID_GAMEVIEW, ID_P3D, ID_REGEN, ID_TPL, ID_TSAVE, ID_TPASTE, ID_TDEL, ID_PART, ID_PAINT, ID_BRUSH, ID_BVAL, ID_BPICK, ID_MARKS, ID_BIGPLAN, ID_TPICS, ID_TERRAIN, ID_EDITPART, ID_BLOCKS, ID_GRID, ID_STOPPAINT, ID_BFILTER, ID_HRAISE, ID_HLOWER, ID_HLEVEL, ID_HNOTE, ID_HBAR, ID_HSTEP, ID_HFLAT, ID_CLEAR, ID_VTXCHK, ID_TEXTCHK, ID_FPRAISE, ID_WDRAG, ID_NEWTRACK, ID_AIDRIVE, ID_PLANSTART, ID_MAPSET };
 static HWND g_partWin, g_blocks, g_blkHint, g_partBtn, g_gridChk, g_stopBtn; static int g_grid = 1, g_hx = -1, g_hy = -1;   /* g_grid: the blocks' grid shown (Show grid); g_hx, g_hy: the mouse over the 3D view (window points, -1 away) */   /* the Edit Part window (the fields list), the blocks (right panel) */
 static HWND g_main, g_list, g_props, g_plan, g_prof, g_view, g_statusw, g_edit, g_cbTrack, g_cbLevel, g_half2, g_gameChk, g_p3dBtn; static HFONT g_font; static int g_editRow = -1;
 static void ModeSwitch(int t3d) { SendMessageA(g_p3dBtn, BM_SETCHECK, t3d ? BST_UNCHECKED : BST_CHECKED, 0); SendMessageA(g_gameChk, BM_SETCHECK, t3d ? BST_CHECKED : BST_UNCHECKED, 0); }   /* (the P3D / T3D switch) */
@@ -494,9 +502,9 @@ static int g_bpaint, g_bdrag;   /* a block chosen (1 City side, 2 Terrain side, 
 static unsigned g_bpVal;   /* the block chosen (g_bpaint 4): a picture (RRC_BAND value | set id << 16, as GroundFill) or one of BLK_ */
 #define BLK_FPUP 0x2000u    /* (on a picture's RRC_BAND value, Footpaths list only: painted with its footpath raised / flush - the editor's, never saved: PicPaintAt) */
 #define BLK_FPFLAT 0x4000u
-enum { BLK_ORIG = 1, BLK_BUILD, BLK_GUTON, BLK_GUTOFF, BLK_GUTORIG, BLK_ROADORIG, BLK_KERB0, BLK_GSTY0 = BLK_KERB0 + 5, BLK_JUNCTION = BLK_GSTY0 + 3, BLK_KRET, BLK_FEDGE, BLK_FAC0 = 0x1000 };   /* (BLK_FEDGE: FOREST EDGE - flush, no gutter, a white edge line: RrcExtra.gutter bit 7) */   /* (BLK_JUNCTION, BLK_KRET:
+enum { BLK_ORIG = 1, BLK_BUILD, BLK_GUTON, BLK_GUTOFF, BLK_GUTORIG, BLK_ROADORIG, BLK_KERB0, BLK_GSTY0 = BLK_KERB0 + 5, BLK_JUNCTION = BLK_GSTY0 + 3, BLK_KRET, BLK_FEDGE, BLK_GEDGE, BLK_GRAIL, BLK_NORAIL, BLK_AEDGE, BLK_GRAILF, BLK_GRAILP, BLK_SNOW0, BLK_SNOW1, BLK_SNOWOFF, BLK_FAC0 = 0x1000 };   /* (BLK_FEDGE: FOREST EDGE - flush, no gutter, a white edge line: RrcExtra.gutter bit 7) */   /* (BLK_JUNCTION, BLK_KRET:
                                                                      the Junction collection's road and curb blocks - BlockColl) */   /* (BLK_KERB0 + n: curb style n, BLK_GSTY0 + n: gutter style n - course3d.h C3_EdgeStyle) */   /* (BLK_FAC0 + i: buildings with facade i of FacList) */
-static unsigned g_facVal[512]; static unsigned short g_facSet[512]; static int g_facTex[512], g_nFac;   /* the course's facades (FacList: RrcExtra.fac / facSet values, textures) */
+static int FacIsCabin(unsigned v); static unsigned g_facVal[512]; static unsigned short g_facSet[512]; static int g_facTex[512], g_nFac;   /* the course's facades (FacList: RrcExtra.fac / facSet values, textures) */
 /* Raise / Lower / Level (user, 2026-11-18: "can you give me 3 buttons, raise, level and lower - when i use level the first part is the start of the leveller and i drag it to
    other parts to level them too"): g_bpaint 5 / 6 / 7 - a ground cell's height is its outer terrain point's (P0, P1, P2; beyond: P2's), on terrain sides */
 static HWND g_hBtn[4], g_hBar, g_hStepCb; static double g_lvlH;   /* (g_hBtn: Raise / Lower / Level on the Heights toolbar g_hBar, Heights... on the panel; g_noteBtn: Note) */
@@ -512,7 +520,25 @@ static int g_tsOn; static void TerrBegin(void); static void TerrEnd(void);   /* 
 static int g_tpaint;   /* the Terrain toolbar is open: clicks / drags in the 3D view paint terrain bands / the forest (TerrPaintAt, below) */
 static HWND g_terrBar;   /* (the Terrain toolbar) */
 static void TerrPaintAt(int k, int part, int band); static void TerrBegin(void); static void TerrEnd(void);
-static void NoteAt(int x, int y); static void NoteDraw(void); static void HBarToggle(void); static void BlockSet(int b); static LRESULT CALLBACK HBarProc(HWND w, UINT m, WPARAM wp, LPARAM lp); static void LevelApply(void); static void HeightV(int k, int side, int v); static int VtxPickAt(int x, int y, int *side, int *v); static void VtxDraw(const C3Frame *F); static void PicPaintAt(int k, int part, int cell); static unsigned short *CellVal(RrcExtra *x, int hh, int side, int c, unsigned short **set); static void HeightAt(int k, int part, int cell);
+static void NoteAt(int x, int y); static void NoteDraw(void); static void HBarToggle(void); static void BlockSet(int b); static LRESULT CALLBACK HBarProc(HWND w, UINT m, WPARAM wp, LPARAM lp); static void LevelApply(void); static void HeightV(int k, int side, int v); static int VtxPickAt(int x, int y, int *side, int *v); static void VtxDraw(const C3Frame *F); static int RailCode(int k)   /* the side structure code a new guard rail on piece k takes: the nearest kind-5 piece's (the track's own rail picture), else 0 (none in the sets: RRRAIL1) */
+{   int d; for (d = 1; d < g_c.n; d++) { int j; for (j = k - d; j <= k + d; j += 2 * d) if (j >= 0 && j < g_c.n && g_c.piece[j].halfA.kindArg[0] == 5) return g_c.piece[j].halfA.kindArg[1]; } return 0; }
+static int g_railRaised;   /* (the Footpaths list's GUARD RAIL painted with "Raised" on: its side on a kerb - user note 2026-11-27 "raised vs not raised as an indicator"; 0 = flush) */
+static void RailSide(int k, int hh, int side, int on, int where)   /* piece k's guard rail on that side on / off (kindArg: the game's own); on: a RAIL FENCE on its verge / P0 goes - one or the other
+                                                         (user, 2026-11-26: "dont put both fence and safety guards next to eachother ... the brush should only allow one or the other") */
+{   RoadSection *rs = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA;
+    if (rs->kindArg[0] != 0 && rs->kindArg[0] != 5) return;
+    if (on) { RrcExtra *x = g_ra.ext && k < g_ra.next ? &g_ra.ext[k] : NULL; unsigned short f = (unsigned short)(RRC_BAND | RRC_GEN | C3_GFENCE), d = (unsigned short)(RRC_BAND | RRC_GEN | C3_GDUFF);
+        if (rs->kindArg[0] != 5) { rs->kindArg[0] = 5; rs->kindArg[1] = (unsigned char)RailCode(k); rs->kindArg[3] &= ~3; }
+        {   int vw = side ? rs->outerR - rs->edgeR : rs->edgeL - rs->outerL, off;   /* where it stands (kindArg[2]: from the verge's outer edge, + outwards, -127 .. 127 - the game's physics
+                                                                                       push the riders back there: physics.c rr_RiderOffRoad): 0 the curb - as far in as it goes, 1 the
+                                                                                       footpath - the verge's middle, 2 P0 (user, 2026-11-27 "the safety rail with the p0, footpath OR the curb") */
+            off = where == 0 ? -(vw - 45) : where == 1 ? -vw / 2 : 100; if (off < -127) off = -127; if (off > 127) off = 127; rs->kindArg[2] = (unsigned char)(signed char)off; }
+        rs->kindArg[3] |= (unsigned char)(1 << side);
+        if (x) { unsigned char *g = &x->gutter[hh][side]; int ks = (*g >> 2) & 7;   /* (the side flush - no kerb, no gutter: user note 2026-11-27 "not raised") */
+            if (g_railRaised) *g = (unsigned char)(*g & ~(7 << 2)); else if (ks != 4 && ks != 5) *g = (unsigned char)((*g & ~(7 << 2) & ~3) | 4 << 2 | 2); x->lift[hh][side][0] = 0; }
+        if (x) { if (x->cell[hh][side][0] == f) x->cell[hh][side][0] = d; if (x->band[hh][side][0] == f) x->band[hh][side][0] = d; } }   /* (the fence's duff stays) */
+    else if (rs->kindArg[0] == 5) { rs->kindArg[3] &= (unsigned char)~(1 << side); if (!(rs->kindArg[3] & 3)) rs->kindArg[0] = 0; } }
+static void PicPaintAt(int k, int part, int cell); static unsigned short *CellVal(RrcExtra *x, int hh, int side, int c, unsigned short **set); static void HeightAt(int k, int part, int cell);
 static const char *const g_cellName[7];
 static int g_paint, g_brushI, g_showMarks = 1; static HWND g_paintBar, g_brushBtn[NBRUSH], g_brushVal, g_brushPick, g_palList, g_palHint, g_marksChk; static HIMAGELIST g_palImg;
 static int g_palFor[3] = { -1, -1, -1 };   /* the palette's brush / piece / half */
@@ -604,6 +630,7 @@ static void ViewerStart(void)
     o += sprintf(o, "RR_VIEWER=%s", name) + 1; o += sprintf(o, "RR_AUTORACE=%d", g_track) + 1; o += sprintf(o, "RR_LEVEL=%d", g_level) + 1; o += sprintf(o, "RR_CONFIG=%s", cfg) + 1;
     if (edited) o += sprintf(o, "RR_COURSEEDITFILE=%s", rrc) + 1; else o += sprintf(o, "RR_COURSEEDIT=0") + 1;
     o += sprintf(o, "RR_QUIET_SIZE=%dx%d", (int)r.right, (int)r.bottom) + 1;
+    if (getenv("RR_LOG")) o += sprintf(o, "RR_LOG=%.400s", getenv("RR_LOG")) + 1;   /* (the editor started with RR_LOG: the game renderer logs there too - finding its problems) */
     { static const char *const fixed[] = { "RR_HEADLESS=2", "RR_AUDIO=off", "RR_NOREGIMPORT=1", "RR_ONEROAD=0", "RR_SEED=1", "RR_NOCOPS=1", "RR_W3MESH=0",   /* (no compiled mesh: the live stretch takes the edits) */
                                            "RR_WEATHER=0", "RR_TOD=2", "RR_FOG=1" };   /* (always sunny - clear, midday, no fog - whatever the game's settings: user, 2026-11-19; weather.inc WxEnv) */
       for (i = 0; i < (int)(sizeof fixed / sizeof fixed[0]); i++) o += sprintf(o, "%s", fixed[i]) + 1; }
@@ -796,7 +823,9 @@ static void TestDrive(int ai)   /* Test drive (F5: you ride) / AI drive (Shift+F
                                   closes when the race ends or is quit (shutdown.c RR_TESTDRIVE): back here */
 {   char env[256], *o = env; if (!g_open) return;
     if (g_dirty) Save();
-    o += sprintf(o, "RR_AUTORACE=%d", g_track) + 1; o += sprintf(o, "RR_LEVEL=%d", g_level) + 1; o += sprintf(o, "RR_TESTDRIVE=%s", ai ? "ai" : "player") + 1; *o = 0;
+    o += sprintf(o, "RR_AUTORACE=%d", g_track) + 1; o += sprintf(o, "RR_LEVEL=%d", g_level) + 1; o += sprintf(o, "RR_TESTDRIVE=%s", ai ? "ai" : "player") + 1;
+    if (ai) o += sprintf(o, "RR_BIKE=12") + 1;   /* (AI drive on the fastest bike - analysis\bike_race.ps1: 12 finished City level 1 at frame 14252, the default 15348; user, 2026-11-27 "give them a faster bike") */
+    *o = 0;
     if (RunAndWait(g_gameExe, env, 3) < 0) Status("Could not start %s", g_gameExe);
     else Status("%s: track %d level %d started - quit the race (or finish it) to come back here", ai ? "AI drive" : "Test drive", g_track, g_level); }
 
@@ -1418,8 +1447,10 @@ static int PlanFillSrc(int *sr, int a, int sa, int b, int sb)
 /* a level's finish at piece k (user, 2026-11-19: "in plan mode i need to be able to set level 1,2,3,4,5 & start"): the game finds a level's finish on the original piece it
    was on (road\course_edit.c MapFinishes), so the pieces are given other originals (g_src: still in order, the split roads' as they were - the game takes no change in them),
    that one at k; its finish marker (kindArg 7, the level) moved there */
+#define CE_FORKBLK 16
+static int g_finFreeForks;   /* (FinishesAtMarkers: a course from another track - its forks lie where that track's finishes let them) */
 static int PlanFinishAt(int lv, int k)
-{   int n = g_c.n, na = 0, i, j, *ai, *as, *sr, ok = 1; RoadPiece *pc; RrcExtra *xs; Undo *u;
+{   int n = g_c.n, na = 0, i, j, *ai, *as, *sr, ok = 1; RoadPiece *pc; RrcExtra *xs; Undo *u; char *ff = NULL;
     if (lv < 1 || lv > 5 || g_lvFin0[lv - 1] < 0) { Status("Plan: this track has no level %d finish", lv); return 0; }
     if (k <= g_c.start) { Status("Plan: a finish has to come after the start"); return 0; }
     for (i = 0; i < 5; i++) { int f = i == lv - 1 ? k : g_lvFin[i]; if (f < 0 || g_lvFin0[i] < 0) continue;
@@ -1427,11 +1458,17 @@ static int PlanFinishAt(int lv, int k)
             if ((g_lvFin0[i] < g_lvFin0[j]) != (f < g)) { Status("Plan: level %d's finish has to come %s level %d's", i + 1, g_lvFin0[i] < g_lvFin0[j] ? "before" : "after", j + 1); return 0; } } }
     ai = (int *)malloc(sizeof(int) * (n + 16)); as = (int *)malloc(sizeof(int) * (n + 16)); sr = (int *)malloc(sizeof(int) * n);
     if (!ai || !as || !sr) { free(ai); free(as); free(sr); return 0; }
+    if (g_finFreeForks && (ff = (char *)calloc(n + 1, 1)) != NULL) { int a = -1, l, q;   /* (the forks made here whose originals a finish's place bars - on the wrong side of its original: freed) */
+        for (i = 0; i <= n; i++) { int fk = i < n && PlanNewFork(i); if (fk && a < 0) a = i;
+            if (!fk && a >= 0) { int bad = 0; for (q = a - 2 > 0 ? a - 2 : 0; q < i + 2 && q < n; q++) for (l = 0; l < 5; l++) { int f = l == lv - 1 ? k : g_lvFin[l];
+                    if (f > g_c.start && g_lvFin0[l] >= 0 && q != f && (q < f) != (g_src[q] < g_lvFin0[l])) bad = 1; }
+                if (bad) for (q = a; q < i; q++) ff[q] = 1; a = -1; } } }
     for (i = 0; i <= g_c.start && i < n; i++) { ai[na] = i; as[na++] = g_src[i]; }   /* (the start and the road before it: as they are) */
     for (i = 0; i < n; i++) if (g_c.piece[i].layout == 2 || (i > 0 && g_c.piece[i - 1].layout == 2) || (i + 1 < n && g_c.piece[i + 1].layout == 2)
                                || (i > 1 && g_c.piece[i - 2].layout == 2) || (i + 2 < n && g_c.piece[i + 2].layout == 2)) {   /* (the split roads and two pieces round them) */
-        if (k == i) { Status("Plan: a finish cannot go on a split road (or next to one)"); free(ai); free(as); free(sr); return 0; }
-        if (i > g_c.start) { ai[na] = i; as[na++] = g_src[i]; } }
+        int own = 0, j2; if (k == i) { Status("Plan: a finish cannot go on a split road (or next to one)"); free(ai); free(as); free(sr); return 0; }
+        for (j2 = i - 2; j2 <= i + 2; j2++) if (j2 >= 0 && j2 < n && g_c.piece[j2].layout == 2 && !(ff && ff[j2])) own = 1;   /* (ff: a fork made here that takes other originals - checked below) */
+        if (own && i > g_c.start) { ai[na] = i; as[na++] = g_src[i]; } }
     for (i = 0; i < 5; i++) { int f = i == lv - 1 ? k : g_lvFin[i]; if (f > g_c.start && g_lvFin0[i] >= 0) { ai[na] = f; as[na++] = g_lvFin0[i]; } }
     ai[na] = n - 1; as[na++] = g_n0 - 1;
     for (i = 1; i < na; i++) for (j = i; j > 0 && ai[j - 1] > ai[j]; j--) { int t = ai[j]; ai[j] = ai[j - 1]; ai[j - 1] = t; t = as[j]; as[j] = as[j - 1]; as[j - 1] = t; }
@@ -1443,6 +1480,12 @@ static int PlanFinishAt(int lv, int k)
     for (i = 1; i < n && ok; i++) ok = sr[i] >= sr[i - 1] && sr[i] >= 0 && sr[i] < g_n0;
     if (ok) ok = PlanSrcOk(sr, n);
     if (!ok) { Status("Plan: the finish cannot go there (the pieces between are too few)"); free(ai); free(as); free(sr); return 0; }
+    if (g_finFreeForks && g_pcur0) { int a = -1;   /* the forks made here on their new originals: as PlanForkRange asks - CE_FORKBLK course blocks at most, not leaving at a block's
+                                                      first piece, on no split piece of the track's own (PlanNewFork tells them by it) */
+        for (i = 0; i <= n && ok; i++) { int fk = i < n && PlanNewFork(i); if (fk && g_ext[sr[i]].layout == 2) ok = 0; if (fk && a < 0) a = i;
+            if (!fk && a >= 0) { int nb = 1; for (j = a + 1; j < i; j++) if (g_pcur0[sr[j]][0] != g_pcur0[sr[j - 1]][0]) nb++;
+                if (nb > CE_FORKBLK || a < 1 || g_pcur0[sr[a - 1]][0] != g_pcur0[sr[a]][0]) ok = 0; a = -1; } }
+        if (!ok) { Status("Plan: the finish cannot go there - a fork between would not fit the course's blocks"); free(ai); free(as); free(sr); return 0; } }
     pc = (RoadPiece *)malloc(sizeof(RoadPiece) * n); xs = ExtDup(n);
     if (!pc) { free(ai); free(as); free(sr); free(xs); return 0; }
     memcpy(pc, g_c.piece, sizeof(RoadPiece) * n);
@@ -1451,7 +1494,7 @@ static int PlanFinishAt(int lv, int k)
         for (i = 0; i < n && nm < 8; i++) { RoadSection *s = &pc[i].halfA; if (s->kindArg[0] == 7 && s->kindArg[1] == lv) { if (first < 0) first = i; mk[nm] = *s; off[nm++] = i - first; s->kindArg[0] = 0; s->kindArg[1] = 0; if (pc[i].layout != 2) pc[i].halfB = *s; } }
         (void)f0; (void)d;
         for (i = 0; i < nm; i++) { int q = k + off[i]; if (q >= n) continue; pc[q].halfA.kindArg[0] = 7; pc[q].halfA.kindArg[1] = (char)lv; if (pc[q].layout != 2) pc[q].halfB = pc[q].halfA; } }
-    u = UndoBeginWhole(); PlanCourseSet(n, pc, sr, xs); UndoEnd(u); free(xs); free(ai); free(as);
+    u = UndoBeginWhole(); PlanCourseSet(n, pc, sr, xs); UndoEnd(u); free(xs); free(ai); free(as); free(ff);
     g_dirty = 1; Redraw(); PropsFill();
     Status("Plan: level %d finishes at piece %d now (L%d FINISH) - Ctrl+Z: undo", lv, g_lvFin[lv - 1], lv);
     return 1; }
@@ -1486,7 +1529,6 @@ static int PlanStartAt(int k)
    middle (PlanForkShape).  B's points (blue) are dragged as any other's.  Saved: RrcPiece.spare[1] bit 0 on its
    pieces, B in their b halves; the game cuts the course blocks it lies in at the race start (road\course_edit.c CeForkSpan: up to CE_FORKBLK of them - user,
    2026-11-20 "go for it": forks across course blocks) - so not from a course block's first piece, not over a split there already or the race's start */
-#define CE_FORKBLK 16
 #define CE_SAME 0x51
 static int PlanNewFork(int k) { return k >= 0 && k < g_c.n && g_orig && g_c.piece[k].layout == 2 && g_orig[k].layout != 2; }
 static void PlanForkFields(void)   /* B's place beside A on the forks made here (splitX / splitSlope, as the game keeps them: course3d.h C3_FramesB) - from the curves; and B's
@@ -2100,7 +2142,7 @@ static void FpMarks(const C3Frame *F, int kc)   /* P3D (flat): each footpath's h
             r.x = sx - 8; r.y = sy - 6; r.w = 16; r.h = 12;
             for (u = 0; u < nu; u++) if (r.x < used[u].x + used[u].w + 2 && used[u].x < r.x + r.w + 2 && r.y < used[u].y + used[u].h + 2 && used[u].y < r.y + r.h + 2) break;
             if (u < nu || nu >= 600) continue; used[nu++] = r;
-            st = (g_ra.ext[j].gutter[hh][sd] >> 2) & 7; raised = st != 4;
+            st = (g_ra.ext[j].gutter[hh][sd] >> 2) & 7; raised = st != 4 && st != 5;   /* (5: ASPHALT EDGE - flush too) */
             SDL_SetRenderDrawColor(g_ren, 20, 20, 20, 200); SDL_RenderFillRect(g_ren, &r);
             if (raised) { SDL_SetRenderDrawColor(g_ren, 255, 176, 32, 255);
                 for (u = 0; u < 2; u++) { SDL_RenderLine(g_ren, r.x + 2, r.y + 8 + u, r.x + 8, r.y + 8 + u); SDL_RenderLine(g_ren, r.x + 8 + u, r.y + 3, r.x + 8 + u, r.y + 9); SDL_RenderLine(g_ren, r.x + 8, r.y + 3 + u, r.x + 14, r.y + 3 + u); } }
@@ -2285,13 +2327,15 @@ static void Render3D(void)
         if (g_showMarks && k + 1 < g_vc->n) CM_Marks(g_ren, g_vc, F, ViewSec(k), k, Project);
         if (g_showMarks && k + 1 < g_vc->n && g_c3Editor && g_ra.ext && k < g_ra.next) {   /* P3D: its footpath / gutter named on the road edge (flat here, T3D draws them) */
             int sd, hh = g_half && g_c.piece[k].layout == 2; const RoadSection *sc = ViewSec(k);
-            static const char *const fp[8] = { "raised", "low", "high", "rolled", "flush", "raised", "raised", "raised" }, *const gn[4] = { "standard", "wide", "channel", "standard" };
+            static const char *const fp[8] = { "raised", "low", "high", "rolled", "flush", "flush, asphalt shoulder", "raised", "raised" }, *const gn[4] = { "standard", "wide", "channel", "standard" };
             for (sd = 0; sd < 2; sd++) { unsigned char g = g_ra.ext[k].gutter[hh][sd]; int sk = C3_SideKind(&g_ra, sc, k, hh, sd), walk = sk == SEC_OPEN || C3_SideWalk(&g_ra, sc, k, hh, sd); char t[80];
-                if (!walk && (g & 3) != 1) continue;
-                sprintf(t, "%s%s%s", walk ? "footpath " : "", walk ? fp[(g >> 2) & 7] : "", (g & 3) == 2 ? ", no gutter" : (g & 3) == 1 || sk == SEC_OPEN ? "" : ", no gutter");
+                if (!walk && (g & 3) != 1 && !(sc->kindArg[0] == 5 && (sc->kindArg[3] >> sd & 1))) continue;
+                sprintf(t, "%s%s%s%s", walk ? "verge " : "", walk ? fp[(g >> 2) & 7] : "", (g & 3) == 2 ? ", no gutter" : (g & 3) == 1 || sk == SEC_OPEN ? "" : ", no gutter", sc->kindArg[0] == 5 && (sc->kindArg[3] >> sd & 1) ? ", guard rail" : "");   /* (the game's guard rail - its side structure: T3D draws it) */
                 if ((g & 3) == 1 || ((g & 3) == 0 && sk == SEC_OPEN)) sprintf(t + strlen(t), ", gutter %s", gn[(g >> 5) & 3]);
                 SDL_SetRenderDrawColor(g_ren, 255, 210, 80, 255); CM_Label(g_ren, g_vc, F, Project, k + 0.85, sd ? sc->edgeR : sc->edgeL, 0, t, -28); } }
         if (g_showMarks && g_c3Editor && g_ra.ext) FpMarks(F, kc);
+        if (g_showMarks) { int q; for (q = 0; q < 2; q++) { int kk = (q ? g_optSnow1 : g_optSnow0) - 1; if (kk >= kc - 60 && kk <= kc + 160 && kk + 1 < g_vc->n) {   /* (the course's snow markers) */
+                SDL_SetRenderDrawColor(g_ren, 235, 245, 255, 255); CM_Label(g_ren, g_vc, F, Project, kk + 0.5, 0, 0, q ? "FULL SNOW" : "SNOW STARTS", -40); } } }
         if (g_grid) BlockGrid(F, kc);
         if ((g_showMarks || g_grid) && k + 1 < g_vc->n) { int sd; double u[4], h[4];   /* P3: the cell past P2, named as the points are (user, 2026-11-22 "anything beyond P2 can we name P3 and also give
                                                                                          them labels and show them in the grid") - its middle on the chosen piece */
@@ -2698,10 +2742,10 @@ static void BlockPaintAt(int k, int part, int band)   /* the block chosen onto s
     side = part - 1; hh = g_half && g_c.piece[k].layout == 2; s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA; x = &g_ra.ext[k];
     if (g_bpaint == 3) {   /* Footpath: along the road edge of a terrain side (its verge, the street's width), the path of the nearest street side whose picture
                               the sets here have - the bands stay */
-        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_PROFILE) { Status(C3_SideKind(&g_ra, s, k, hh, side) == SEC_OPEN ? "Footpath: this side is a street - it has one" : "Footpath: it goes on a terrain side"); return; }
+        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_PROFILE) { Status(C3_SideKind(&g_ra, s, k, hh, side) == SEC_OPEN ? "Verge: this side is a street - it has one" : "Verge: it goes on a terrain side"); return; }
         if (x->walk[hh][side]) return;
         n0 = g_tsN; if (!TerrRec(k)) return;
-        if (!WalkMake(k, hh, side)) { g_tsN = n0; Status("Footpath: no street of this track has a footpath the sprite sets here have"); return; }
+        if (!WalkMake(k, hh, side)) { g_tsN = n0; Status("Verge: no street of this track has a verge the sprite sets here have"); return; }
         g_dirty = 1; Redraw(); return; }
     if (g_bpaint == 2 && C3_SideKind(&g_ra, s, k, hh, side) == SEC_PROFILE) {   /* (already terrain: the band painted with its own ground) */
         if (!TerrRec(k)) return;
@@ -2792,24 +2836,45 @@ static void PicPaintAt(int k, int part, int cell)   /* the block chosen (g_bpVal
     if ((val & RRC_BAND) && (val & (BLK_FPUP | BLK_FPFLAT))) { fp = val & BLK_FPUP ? 1 : 2; val &= ~(BLK_FPUP | BLK_FPFLAT); }   /* (a footpath picture raised / flush: the picture, then the side's footpath height) */
     if (part != 1 && part != 2) { Status("Click a cell of the grid beside the road"); return; }
     if (g_bCat == 0) cell = 6; else if (g_bCat == 1) cell = 5; else if (cell < 0 || cell > 4) return;   /* (Ground: only its cells) */
-    if (g_bCat == 3 && cell != 0) { Status("Footpaths go on the footpath - the strip beside the road (the verge) - not P0 and beyond"); return; }   /* (user, 2026-11-19: "footpaths only exist for the footpaths") */
+    if (g_bCat == 3 && cell != 0) { Status("Verge pictures go on the verge - the strip beside the road - not P0 and beyond"); return; }   /* (user, 2026-11-19: "footpaths only exist for the footpaths") */
     if (val == BLK_JUNCTION) { JunctionSet(k, 1); return; }   /* (the Junction collection: its blocks - JunctionSet, below for KERB RETURN) */
     if (val == BLK_ORIG && g_bCat == 0 && JunctionAt(k)) { JunctionSet(k, 0); return; }   /* (a junction's road "original" again: the junction gone, both sides, its stop lines too) */
     if ((val & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) && (int)(val & 0xff) == C3_GFENCE && cell > 1) { Status("RAIL FENCE runs along the road: paint it on the verge or P0"); return; }
     if ((val & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) && C3_GroundVergeOnly((int)(val & 0xff)) && cell != 0) { Status("%s stands at the kerb: paint it on the verge (the strip next to the road)", C3_GroundLabel((int)(val & 0xff))); return; }
     side = part - 1; hh = g_half && g_c.piece[k].layout == 2; s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA;
     if (!TerrRec(k)) return;
+    if ((val & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) && (int)(val & 0xff) == C3_GFENCE) RailSide(k, hh, side, 0, 0);   /* (a fence or a guard rail, never both: the rail goes) */
     if (val >= BLK_GUTON && val <= BLK_GUTORIG) { unsigned char *g = &g_ra.ext[k].gutter[hh][side]; *g = val == BLK_GUTORIG ? 0 : (unsigned char)((*g & ~3) | (val == BLK_GUTON ? 1 : 2)); g_dirty = 1; Redraw(); return; }   /* (original: the curb's height and the gutter as the course has them) */
     if (val == BLK_FEDGE) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* FOREST EDGE: the road's edge flush with the ground, no gutter, a white line along it (course3d.h) */
         *g = (unsigned char)((*g & ~(7 << 2) & ~3) | 4 << 2 | 2 | 0x80); g_ra.ext[k].lift[hh][side][0] = 0; g_dirty = 1; Redraw();
         Status("Forest edge: piece %d's %s road edge flush, no gutter, a white edge line (True 3D)", k, side ? "right" : "left"); return; }
+    if (val == BLK_SNOW0 || val == BLK_SNOW1 || val == BLK_SNOWOFF) {   /* the course's snow (user, 2026-11-26: "start snow at marker so then the snow gradually builds up to the max level"):
+                                                                       it starts falling at SNOW STARTS and builds up to heavy snow at FULL SNOW (weather.inc WxCourseSnow - on a clear day) */
+        if (val == BLK_SNOW0) g_optSnow0 = k + 1; else if (val == BLK_SNOW1) g_optSnow1 = k + 1; else g_optSnow0 = g_optSnow1 = 0;
+        g_dirty = 1; Redraw();
+        if (val == BLK_SNOWOFF) Status("No snow on this course"); else Status("Snow starts at piece %d, full at %s (True 3D, a clear day)", g_optSnow0 - 1, g_optSnow1 ? "the FULL SNOW piece" : "once it starts - paint FULL SNOW further on");
+        return; }
+    if (val == BLK_GRAIL || val == BLK_NORAIL || val == BLK_GRAILF || val == BLK_GRAILP) {   /* GUARD RAIL (user, 2026-11-26: "use those rails as a brush"): the game's own guard rail - the piece's side structure (kindArg[0] 5,
+                                                  kindArg[3] bit per side, kindArg[1] its picture, kindArg[2] its offset from the verge's edge): drawn by course3d.h C3_SideStructs (the picture
+                                                  RRRAIL1 where the track's sets have none), and the game keeps the riders off it (physics.c rr_RiderOffRoad) */
+        RoadSection *rs = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA;
+        if (rs->kindArg[0] != 0 && rs->kindArg[0] != 5) { Status("Piece %d has another roadside kind (%d) - no guard rail there", k, rs->kindArg[0]); return; }
+        g_railRaised = val == BLK_GRAILF && !g_fpFlat; RailSide(k, hh, side, val != BLK_NORAIL, val == BLK_GRAILF ? 1 : val == BLK_GRAILP ? 2 : 0); g_railRaised = 0;
+        BlockSync(k); g_dirty = 1; g_meshDirty = 1; Redraw();
+        Status("Piece %d's %s side: %s", k, side ? "right" : "left", val == BLK_NORAIL ? "no guard rail" : val == BLK_GRAILF ? (g_fpFlat ? "a guard rail on the verge, flush, gravel beneath" : "a guard rail on the verge, raised on a kerb") : val == BLK_GRAILP ? "a guard rail out on P0, paved to it" : "a guard rail by the curb, paved beneath"); return; }
+    if (val == BLK_AEDGE) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* ASPHALT EDGE (user, 2026-11-26): flush, no gutter, the white edge line, the verge paved, torn into P0 (course3d.h C3_AsphaltEdge) */
+        *g = (unsigned char)((*g & ~(7 << 2) & ~3 & ~(3 << 5)) | 5 << 2 | 2 | 0x80); g_ra.ext[k].lift[hh][side][0] = 0; g_dirty = 1; Redraw();
+        Status("Asphalt edge: piece %d's %s road edge - a white line, the verge paved, its edge torn into P0 (True 3D)", k, side ? "right" : "left"); return; }
+    if (val == BLK_GEDGE) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* GRAVEL EDGE: the road's edge flush, no gutter, crumbling into gravel onto the verge (gutter style 3: course3d.h) */
+        *g = (unsigned char)((*g & ~(7 << 2) & ~3 & ~(3 << 5)) | 4 << 2 | 2 | 3 << 5 | 0x80);   /* (+ the white edge line: user, 2026-11-26 "a white stripe splitting the road from the gravel") */ g_ra.ext[k].lift[hh][side][0] = 0; g_dirty = 1; Redraw();
+        Status("Gravel edge: piece %d's %s road edge flush, no gutter, a white edge line, gravel onto the verge (True 3D)", k, side ? "right" : "left"); return; }
     if (val == BLK_KRET) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];   /* KERB RETURN (the Junction collection): the footpath flush, no gutter - it comes down to the road at a corner
                                                                      (a flush piece next to a raised one ramps: course3d.h C3_Roadside) */
-        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no footpath - paint one first (Footpaths)", k, side ? "right" : "left"); return; }
+        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no verge - paint one first (Verge)", k, side ? "right" : "left"); return; }
         *g = (unsigned char)((*g & ~(7 << 2) & ~3) | 4 << 2 | 2); g_ra.ext[k].lift[hh][side][0] = g_ra.ext[k].lift[hh][side][1] = 0; g_dirty = 1; Redraw();
-        Status("Kerb return (Junction collection): piece %d's %s footpath down to the road", k, side ? "right" : "left"); return; }
+        Status("Kerb return (Junction collection): piece %d's %s verge down to the road", k, side ? "right" : "left"); return; }
     if (val >= BLK_KERB0 && val < BLK_KERB0 + 5) { unsigned char *g = &g_ra.ext[k].gutter[hh][side];
-        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no footpath - paint one first (Footpath)", k, side ? "right" : "left"); return; }
+        if (C3_SideKind(&g_ra, s, k, hh, side) != SEC_OPEN && !C3_SideWalk(&g_ra, s, k, hh, side)) { Status("Piece %d's %s side has no verge - paint one first (Verge)", k, side ? "right" : "left"); return; }
         *g =(unsigned char)((*g & ~(7 << 2)) | (val - BLK_KERB0) << 2); g_dirty = 1; Redraw(); return; }   /* (the curb's style: RrcExtra.gutter bits 2..4) */
     if (val >= BLK_GSTY0 && val < BLK_GSTY0 + 3) { unsigned char *g = &g_ra.ext[k].gutter[hh][side]; *g = (unsigned char)((*g & ~(3 << 5) & ~3) | (val - BLK_GSTY0) << 5 | 1); g_dirty = 1; Redraw(); return; }   /* (the gutter's: bits 5..6 - and a gutter there) */
     sk = C3_SideKind(&g_ra, s, k, hh, side); street = 0; (void)street; (void)sk;
@@ -2821,7 +2886,8 @@ static void PicPaintAt(int k, int part, int cell)   /* the block chosen (g_bpVal
     if (cell == 6) { int j; for (j = 0; j < 8; j++) if ((j < (int)s->lanesL) == !side) x->lane[hh][j] = 0; }   /* (the whole side: its lanes' own surfaces go) */
     if (val == BLK_BUILD || (val >= BLK_FAC0 && val < BLK_FAC0 + (unsigned)g_nFac)) {   /* Buildings (the mix, or one facade): on the cell, its slope or not - from it out */
         if (cell == 0) { Status("Buildings stand from P0 out - not on the verge"); return; }
-        if (!x->bld[hh][side] || !(x->bldCode[hh][side] | 0) || x->bldCode[hh][side] == 0xff) { int c = FacDonorCode(k); if (c < 0) { Status("Buildings: this course has no facades"); return; } x->bldCode[hh][side] = (unsigned char)c; }
+        int cab = val != BLK_BUILD && FacIsCabin(g_facVal[val - BLK_FAC0]) >= 0;   /* (a forest building: no facade needed - any track) */
+        if (!x->bld[hh][side] || !(x->bldCode[hh][side] | 0) || x->bldCode[hh][side] == 0xff) { int c = FacDonorCode(k); if (c < 0 && !cab) { Status("Buildings: this course has no facades"); return; } x->bldCode[hh][side] = (unsigned char)(c < 0 ? 0xff : c); }
         x->bld[hh][side] = (unsigned char)CellBld(cell);
         x->fac[hh][side] = (unsigned short)(val == BLK_BUILD ? 0 : g_facVal[val - BLK_FAC0]); x->facSet[hh][side] = val == BLK_BUILD ? 0 : g_facSet[val - BLK_FAC0];
         BlockSync(k); g_dirty = 1; Redraw(); return; }
@@ -2832,7 +2898,7 @@ static void PicPaintAt(int k, int part, int cell)   /* the block chosen (g_bpVal
         if (C3_SideKind(&g_ra, s, k, hh, side) == SEC_PROFILE && !C3_SideWalk(&g_ra, s, k, hh, side)) WalkMake(k, hh, side);
         if (C3_SideKind(&g_ra, s, k, hh, side) == SEC_OPEN || C3_SideWalk(&g_ra, s, k, hh, side)) { unsigned char *g = &x->gutter[hh][side]; *g = (unsigned char)((*g & ~(7 << 2)) | (fp == 1 ? 0 : 4) << 2);
             x->lift[hh][side][0] = x->lift[hh][side][1] = 0; }   /* (its Raise / Lower / Level gone: raised / flush is the footpath's height - user, 2026-11-19 "the bridge raised ... appears below" a verge lowered 28) */
-        else Status("Piece %d's %s side: the picture painted - no street footpath on this track to make a kerb from", k, side ? "right" : "left"); }
+        else Status("Piece %d's %s side: the picture painted - no street verge on this track to make a kerb from", k, side ? "right" : "left"); }
     BlockSync(k); g_dirty = 1; Redraw(); }
 /* ---- Note (user, 2026-11-18: "give me an annotate tool which plugs into the existing annotate server which communicates to you inside the map editor tool" - "you will
    need to make one"): a click in the 3D view, a note typed - with the place (piece, side, cell), the camera and a screenshot of the 3D view it goes to the annotate
@@ -3280,7 +3346,7 @@ static void TerrEnd(void)   /* the stroke: one undo step */
     if (!g_tsN) return;
     u = UndoBegin(g_tsIdx, g_tsN);
     for (i = 0; i < g_tsN; i++) { u->before[i] = g_tsBefore[i]; if (u->xb) u->xb[i] = g_tsXb[i]; }
-    UndoEnd(u); PropsFill(); Status("%s on %d piece%s (Ctrl+Z: undo the stroke)", g_bpaint ? (g_bpaint == 1 ? "City Side painted" : g_bpaint == 2 ? "Terrain Side painted" : g_bpaint == 3 ? "Footpath painted" : g_bpaint == 4 ? "Block painted" : g_bpaint == 5 ? "Raised" : g_bpaint == 6 ? "Lowered" : g_bpaint == 7 ? "Levelled" : g_bpaint == 9 ? "Flattened" : g_bpaint == 10 ? "Widths changed" : "Noted") : g_tMd ? "Terrain: forest" : "Terrain: bands painted", g_tsN, g_tsN == 1 ? "" : "s"); g_tsN = 0; }
+    UndoEnd(u); PropsFill(); Status("%s on %d piece%s (Ctrl+Z: undo the stroke)", g_bpaint ? (g_bpaint == 1 ? "City Side painted" : g_bpaint == 2 ? "Terrain Side painted" : g_bpaint == 3 ? "Verge painted" : g_bpaint == 4 ? "Block painted" : g_bpaint == 5 ? "Raised" : g_bpaint == 6 ? "Lowered" : g_bpaint == 7 ? "Levelled" : g_bpaint == 9 ? "Flattened" : g_bpaint == 10 ? "Widths changed" : "Noted") : g_tMd ? "Terrain: forest" : "Terrain: bands painted", g_tsN, g_tsN == 1 ? "" : "s"); g_tsN = 0; }
 /* a block that does not blend into the ground beside it (user, 2026-11-19: "some textures cant be blended so i think we need to show a flag on those. footpaths
    cannot be blended" - course3d.h C3_Blend leaves out footpaths, kerbs, a bridge's deck and the pictures with a band of road painted in, C3_TexBaked): its thumbnail
    with a red corner and a white bar across it (a no-entry mark) */
@@ -3428,9 +3494,9 @@ static const char *RoadName(unsigned val, int tx)   /* a road surface's name in 
         case 7: return "side lane"; case 8: return "side lane 2"; }
     sprintf(t, "%.8s", g_ra.tex[tx].name); return t; }
 /* a ground / footpath / curb picture's name in the lists (user, 2026-11-19: "label the footpaths please and the curbs with what they are"): the footpath / kerb
-   pictures (category 5, RRC_CAT5) "footpath: NAME" - "curb: NAME" in the curb's lists (curb) - the ground's their file's name */
+   pictures (category 5, RRC_CAT5) "verge: NAME" - "curb: NAME" in the curb's lists (curb) - the ground's their file's name */
 static void PicName(char *lb, unsigned val, int tx, int curb)
-{   if (val & RRC_CAT5) sprintf(lb, "%s: %.8s", curb ? "curb" : "footpath", g_ra.tex[tx].name); else sprintf(lb, "%.8s", g_ra.tex[tx].name); }
+{   if (val & RRC_CAT5) sprintf(lb, "%s: %.8s", curb ? "curb" : "verge", g_ra.tex[tx].name); else sprintf(lb, "%.8s", g_ra.tex[tx].name); }
 static int ThumbSmall(HIMAGELIST il, HBITMAP tb)   /* thumbnail tb (PK_TS) into il at the palette's size */
 {   HBITMAP sb; HDC d1 = CreateCompatibleDC(NULL), d2 = CreateCompatibleDC(NULL), sc = GetDC(NULL); int r;
     sb = CreateCompatibleBitmap(sc, PAL_TS, PAL_TS); ReleaseDC(NULL, sc);
@@ -3466,9 +3532,13 @@ static int PicList(int k, int h, int pref5, unsigned *val, int *tex, int *where,
                     if (where) where[n] = rowWhere[cat == 5][row];
                     val[n] = RRC_BAND | (cat == 5 ? RRC_CAT5 : 0) | code << 2 | (unsigned)row | st->id << 16; tex[n++] = x; } } } }
     return n; }
+static int FacIsCabin(unsigned v)   /* a facade value that is a forest building (course3d.h C3_CabCode): its kind (C3_NCAB the mix), else -1 */
+{   return (v & (RRC_BAND | RRC_GEN)) == (RRC_BAND | RRC_GEN) && (int)(v & 0xff) >= C3_CABGEN && (int)(v & 0xff) < C3_CABGEN + C3_NCABCODE ? (int)(v & 0xff) - C3_CABGEN : -1; }
 static void FacList(void)   /* every building facade of the course into g_facVal ..: the generated ones (the City's), then each sprite set's (category 1 entries whose group
                                has a facade height - RX_FacadeHeight), one of each name */
 {   int i, e, q; g_nFac = 0;
+    if (g_ra.ncab >= C3_NCABCODE) for (i = 0; i < C3_NCABCODE; i++) { static const int ord[C3_NCABCODE] = { C3_CAB_MIX, C3_CAB_LOG, C3_CAB_AFRAME, C3_CAB_LODGE, C3_CAB_RANGER, C3_CAB_SHED, C3_CAB_CAMP, C3_CAB_LOGPILE, C3_CAB_SAWMILL }; int kd = ord[i]; g_facVal[g_nFac] = RRC_BAND | RRC_GEN | (unsigned)(C3_CABGEN + kd); g_facSet[g_nFac] = 0; g_facTex[g_nFac++] = g_ra.cab0 + C3C_NTEX + kd; }   /* (the forest buildings first, their mix
+                                                                     first: user, 2026-11-26 "more types of houses/buildings ... maybe cabins?" - course3d.h C3_Cabin) */
     for (i = 0; i < g_ra.ngen && g_nFac < 512; i++) { g_facVal[g_nFac] = RRC_BAND | RRC_GEN | (unsigned)i; g_facSet[g_nFac] = 0; g_facTex[g_nFac++] = g_ra.gen0 + i; }
     if (g_ra.ngen > 0 && g_ra.tex[g_ra.gen0].shopV > 0) return;   /* (the City set, CityArt: the game draws it in place of the course's own facades - those not listed) */
     for (i = 0; i < g_ra.nset; i++) { RxSet *st = &g_ra.set[i];
@@ -3579,10 +3649,10 @@ static void BandInfo(int k, int hh, int side, int cell, unsigned painted)
     if (cell == 6) w += sprintf(w, "the road - lanes %d left, %d right", (int)s->lanesL, (int)s->lanesR);
     else w += sprintf(w, "%s (%s)", x >= 0 && x < g_ra.ntex ? g_ra.tex[x].name : "no picture", painted ? "painted" : "the course's own");
     if (C3_SideWalk(&g_ra, s, k, hh, side)) { int pw = C3_WalkTex(&g_ra, s, k, hh, side, 0), kb = C3_WalkTex(&g_ra, s, k, hh, side, 1);
-        w += sprintf(w, "\nFootpath: %s, its kerb %s", pw >= 0 ? g_ra.tex[pw].name : "-", kb >= 0 ? g_ra.tex[kb].name : "-"); }
-    else if (sk == SEC_OPEN) w += sprintf(w, "\nFootpath: the street's own (%s)", tex[side ? 9 : 4] >= 0 ? g_ra.tex[tex[side ? 9 : 4]].name : "the set's");
-    else w += sprintf(w, "\nNo footpath");
-    w += sprintf(w, ".   Footpath height: %s.   Gutter: %s", kn[(g >> 2) & 7], (g & 3) == 2 ? "none" : (g & 3) == 1 || sk == SEC_OPEN ? gn[(g >> 5) & 3] : "none (as the side has it)");
+        w += sprintf(w, "\nVerge: %s, its kerb %s", pw >= 0 ? g_ra.tex[pw].name : "-", kb >= 0 ? g_ra.tex[kb].name : "-"); }
+    else if (sk == SEC_OPEN) w += sprintf(w, "\nVerge: the street's own (%s)", tex[side ? 9 : 4] >= 0 ? g_ra.tex[tex[side ? 9 : 4]].name : "the set's");
+    else w += sprintf(w, "\nNo verge");
+    w += sprintf(w, ".   Verge height: %s.   Gutter: %s", kn[(g >> 2) & 7], (g & 3) == 2 ? "none" : (g & 3) == 1 || sk == SEC_OPEN ? gn[(g >> 5) & 3] : "none (as the side has it)");
     SetWindowTextA(g_bandInfo, t); }
 static void BandMenu(int x, int y)   /* the right-click at frame pixel x, y (the band there, if any) */
 {   int part, band, k, hh; char t[120]; POINT p; unsigned short *v, *vs;
@@ -3684,6 +3754,52 @@ static void TerrBarCreate(void)   /* (at the start, hidden) */
     SendMessageA(g_tMode[0], BM_SETCHECK, BST_CHECKED, 0); SendMessageA(g_tSide[0], BM_SETCHECK, BST_CHECKED, 0); SendMessageA(g_tBand[0], BM_SETCHECK, BST_CHECKED, 0);
     for (i = 0; i < 3; i++) SendMessageA(g_tPt[i], BM_SETCHECK, BST_CHECKED, 0);
     TerrBarLayout(); }
+/* Map settings (user, 2026-11-26: "a setting in each map to allow us to specify what cars appear in the map? i dont want taxis appearing in this map"; "reduce the amount of
+   cars"): the course's own traffic (percent), the horizon (another track's panorama) and which of the track's vehicles come - saved in the course file (RrcHeader.spare[2], [5], [6]:
+   road\course_edit.c rr_CourseEditOpt).  The vehicles are named as the game saw them (world3d\vehicles_t<track>.txt, ddraw\gpuscene.inc GpuCarLearn); a track not raced since:
+   the names known for it */
+static HWND g_msWnd, g_msTraffic, g_msTrafficLab, g_msHorizon, g_msCar[16]; static int g_msNCar;
+static int VehicleNames(char names[16][12])   /* the track's traffic vehicles by variant; how many */
+{   static const char *const def[6][5] = { { 0 }, { "GOLF", "TAXI", "TERCEL", "PORSCHE", "MAZDA" }, { "PICKUP", "VAN", "PORSCHE", "HONDA", "RX7" }, { 0 }, { 0 }, { 0 } };
+    char fn[MAX_PATH], line[64]; FILE *f; int i, n = 0;
+    memset(names, 0, 16 * 12);
+    for (i = 0; i < 5; i++) if (g_track >= 1 && g_track <= 5 && def[g_track][i]) { strcpy(names[i], def[g_track][i]); n = i + 1; }
+    _snprintf(fn, sizeof fn - 1, "%s\\world3d\\vehicles_t%d.txt", g_dataDir, g_track); fn[sizeof fn - 1] = 0;
+    if ((f = fopen(fn, "r")) != NULL) { while (fgets(line, sizeof line, f)) { int k; char w[12]; if (sscanf(line, "%d %11s", &k, w) == 2 && k >= 0 && k < 16) { strcpy(names[k], w); if (k + 1 > n) n = k + 1; } } fclose(f); }
+    if (n < 5) n = 5;
+    for (i = 0; i < n; i++) if (!names[i][0]) sprintf(names[i], "vehicle %d", i + 1);
+    return n; }
+static void MapSetLabel(void) { char t[64]; int v = (int)SendMessageA(g_msTraffic, TBM_GETPOS, 0, 0) * 10; sprintf(t, "Traffic: %d %%%s", v, v == 100 ? " (as the game has it)" : ""); SetWindowTextA(g_msTrafficLab, t); }
+static LRESULT CALLBACK MapSetProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
+{   int i;
+    switch (m) {
+    case WM_HSCROLL: if ((HWND)lp == g_msTraffic) { int v = (int)SendMessageA(g_msTraffic, TBM_GETPOS, 0, 0) * 10; g_optTraffic = v == 100 ? 0 : v; g_dirty = 1; MapSetLabel(); } return 0;
+    case WM_COMMAND:
+        if ((HWND)lp == g_msHorizon && HIWORD(wp) == CBN_SELCHANGE) { g_optHorizon = (int)SendMessageA(g_msHorizon, CB_GETCURSEL, 0, 0); g_dirty = 1; return 0; }
+        for (i = 0; i < g_msNCar; i++) if ((HWND)lp == g_msCar[i]) { int on = SendMessageA(g_msCar[i], BM_GETCHECK, 0, 0) == BST_CHECKED; if (on) g_optCars &= ~(1 << i); else g_optCars |= 1 << i; g_dirty = 1;
+            Status("Map settings: vehicle %d %s this map (Save: the game races it so)", i + 1, on ? "comes in" : "is left out of"); return 0; }
+        break;
+    case WM_CLOSE: ShowWindow(w, SW_HIDE); return 0; }
+    return DefWindowProcA(w, m, wp, lp); }
+static void MapSetShow(void)
+{   static const char *const hz[6] = { "The track's own", "The City", "Sierra Nevada", "Peninsula", "Napa Valley", "Pacific Highway" }; char names[16][12]; int i, y;
+    HINSTANCE inst = (HINSTANCE)GetModuleHandleA(NULL);
+    if (g_msWnd) DestroyWindow(g_msWnd);
+    {   static int reg; if (!reg) { WNDCLASSA wc; memset(&wc, 0, sizeof wc); wc.lpfnWndProc = MapSetProc; wc.hInstance = inst; wc.lpszClassName = "CeMapSet"; wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.hCursor = LoadCursor(NULL, IDC_ARROW); RegisterClassA(&wc); reg = 1; } }
+    g_msNCar = VehicleNames(names); if (g_msNCar > 16) g_msNCar = 16;
+    g_msWnd = CreateWindowA("CeMapSet", "Map settings", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, 240, 140, 340, 200 + g_msNCar * 24, g_main, NULL, inst, NULL);
+    g_msTrafficLab = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 14, 12, 300, 20, g_msWnd, NULL, inst, NULL);
+    g_msTraffic = CreateWindowA(TRACKBAR_CLASSA, "", WS_CHILD | WS_VISIBLE | TBS_HORZ, 10, 34, 300, 28, g_msWnd, NULL, inst, NULL);
+    SendMessageA(g_msTraffic, TBM_SETRANGE, TRUE, MAKELPARAM(1, 30)); SendMessageA(g_msTraffic, TBM_SETPOS, TRUE, (g_optTraffic ? g_optTraffic : 100) / 10);
+    CreateWindowA("STATIC", "Horizon:", WS_CHILD | WS_VISIBLE, 14, 72, 70, 20, g_msWnd, NULL, inst, NULL);
+    g_msHorizon = CreateWindowA("COMBOBOX", "", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL, 90, 68, 220, 200, g_msWnd, NULL, inst, NULL);
+    for (i = 0; i < 6; i++) SendMessageA(g_msHorizon, CB_ADDSTRING, 0, (LPARAM)hz[i]);
+    SendMessageA(g_msHorizon, CB_SETCURSEL, g_optHorizon >= 0 && g_optHorizon <= 5 ? g_optHorizon : 0, 0);
+    CreateWindowA("STATIC", "Vehicles in the traffic (unticked: never on this map):", WS_CHILD | WS_VISIBLE, 14, 104, 310, 20, g_msWnd, NULL, inst, NULL);
+    for (i = 0, y = 128; i < g_msNCar; i++, y += 24) { g_msCar[i] = CreateWindowA("BUTTON", names[i], WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 24, y, 280, 22, g_msWnd, NULL, inst, NULL);
+        SendMessageA(g_msCar[i], BM_SETCHECK, (g_optCars >> i & 1) ? BST_UNCHECKED : BST_CHECKED, 0); }
+    {   HWND c = GetWindow(g_msWnd, GW_CHILD); for (; c; c = GetWindow(c, GW_HWNDNEXT)) SendMessageA(c, WM_SETFONT, (WPARAM)g_font, 0); }
+    MapSetLabel(); ShowWindow(g_msWnd, SW_SHOW); }
 static void TerrBarToggle(void)
 {   if (IsWindowVisible(g_terrBar)) { SendMessageA(g_terrBar, WM_CLOSE, 0, 0); return; }
     if (IsWindowVisible(g_paintBar)) SendMessageA(g_paintBar, WM_CLOSE, 0, 0);   /* (one painting tool at a time) */
@@ -3710,6 +3826,7 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
         SendMessageA(lv, WM_SETREDRAW, FALSE, 0); ListView_DeleteAllItems(lv); if (il[L]) ImageList_Destroy(il[L]);
         il[L] = ImageList_Create(PAL_TS, PAL_TS, ILC_COLOR32, 64, 64); ListView_SetImageList(lv, il[L], LVSIL_NORMAL); ListView_SetIconSpacing(lv, 82, PAL_TS + 34);   /* (two lines of name, the column's width; little room between - user, 2026-11-19 "reduce the spacing between elements more") */
         if (L == 0) { BlockAdd(lv, il[L], &n, "original", BLK_ORIG, Thumb(-1));
+            BlockAdd(lv, il[L], &n, "GUARD RAIL", BLK_GRAILP, g_ra.ncab >= C3_NCABCODE ? Thumb(g_ra.cab0 + C3C_NTEX + C3_NCABCODE) : ThumbEdge(1, 3));   /* (the game's guard rail out on P0, paved to it: RailSide) */
             for (i = 0; i < g_ra.nground; i++) if (!C3_GroundIsPath(i) && !GroundIsWall(i)) BlockAdd(lv, il[L], &n, C3_GroundLabel(i), (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i), ThumbColl(ThumbSprite(i == C3_GBRIDGE || C3_GroundSharp(i) ? ThumbNoBlend(ThumbCover(g_ra.ground0 + i)) : GroundWalls(i) ? ThumbWall(ThumbCover(g_ra.ground0 + i)) : ThumbCover(g_ra.ground0 + i), GroundSprites(g_ra.ground0 + i, i)), C3_GroundColl(i)));   /* (REDWOOD ...: ground_art.h; a bridge's deck:
                                                                      no blend; a wall on P3: its mark) */
             m = PicList(-1, 0, 0, val, tex, wh, 4096);
@@ -3719,6 +3836,8 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
         else if (L == 1) { BlockAdd(lv, il[L], &n, "original", BLK_ROADORIG, Thumb(-1));   /* (one-line names: a second line took a whole row - user, 2026-11-19 "reduce the spacing") */
             m = RoadList(val, tex, 4096);
             for (i = 0; i < m; i++) BlockAdd(lv, il[L], &n, RoadName(val[i], tex[i]), (LPARAM)val[i], (val[i] & RRC_TEXG) ? ThumbRoad(tex[i]) : ThumbCover(tex[i]));   /* (the lane lines shown) */
+            BlockAdd(lv, il[L], &n, "SNOW STARTS", BLK_SNOW0, g_ra.ncab >= C3_NCABCODE ? Thumb(g_ra.cab0 + C3C_NTEX + C3_NCABCODE + 1) : ThumbEdge(1, 3));   /* (the course's snow: weather.inc) */
+            BlockAdd(lv, il[L], &n, "FULL SNOW", BLK_SNOW1, g_ra.ncab >= C3_NCABCODE ? Thumb(g_ra.cab0 + C3C_NTEX + C3_NCABCODE + 1) : ThumbEdge(1, 3)); BlockAdd(lv, il[L], &n, "NO SNOW", BLK_SNOWOFF, ThumbEdge(1, 3));
             if (g_ra.global[5] >= 0) BlockAdd(lv, il[L], &n, "JUNCTION", BLK_JUNCTION, ThumbColl(ThumbRoad(g_ra.global[5]), C3_COLL_JUNCTION));   /* (the Junction collection: a crossing - PicPaintAt) */
         }
         else if (L == 4) { int r;   /* Curbs (user, 2026-11-19: "put curbs into their own category too"): the gutter (none / standard / wide / channel - user, 2026-11-19 "i cant figure out
@@ -3728,19 +3847,23 @@ static void BlocksFill(void)   /* the four lists: Ground (its "original", the co
                 for (r = 0; r < 3; r++) BlockAdd(lv, il[L], &n, gn[r], BLK_GSTY0 + r, ThumbEdge(1, r)); }
             BlockAdd(lv, il[L], &n, "original", BLK_GUTORIG, Thumb(-1));
             BlockAdd(lv, il[L], &n, "KERB RETURN", BLK_KRET, ThumbColl(ThumbEdge(1, 3), C3_COLL_JUNCTION));
-            BlockAdd(lv, il[L], &n, "FOREST EDGE", BLK_FEDGE, ThumbEdge(1, 3));   /* (a country road's edge: no kerb, no gutter, a white line - user, 2026-11-24 redwood photo) */   /* (the Junction collection: the footpath down to the road at a corner) */
+            BlockAdd(lv, il[L], &n, "FOREST EDGE", BLK_FEDGE, ThumbEdge(1, 3));
+            if (g_ra.nground > 25) BlockAdd(lv, il[L], &n, "GRAVEL EDGE", BLK_GEDGE, ThumbNoBlend(ThumbCover(g_ra.ground0 + 25)));
+            /* (ASPHALT EDGE - the white line and a paved verge, C3_AsphaltEdge - no longer offered: user note 2026-11-27 "remove asphalt as a option for the verge please it shoudlnt be one"; the renderer still draws a course's old ones) */
+            BlockAdd(lv, il[L], &n, "GUARD RAIL", BLK_GRAIL, g_ra.ncab >= C3_NCABCODE ? Thumb(g_ra.cab0 + C3C_NTEX + C3_NCABCODE) : ThumbEdge(1, 3)); BlockAdd(lv, il[L], &n, "NO GUARD RAIL", BLK_NORAIL, ThumbEdge(1, 3));   /* (RrcExtra.rail) */   /* (a trail's road edge: user note 2026-11-26 "more gravel / road texture ... a custom curb") */   /* (a country road's edge: no kerb, no gutter, a white line - user, 2026-11-24 redwood photo) */   /* (the Junction collection: the footpath down to the road at a corner) */
             m = PicList(-1, 0, 1, val, tex, wh, 4096);
             for (i = 0; i < m; i++) if (wh[i] & 0x02) { sprintf(lb, "%.8s", g_ra.tex[tex[i]].name); BlockAdd(lv, il[L], &n, lb, (LPARAM)val[i], ThumbNoBlend(ThumbCover(tex[i]))); } }   /* (curbs: no blend) */
         else if (L == 3) {   /* Footpaths (user, 2026-11-19: "all the footpath textures ... their own category ... and their own list"): the sand footpath (ground_art.h SANDPATH), a bridge's deck (BRIDGE - also in Ground: user, 2026-11-19 "i cant get the bridge footpath to be flush up against the kerb side"),
                                 the course's footpath pictures (set category 5: RRSSTA, SAND ...), each raised and flush - no blocks of height alone ("do i need the strictly
                                 footpath raised and flush ones now?": the other version of the same picture changes it) - painted on the footpath only (g_bCat 3) */
+            BlockAdd(lv, il[L], &n, "GUARD RAIL", BLK_GRAILF, ThumbFp(g_ra.ncab >= C3_NCABCODE ? Thumb(g_ra.cab0 + C3C_NTEX + C3_NCABCODE) : ThumbEdge(1, 3), !g_fpFlat));   /* (raised / flush as the switch says) */   /* (the game's guard rail on the footpath - the verge's middle, paved beneath: RailSide) */
             {   int r = g_fpFlat; {   /* (each picture once, raised or flush as the switch above the list says - g_fpRaiseChk; ThumbFp marks them) */
                 for (i = 0; i < g_ra.nground; i++) if (C3_GroundIsPath(i) || i == C3_GBRIDGE || i == C3_GCONCRETE) { sprintf(lb, "%s", k_c3Ground[i]); BlockAdd(lv, il[L], &n, lb, (LPARAM)(RRC_BAND | RRC_GEN | (unsigned)i | (r ? BLK_FPFLAT : BLK_FPUP)), ThumbFp(ThumbCover(g_ra.ground0 + i), !r)); }
                 m = PicList(-1, 0, 1, val, tex, wh, 4096);
                 for (i = 0; i < m; i++) if ((wh[i] & 0x7c) && (val[i] & RRC_CAT5)) { sprintf(lb, "%.8s", g_ra.tex[tex[i]].name);
                     BlockAdd(lv, il[L], &n, lb, (LPARAM)(val[i] | (r ? BLK_FPFLAT : BLK_FPUP)), ThumbFp(C3_TexBaked(&g_ra, tex[i]) ? ThumbNoBlend(ThumbCover(tex[i])) : ThumbCover(tex[i]), !r)); } } } }
         else { BlockAdd(lv, il[L], &n, "mix", BLK_BUILD, Thumb(fac)); FacList();
-            for (i = 0; i < g_nFac; i++) { sprintf(lb, "%.8s", g_ra.tex[g_facTex[i]].name); BlockAdd(lv, il[L], &n, lb, BLK_FAC0 + i, Thumb(g_facTex[i])); } }
+            for (i = 0; i < g_nFac; i++) { if (FacIsCabin(g_facVal[i]) >= 0) sprintf(lb, "%s", k_c3CabName[FacIsCabin(g_facVal[i])]); else sprintf(lb, "%.8s", g_ra.tex[g_facTex[i]].name); BlockAdd(lv, il[L], &n, lb, BLK_FAC0 + i, Thumb(g_facTex[i])); } }
         SendMessageA(lv, WM_SETREDRAW, TRUE, 0); InvalidateRect(lv, NULL, TRUE); }
     if ((cur = BlockItem(BlockCur())) >= 0) ListView_SetItemState(g_blk[g_bList], cur, LVIS_SELECTED, LVIS_SELECTED); }
 static void BlockSet(int b)   /* the block chosen (0: none - clicks choose pieces again; 4: the picture g_bpVal) */
@@ -3751,11 +3874,11 @@ static void BlockSet(int b)   /* the block chosen (0: none - clicks choose piece
         else if (b == 9) Status("Flatten: click / drag ground cells in the 3D view - each made level (its corners at their mean height), for a building to stand on - Esc to stop");
         else if (b >= 5) Status("%s: click / drag the grid in the 3D view - curb: its top, verge: its outer edge, P0 / P1 / P2: their points (%s) - Esc or Stop painting to stop", b == 5 ? "Raise" : b == 6 ? "Lower" : "Level",
                            b == 7 ? "press on one, drag to another, let go: they join at the middle height, smoothly" : "the toolbar's step a vertex, Shift 4 x");
-        else if (b == 4 && g_bpVal >= BLK_KERB0 && g_bpVal < BLK_KERB0 + 5) Status("Footpath %s: click / drag the ground beside a footpath (a City street side, or one made with the Footpath tool) - "
-                                                                          "that side's footpath %s; T3D shows it (P3D: its label on the chosen piece) - Esc to stop", g_bpVal == BLK_KERB0 ? "raised" : "flush", g_bpVal == BLK_KERB0 ? "a step up from the road" : "level with the road");
-        else if (b == 4) Status("%s block: click / drag %s in the 3D view to paint it - Esc or Stop painting to stop", g_bCat == 0 ? "Road" : g_bCat == 1 ? "Curb" : g_bCat == 3 ? "Footpath" : "Ground",
-                           g_bCat == 0 ? "beside the road (its lanes on that side)" : g_bCat == 1 ? "along a side (its curb)" : g_bCat == 3 ? "the footpath beside the road (the verge; amber step: raised, cyan bar: flush)" : "the ground cells (verge, P0, P1, P2, P3)");
-        else Status("%s: click / drag beside the road in the 3D view (P0 / P1 / P2 of the terrain) to paint it - Esc or Stop painting to stop", b == 1 ? "City Side" : b == 2 ? "Terrain Side" : "Footpath"); }
+        else if (b == 4 && g_bpVal >= BLK_KERB0 && g_bpVal < BLK_KERB0 + 5) Status("Verge %s: click / drag the ground beside a verge (a City street side, or one made with the Verge tool) - "
+                                                                          "that side's verge %s; T3D shows it (P3D: its label on the chosen piece) - Esc to stop", g_bpVal == BLK_KERB0 ? "raised" : "flush", g_bpVal == BLK_KERB0 ? "a step up from the road" : "level with the road");
+        else if (b == 4) Status("%s block: click / drag %s in the 3D view to paint it - Esc or Stop painting to stop", g_bCat == 0 ? "Road" : g_bCat == 1 ? "Curb" : g_bCat == 3 ? "Verge" : "Ground",
+                           g_bCat == 0 ? "beside the road (its lanes on that side)" : g_bCat == 1 ? "along a side (its curb)" : g_bCat == 3 ? "the verge beside the road (amber step: raised, cyan bar: flush)" : "the ground cells (verge, P0, P1, P2, P3)");
+        else Status("%s: click / drag beside the road in the 3D view (P0 / P1 / P2 of the terrain) to paint it - Esc or Stop painting to stop", b == 1 ? "City Side" : b == 2 ? "Terrain Side" : "Verge"); }
     else { if (g_bpaint) { g_bpaint = 0; g_tpaint = 0; Status("Painting stopped: clicks choose pieces again"); } for (i = 0; i < 6; i++) ListView_SetItemState(g_blk[i], -1, 0, LVIS_SELECTED); }
     if (g_stopBtn) EnableWindow(g_stopBtn, g_bpaint != 0);
     for (i = 0; i < 3; i++) if (g_hBtn[i]) SendMessageA(g_hBtn[i], BM_SETCHECK, g_bpaint == 5 + i ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -3814,13 +3937,14 @@ static LRESULT CALLBACK MainProc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         case ID_TDEL: TplDelete(); return 0;
         case ID_PAINT: PaintBarToggle(); return 0;
         case ID_TERRAIN: TerrBarToggle(); return 0;
+        case ID_MAPSET: MapSetShow(); return 0;
         case ID_EDITPART: PartWinToggle(); return 0;
         case ID_STOPPAINT: BlockSet(0); return 0;
         case ID_HRAISE: case ID_HLOWER: case ID_HLEVEL: { int b = 5 + LOWORD(wp) - ID_HRAISE; BlockSet(g_bpaint == b ? 0 : b); SetFocus(g_view); return 0; }   /* (again: off) */
         case ID_HBAR: HBarToggle(); return 0;
         case ID_FPRAISE: g_fpFlat = SendMessageA(g_fpRaiseChk, BM_GETCHECK, 0, 0) != BST_CHECKED;
             if (g_bpaint == 4 && g_bList == 3 && (g_bpVal & (BLK_FPUP | BLK_FPFLAT))) g_bpVal = (g_bpVal & ~(BLK_FPUP | BLK_FPFLAT)) | (g_fpFlat ? BLK_FPFLAT : BLK_FPUP);   /* (the chosen footpath: the same picture, the other height) */
-            g_bFill = -1; BlocksFill(); Status(g_fpFlat ? "Footpaths: flush - level with the road (cyan bar)" : "Footpaths: raised - on a kerb above the road (amber step)"); return 0;
+            g_bFill = -1; BlocksFill(); Status(g_fpFlat ? "Verge: flush - level with the road (cyan bar)" : "Verge: raised - on a kerb above the road (amber step)"); return 0;
         case ID_VTXCHK: g_showVtx = SendMessageA(g_vtxChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_showVtx ? "Vertex points shown: the road's edge (blue), the curb's top, the verge's edge, P0, P1, P2 - Heights... moves them" : "Vertex points hidden (shown while Raise / Lower / Level is on)"); return 0;
         case ID_TEXTCHK: g_showText = SendMessageA(g_textChk, BM_GETCHECK, 0, 0) == BST_CHECKED; Status(g_showText ? "Labels shown: the piece numbers, the finishes and the line along the top of the 3D view" : "Labels hidden (the 3D view's piece numbers, finishes and top line)"); return 0;
         case ID_HFLAT: BlockSet(g_bpaint == 9 ? 0 : 9); SetFocus(g_view); return 0;
@@ -3898,12 +4022,16 @@ static void Defaults(void)   /* the data folder and the game next to the editor:
 /* the sample course (user, 2026-11-23: "replace the test level ... with a sample fork / join (dont overlap the roads) and sample terrains etc and a bridge and
    water"): New track, then bends / hills, a flattened fork (B one sweep out to the right and back - never across A), and stretches of painted ground; saved to
    CE_SAMPLE's path.  Everything laid out between the start and level 1's finish (Test drive races level 1) */
-static int SamplePaint(int cat, const char *name, int k0, int n, int half, int side, int cell)   /* the block `name` of category cat (as CE_TESTGB) on n pieces' cell */
-{   int L = cat == 5 ? 5 : cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1, j, nb, item = -1, i;
+static int SampleChoose(int cat, const char *name)   /* the block `name` of category cat chosen, as a click on it in its list (0: none such) - SamplePaint; test switch CE_TESTBLOCK=<cat>|<name> */
+{   int L = cat == 5 ? 5 : cat == 2 ? 0 : cat == 3 ? 2 : cat == 4 ? 3 : cat == 1 ? 4 : 1, j, nb, item = -1;
     g_bFill = -1; BlocksFill(); nb = ListView_GetItemCount(g_blk[L]);
     for (j = 0; j < nb; j++) { char b2[40] = ""; LVITEMA gi; memset(&gi, 0, sizeof gi); gi.pszText = b2; gi.cchTextMax = 40; SendMessageA(g_blk[L], LVM_GETITEMTEXTA, (WPARAM)j, (LPARAM)&gi); if (!strcmp(b2, name)) { item = j; break; } }
     if (item < 0) { LOG("sample: no block \"%s\" in list %d", name, L); return 0; }
-    BlockChoose(L, item, 0); g_half = half;
+    BlockChoose(L, item, 0); ListView_EnsureVisible(g_blk[L], item, FALSE); return 1; }
+static int SamplePaint(int cat, const char *name, int k0, int n, int half, int side, int cell)   /* the block `name` of category cat (as CE_TESTGB) on n pieces' cell */
+{   int i;
+    if (!SampleChoose(cat, name)) return 0;
+    g_half = half;
     TerrBegin(); for (i = 0; i < n && k0 + i < g_c.n; i++) if (!half || g_c.piece[k0 + i].layout == 2) PicPaintAt(k0 + i, side + 1, cell); TerrEnd(); g_half = 0;
     return 1; }
 static void SampleCells(int cat, const char *name, int k0, int n, int half, int side, int c0, int c1) { int c; for (c = c0; c <= c1; c++) SamplePaint(cat, name, k0, n, half, side, c); }
@@ -3911,14 +4039,274 @@ static void SampleBend(int k0, int P, double C)   /* curves C sin over P pieces:
 {   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->curve += (int)floor(C * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xb8); BlockSync(k0 + j); } }
 static void SampleHill(int k0, int P, double H)   /* a crest (H > 0) or a dip over P pieces: the height back where it was */
 {   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) { RoadSection *s = &g_c.piece[k0 + j].halfA; s->hill += (int)floor(H * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xbc); BlockSync(k0 + j); } }
+static void SampleBendB(int k0, int P, double C)   /* as SampleBend on a fork's B (its pieces' halfB) */
+{   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) if (g_c.piece[k0 + j].layout == 2) { RoadSection *s = &g_c.piece[k0 + j].halfB; s->curve += (int)floor(C * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xb8); BlockSync(k0 + j); } }
+static void SampleHillB(int k0, int P, double H)   /* as SampleHill on a fork's B */
+{   int j; for (j = 0; j < P && k0 + j < g_c.n; j++) if (g_c.piece[k0 + j].layout == 2) { RoadSection *s = &g_c.piece[k0 + j].halfB; s->hill += (int)floor(H * sin(6.28318530718 * (j + 0.5) / P) + 0.5); Derive(s, 0xbc); BlockSync(k0 + j); } }
 static double SampleForkGap(int fs, int fe)   /* how near B's centre line comes to A's anywhere past the turn-off and before the join */
 {   double mind = 1e30; int a, b;
     for (b = fs + 30; b < fe - 30; b++) for (a = fs - 50; a < fe + 50; a++) { double dx = g_c.frameB[b].x - g_c.frame[a].x, dz = g_c.frameB[b].z - g_c.frame[a].z, d = sqrt(dx * dx + dz * dz); if (d < mind) mind = d; }
     return mind; }
+static void SampleEdges(int k0, int k1)   /* the course's default road edge (user, 2026-11-26: "the default side curb should be gravel please and it should have a white stripe splitting the road
+                                              from the gravel" - the photo): GRAVEL EDGE on every country side - not streets (buildings from P0), concrete, a bridge or a junction */
+{   int k, hh, sd, n = 0, na = 0;
+    if (!g_ra.ext) return;
+    for (k = k0; k < k1 && k < g_ra.next; k++) for (hh = 0; hh < (g_c.piece[k].layout == 2 ? 2 : 1); hh++) for (sd = 0; sd < 2; sd++) {
+        const RoadSection *s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA; unsigned char *g = &g_ra.ext[k].gutter[hh][sd];
+        if (C3_SideKind(&g_ra, s, k, hh, sd) != SEC_PROFILE || C3_SideBld(&g_ra, s, k, hh, sd) == 4) continue;
+        if (C3_SideCells(&g_ra, s, k, hh, sd, C3_GCONCRETE) & 1 || C3_SideCells(&g_ra, s, k, hh, sd, C3_GBRIDGE) & 1 || (C3_SideCells(&g_ra, s, k, hh, sd, C3_GSIDEST) | C3_SideCells(&g_ra, s, k, hh, sd, C3_GTLIGHTS) | C3_SideCells(&g_ra, s, k, hh, sd, C3_GSTOP)) & 1) continue;
+        {   int tr = C3_SideCells(&g_ra, s, k, hh, sd, 0) | C3_SideCells(&g_ra, s, k, hh, sd, C3_GFOREST) | C3_SideCells(&g_ra, s, k, hh, sd, C3_GDUFF);   /* (the trees' sides: REDWOOD, FOREST, DUFF - P0 / P1) */
+            (void)tr; *g =   /* (GRAVEL EDGE by the trees too - no ASPHALT EDGE: user note 2026-11-27) */ (unsigned char)((*g & ~(7 << 2) & ~3 & ~(3 << 5)) | 4 << 2 | 2 | 3 << 5 | 0x80); }
+        g_ra.ext[k].lift[hh][sd][0] = 0; n++;
+        if (!g_ra.ext[k].cell[hh][sd][0] && !C3_SideWalk(&g_ra, s, k, hh, sd)) { g_ra.ext[k].cell[hh][sd][0] = (unsigned short)(RRC_BAND | RRC_GEN | C3_GGRAVEL); g_ra.ext[k].cellSet[hh][sd][0] = 0; }   /* (gravel, not duff: user, 2026-11-27 "apply the gravel by default on this map") */   /* (an unpainted verge: the course's own picture is sand - user: "no sand at all" - needle duff) */ }
+    LOG("sample: road edges on %d sides - %d of them ASPHALT EDGE (the trees), the rest GRAVEL EDGE", n, na); }
+/* the verges gravel (user, 2026-11-27: "apply the gravel by default on this map please, feel free to replace the duffs you put there on curb and verge"): every verge cell
+   painted REDWOOD DUFF (the sample's, a rail's fence gone) GRAVEL instead, flush - no kerb (ASPHALT EDGE kept), no lift.  Sample course (after SampleEdges) and CE_GRAVELVERGE
+   (the saved course as it is - its edits kept) */
+static int SampleVergeGravel(int k0, int k1)
+{   int k, hh, sd, n = 0, na = 0; unsigned short d = (unsigned short)(RRC_BAND | RRC_GEN | C3_GDUFF), gv = (unsigned short)(RRC_BAND | RRC_GEN | C3_GGRAVEL);
+    if (!g_ra.ext) return 0;
+    for (k = k0; k < k1 && k < g_ra.next && k < g_c.n; k++) for (hh = 0; hh < 2; hh++) for (sd = 0; sd < 2; sd++) { RrcExtra *x = &g_ra.ext[k]; int hit = 0;
+        if (x->cell[hh][sd][0] == d && !x->cellSet[hh][sd][0]) { x->cell[hh][sd][0] = gv; hit = 1; }
+        /* (band[0] is P0, not the verge - CellVal: it turned P0's duff into gravel too, put back by SampleTidy's CE_DUFFFROM) */
+        if (((x->gutter[hh][sd] >> 2) & 7) == 5) { x->gutter[hh][sd] = (unsigned char)((x->gutter[hh][sd] & ~(7 << 2) & ~3 & ~(3 << 5)) | 4 << 2 | 2 | 3 << 5 | 0x80); na++; }   /* (an ASPHALT EDGE: GRAVEL EDGE - user note 2026-11-27 "remove asphalt") */
+        if (hit) { unsigned char *g = &x->gutter[hh][sd]; int ks = (*g >> 2) & 7; if (ks != 4 && ks != 5) *g = (unsigned char)((*g & ~(7 << 2)) | 4 << 2); x->lift[hh][sd][0] = 0; n++; } }
+    LOG("verge gravel: %d sides' verges DUFF -> GRAVEL (flush), %d ASPHALT EDGE -> GRAVEL EDGE", n, na); return n; }
+/* the whole course one climb (user, 2026-11-27: "ramp up the entire course to be one massive hill please? from start to end and mayhbe some dips here and there"): every piece
+   from k0 to k1 rises dh more (hill: the height's change over a piece, 662 units long - 20 is a 3 % grade, ~100 000 units from the start to level 5's finish), a split piece's
+   B as much (the fork joins A at its height); then nd dips of ~2500 down and back up, each on single road only (a split piece's B would part from A) */
+static void SampleRamp(int k0, int k1, int dh, int nd)
+{   int k, d, n = 0, nb = 0;
+    for (k = k0; k < k1 && k < g_c.n; k++) { RoadSection *a = &g_c.piece[k].halfA; int old = a->hill; a->hill = dh; Derive(a, 0xbc); n++;   /* (a straight line up: every piece the same
+                                                                     rise - the course's own rolling hills gone, user note 2026-11-27 "This is like a sin wave ... it should be just a linear line upwards") */
+        if (g_c.piece[k].layout == 2) { RoadSection *b = &g_c.piece[k].halfB; b->hill += dh - old; Derive(b, 0xbc); nb++; } BlockSync(k); }   /* (B: its own hills on A's - the fork's B as hilly as it was, joining A) */
+    for (d = 0; d < nd; d++) { int P = 100, at = k0 + (int)((k1 - k0) * (0.2 + 0.6 * d / (nd > 1 ? nd - 1 : 1))), j, ok = 0;
+        for (; at + P < k1 && !ok; at += 10) { ok = 1; for (j = -4; j < P + 4 && ok; j++) if (at + j < 0 || at + j >= g_c.n || g_c.piece[at + j].layout == 2 || (at + j > 0 && g_c.piece[at + j - 1].layout == 2)) ok = 0; }
+        if (ok) { at -= 10; SampleHill(at, P, -80); LOG("ramp: a dip at %d..%d", at, at + P); } }   /* (~2500 down and back up) */
+    LOG("ramp: %d pieces +%d each (%d of B), %d dips", n, dh, nb, nd); }
+/* the redwoods on to the start (user, 2026-11-27: "extend the redwood forest out closer to the start position please"): REDWOOD on P0 .. P3 of both sides from k0 to k1
+   where nothing is painted yet (the course's own picture) - the verges as they are */
+static void SampleRedwoodStart(int k0, int k1)
+{   int k, sd, c, n = 0;
+    if (!g_ra.ext) return;
+    if (k0 < 0) k0 = 0;
+    for (sd = 0; sd < 2; sd++) for (c = 1; c <= 4; c++) for (k = k0; k < k1 && k < g_ra.next && k < g_c.n; ) {   /* (painted in runs) */
+        int e = k;
+        for (; e < k1 && e < g_ra.next && e < g_c.n; e++) { unsigned short *set, *vp = CellVal(&g_ra.ext[e], 0, sd, c, &set); unsigned v = *vp; int gi = (v & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) == (RRC_BAND | RRC_GEN) ? (int)(v & 0xff) : -1;   /* (any ground
+                                                                     but REDWOOD, water, a hole or a bridge: REDWOOD - user, 2026-11-27 "make the redwoods at the start line") */
+            if (!((v == 0 && !*set) || (gi > 0 && gi != 1 && gi != 2 && gi != 3 && gi != 14))) break; }
+        if (e > k) { SamplePaint(2, "REDWOOD", k, e - k, 0, sd, c); n += e - k; k = e; } else k++; }
+    LOG("redwood start: %d cells %d..%d REDWOOD", n, k0, k1); }
+/* every level's finish put where the course's own marker (kindArg 7, the level) is (user, 2026-11-27 "fix it so theres a L1-L5 please for sierra nevada": a course ported
+   1:1 onto another track's originals kept its markers, but a finish is on the piece made from the track's original finish piece (CourseSet; the game: road\course_edit.c
+   MapFinishes) - so levels 1..4 finished where Sierra Nevada's did and level 5, whose original lies past the course's last, nowhere).  PlanFinishAt gives the pieces the
+   originals that put it there; the far ones first, again while one had to wait for another (their order is the track's).  1 = every marker has its finish */
+static int FinishesAtMarkers(void)
+{   int mk[5], i, k, pass, left = 0;
+    for (i = 0; i < 5; i++) mk[i] = -1;
+    for (k = 0; k < g_c.n; k++) { const RoadSection *q = &g_c.piece[k].halfA; int l = q->kindArg[1]; if (q->kindArg[0] == 7 && l >= 1 && l <= 5 && mk[l - 1] < 0) mk[l - 1] = k; }
+    for (i = 0; i < 5; i++) { if (g_lvFin0[i] < 0) { g_lvFin[i] = -1; continue; } for (k = 0; k < g_c.n && g_src[k] < g_lvFin0[i]; k++) ; g_lvFin[i] = k < g_c.n ? k : -1; }   /* (as the pieces' originals have them: CourseSet) */
+    LOG("finishes: markers %d %d %d %d %d, now %d %d %d %d %d (the track's originals %d %d %d %d %d of %d)", mk[0], mk[1], mk[2], mk[3], mk[4], g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4],
+        g_lvFin0[0], g_lvFin0[1], g_lvFin0[2], g_lvFin0[3], g_lvFin0[4], g_n0);
+    for (pass = 0; pass < 10; pass++) { int done = 0; left = 0; g_finFreeForks = pass >= 5;   /* (the forks made here kept on their originals first; a finish they bar: with them free) */
+        for (i = 4; i >= 0; i--) { if (mk[i] < 0 || g_lvFin[i] == mk[i]) continue;
+            if (PlanFinishAt(i + 1, mk[i]) && g_lvFin[i] == mk[i]) done++; else { left++; LOG("finishes: level %d not at %d (%s)", i + 1, mk[i], g_status); } }
+        if (!left) break; if (!done) { if (pass >= 5) break; pass = 4; } }
+    g_finFreeForks = 0;
+    for (i = 0; i < 5; i++) if (g_pEnd >= 0 && g_lvFin[i] > PlanLast()) { LOG("finishes: the plan's end (%d) before level %d's finish - the whole course shown", g_pEnd, i + 1); g_pEnd = -1; }   /* (user, 2026-11-27 "i checked
+                                                      the big plan i still cant see the L4 or L5 End point": the course came with City's "being built to piece 48" - the plan drew
+                                                      the road to its last fork only, no finish past it; a ported course is a whole road) */
+    LOG("finishes: L1 %d  L2 %d  L3 %d  L4 %d  L5 %d%s", g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4], left ? " - not every marker has its finish" : "");
+    return !left; }
+/* another track's course onto this one (user, 2026-11-27: "move this map to the sierra nevada level now and restore the city level back to the original"): the course file
+   `path` (track h.track's) laid on the open track - record i made from this track's original piece (i - its start + this track's start: the starts on each other, clamped
+   to the originals), its sections (from RRC_FROM: the road, its sides, the level markers ...) and extras as the file has them; the finishes then from its own level markers
+   (kindArg 7).  Its settings: traffic, snow; the horizon and the vehicles left out this track's own (another track's variants).  fs: the course's start piece in the file */
+static int FinishesAtMarkers(void);
+static int PortFrom(const char *path, int fs)
+{   FILE *f = fopen(path, "rb"); RrcHeader h; RrcPiece *r = NULL; RrcExtra *x = NULL; RoadPiece *pc; int *sr, i, ok = 0;
+    if (!f) { LOG("port: cannot open %s", path); return 0; }
+    if (fread(&h, sizeof h, 1, f) == 1 && h.magic == RRC_MAGIC && h.version >= 2 && h.version <= RRC_VERSION && h.secSize == RRC_SECSIZE && h.n > 0 && h.n < 65536
+        && (r = (RrcPiece *)malloc(sizeof(RrcPiece) * h.n)) != NULL && fread(r, sizeof(RrcPiece), h.n, f) == (size_t)h.n && (x = (RrcExtra *)calloc(h.n, sizeof(RrcExtra))) != NULL) {
+        unsigned xs = RrcExtraSize(h.version); if (fread(x, xs, h.n, f) == (size_t)h.n) { RrcExtraWiden(x, h.n, xs); ok = 1; } }
+    fclose(f);
+    if (!ok) { LOG("port: %s is not a course file", path); free(r); free(x); return 0; }
+    pc = (RoadPiece *)malloc(sizeof(RoadPiece) * h.n); sr = (int *)malloc(sizeof(int) * h.n);
+    if (!pc || !sr) { free(pc); free(sr); free(r); free(x); return 0; }
+    {   int cap = g_n0 - 1, o2;   /* (this track's own forks out of the way: every record on an original piece before its first split - the game can't take pieces out of a split
+                                    block (road\course_edit.c rr_CourseEditMap), and a split original under the course came back as a fork whose B crossed A: user, 2026-11-27) */
+        if (getenv("CE_PORTCAP")) for (o2 = 0; o2 < g_n0; o2++) if (g_ext[o2].layout == 2) { cap = o2 - 8 > 0 ? o2 - 8 : 0; break; }   /* (tests only: put in, it crashed the game / finished early) */
+        for (i = 0; i < h.n; i++) { int o = i - fs + g_start0; if (o < 0) o = 0;
+            if (getenv("CE_PORTSPREAD") && i > fs) o = g_start0 + (int)((double)(i - fs) * (cap - g_start0) / (h.n - fs));   /* (spread: every block before the first split as much longer) */
+            if (o > cap) o = cap; sr[i] = o; pc[i] = g_ext[o]; }
+        LOG("port: records on this track's originals 0 .. %d (its first split at %d)", cap, cap < g_n0 - 1 ? cap + 8 : -1); }
+    CourseSet(h.n, pc, sr);
+    for (i = 0; i < h.n && i < g_c.n; i++) {
+        if (r[i].used & 1) memcpy((unsigned char *)&g_c.piece[i].halfA + RRC_FROM, r[i].a + RRC_FROM, RRC_SECSIZE - RRC_FROM);
+        if (0 && g_ext[sr[i]].layout == 2 && !(r[i].spare[1] & 1)) {   /* (kept, not used: the track's own forks are taken out now - g_optNoTrackForks) */   /* (this track's own fork - the game keeps its split blocks: B as the original has it against A, its curve and
+                                                                     hill A's new ones plus the original's difference, so B lies beside A as the track made it - user, 2026-11-27 "the road forks
+                                                                     should not overlap": with the file's A and the original's B it crossed A) */
+            const RoadPiece *op = &g_ext[sr[i]]; RoadSection *b = &g_c.piece[i].halfB; *b = op->halfB; g_c.piece[i].layout = 2;
+            b->curve = g_c.piece[i].halfA.curve + (op->halfB.curve - op->halfA.curve); b->hill = g_c.piece[i].halfA.hill + (op->halfB.hill - op->halfA.hill); Derive(b, 0xb8); Derive(b, 0xbc); }
+        else g_c.piece[i].layout = (r[i].spare[1] & 1) ? 2 : g_c.piece[i].layout == 2 ? 0 : g_c.piece[i].layout;   /* (the editor's forks; the file's own track's split pieces made again below) */
+        if ((r[i].used & 2) || (r[i].spare[1] & 1)) memcpy((unsigned char *)&g_c.piece[i].halfB + RRC_FROM, r[i].b + RRC_FROM, RRC_SECSIZE - RRC_FROM);
+        if (g_ra.ext && i < g_ra.next) g_ra.ext[i] = x[i]; }
+    g_c.start = fs;
+    for (i = 0; i < 5; i++) g_lvFin[i] = -1;
+    for (i = 0; i < g_c.n; i++) { const RoadSection *q = &g_c.piece[i].halfA; int l = q->kindArg[1]; if (q->kindArg[0] == 7 && l >= 1 && l <= 5 && g_lvFin[l - 1] < 0) g_lvFin[l - 1] = i; }
+    if (h.spare[1] > 0 && h.spare[1] <= g_c.n + 1) g_pEnd = h.spare[1] - 1;
+    g_optTraffic = h.spare[2]; g_optSnow0 = h.spare[3]; g_optSnow1 = h.spare[4]; g_optHorizon = 0; g_optCars = 0; g_optNoTrackForks = 1;   /* (this track's own forks out: CeUnsplitTrack) */
+    C3_Frames(&g_c); C3_FramesB(&g_c); g_c.fr = g_c.frame; for (i = 0; i < g_c.n; i++) BlockSync(i);
+    {   int a = -1, nf = 0;   /* the file's own track's forks (B halves, no editor mark): made again here as the editor's (PlanForkRange) - forks the game makes on any track */
+        for (i = 0; i <= h.n && i <= g_c.n; i++) { int b = i < h.n && i < g_c.n && (r[i].used & 2) && !(r[i].spare[1] & 1); if (b && a < 0) a = i; if (!b && a >= 0) { int okf = i - a > 40 && PlanForkRange(a, i); if (okf) PlanFlattenAt(a + (i - a) / 2); LOG("port: its track's fork %d..%d made again: %s", a, i - 1, okf ? "yes" : g_status); nf += okf; a = -1; } }
+        if (nf) { C3_Frames(&g_c); C3_FramesB(&g_c); g_c.fr = g_c.frame; } }
+    g_dirty = 1; g_meshDirty = 1;
+    FinishesAtMarkers();
+    LOG("port: %s (track %d, %d pieces) onto track %d (%d originals, start %d): start %d, finishes %d %d %d %d %d", path, h.track, h.n, g_track, g_n0, g_start0, g_c.start, g_lvFin[0], g_lvFin[1], g_lvFin[2], g_lvFin[3], g_lvFin[4]);
+    free(r); free(x); return 1; }
+/* the mountain past level 1 (user, 2026-11-27: "fill up the entire map please. i want more snow like terrain the further we go up the mountain. also more cliff face like
+   turns the further up we go and less terrain and tree like types of turns"): from level 1's finish to level 5's, four zones - level 2 the forest (firs, redwood groves,
+   meadows), level 3 the treeline (thinning firs, granite scree, the first snow, cliffs inside the turns), level 4 rock and snow (cliffs inside the turns, a few firs outside),
+   level 5 the snowfields (snow, scree, cliffs inside every turn).  The turns S-bends, tighter up the mountain (single road only); the inside of a turn its cliff close to
+   the road (P0 .. P2 narrowed), the outside its guard rail (SampleRails, after) */
+static unsigned SampleH(unsigned a, unsigned b) { unsigned h = a * 2654435761u ^ b * 2246822519u ^ 0x9e3779b9u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13; return h; }
+static int SampleSplitIn(int k0, int n) { int j; for (j = -4; j < n + 4; j++) if (k0 + j < 0 || k0 + j >= g_c.n || g_c.piece[k0 + j].layout == 2) return 1; return 0; }
+static void SampleMountains(int F, int L2, int L3, int L4, int L5, int snow0)
+{   static const char *const nm[] = { "original", "FOREST", "REDWOOD", "REDWOOD DUFF", "SCREE", "SNOW", "CLIFF" }; enum { OR, FO, RW, DU, SC, SN, CL };
+    int k, sd, c, nb = 0, nn = 0; unsigned char (*code)[2][5] = (unsigned char (*)[2][5])calloc((size_t)g_c.n + 1, sizeof *code); signed char *in = (signed char *)calloc((size_t)g_c.n + 1, 1);
+    if (!code || !in || !g_ra.ext || L5 <= F) { free(code); free(in); return; }
+    {   int z, k0;   /* the turns: S-bends, a straight between, tighter and closer together up the mountain */
+        for (z = 0; z < 4; z++) { int a = z == 0 ? F : z == 1 ? L2 : z == 2 ? L3 : L4, b = z == 0 ? L2 : z == 1 ? L3 : z == 2 ? L4 : L5, P = z == 0 ? 110 : z == 1 ? 90 : z == 2 ? 56 : 46, gap = z == 0 ? 70 : z == 1 ? 40 : z == 2 ? 10 : 5;   /* (harder each level: past level 3 tight and one after another - user, 2026-11-27) */
+            for (k0 = a + 10; k0 + P < b - 10; ) { unsigned h = SampleH((unsigned)k0, 71u); double C = (z == 0 ? 10 : z == 1 ? 18 : z == 2 ? 32 : 40) + (h % (z >= 2 ? 9 : 7));
+                if (SampleSplitIn(k0, P)) { k0 += 20; continue; }
+                SampleBend(k0, P, (h >> 8) & 1 ? C : -C); nb++; k0 += P + gap + (int)((h >> 12) % 20); } } }
+    for (k = F; k < L5 && k + 1 < g_c.n; k++) { float a0[3], a1[3], b0[3], b1[3]; double dl, dr;   /* the inside of each turn (its shorter edge) */
+        if (abs(g_c.piece[k].halfA.curve) < 14 || g_c.piece[k].layout == 2) continue;
+        C3_PointF(&g_c, g_c.frame, k, -800, 0, a0); C3_PointF(&g_c, g_c.frame, k + 1, -800, 0, a1); C3_PointF(&g_c, g_c.frame, k, 800, 0, b0); C3_PointF(&g_c, g_c.frame, k + 1, 800, 0, b1);
+        dl = (a1[0] - a0[0]) * (a1[0] - a0[0]) + (a1[2] - a0[2]) * (a1[2] - a0[2]); dr = (b1[0] - b0[0]) * (b1[0] - b0[0]) + (b1[2] - b0[2]) * (b1[2] - b0[2]);
+        in[k] = dl < dr ? 1 : 2; }
+    for (k = F; k < L5; k++) for (sd = 0; sd < 2; sd++) {   /* each cell's ground: by zone, a patch's dice (24 pieces), the inside of a turn */
+        unsigned h = SampleH((unsigned)(k / 24), (unsigned)sd * 7 + 3), h2 = SampleH((unsigned)(k / 9), (unsigned)sd * 13 + 5); int r = (int)(h % 100), r2 = (int)(h2 % 100), inside = in[k] == sd + 1;
+        double t; unsigned char *q = code[k][sd]; int sn = k >= snow0;   /* (sn: the snow falls from here) */
+        if (k < L2) { t = (double)(k - F) / (L2 - F);   /* level 2: the forest */
+            if (r < 22) { q[1] = DU; q[2] = RW; q[3] = RW; q[4] = RW; } else if (r < 40) { q[1] = OR; q[2] = OR; q[3] = FO; q[4] = FO; } else { q[1] = DU; q[2] = FO; q[3] = FO; q[4] = FO; }
+            if (inside && t > 0.6 && r2 < 30) q[4] = CL; }
+        else if (k < L3) { t = (double)(k - L2) / (L3 - L2);   /* level 3: the treeline */
+            q[1] = r2 < 40 + 40 * t ? SC : DU; q[2] = r < 70 - 40 * t ? FO : SC; q[3] = r < 80 - 50 * t ? FO : SC; q[4] = FO;
+            if (sn && r2 < 15 + 50 * t) { q[3] = SN; q[4] = SN; } if (inside) q[4] = CL; }
+        else if (k < L4) { t = (double)(k - L3) / (L4 - L3);   /* level 4: rock and snow */
+            q[1] = SC; q[2] = r2 < 55 - 30 * t ? SC : SN; q[3] = SN; q[4] = SN;
+            if (!inside && r < 30 - 20 * t) { q[2] = FO; q[3] = FO; } if (inside || r < 25) q[4] = CL; }
+        else {   /* level 5: the snowfields */
+            q[1] = r2 < 15 ? SC : SN; q[2] = SN; q[3] = SN; q[4] = inside || r < 45 ? CL : SN; }
+        q[0] = 0; }
+    for (sd = 0; sd < 2; sd++) for (c = 1; c <= 4; c++) for (k = F; k < L5; ) { int e = k, v = code[k][sd][c];   /* painted in runs */
+        while (e < L5 && code[e][sd][c] == v) e++;
+        if (!SampleSplitIn(k, 0) || e - k > 8) SamplePaint(v == CL ? 5 : 2, nm[v], k, e - k, 0, sd, c);
+        nn++; k = e; }
+    {   int nw = 0, nd = 0; TerrBegin();   /* the inside of a turn: P0 .. P2 narrow - the cliff (P3) close to the road */
+        for (k = F; k < L5; k++) for (sd = 0; sd < 2; sd++) if (code[k][sd][4] == CL && in[k] == sd + 1 && g_c.piece[k].layout != 2 && TerrRec(k)) {
+            double ve = VtxOut(k, sd, 1); VtxOutSet(k, sd, 2, ve + 110); VtxOutSet(k, sd, 3, ve + 170); VtxOutSet(k, sd, 4, ve + 230); BlockSync(k); nw++; }
+        for (k = L3; k < L5; k++) for (sd = 0; sd < 2; sd++) if (in[k] && in[k] != sd + 1 && g_c.piece[k].layout != 2 && TerrRec(k)) {   /* the outside of a turn past level 3: the ground
+                                                                     falls away beyond P0 - a cliff edge (its guard rail: SampleRails), deeper up the mountain (user, 2026-11-27 "more cliff edges past level 3-4") */
+            int deep = k < L4 ? 1400 : 2400; VtxAdd(k, sd, 3, -deep / 4); VtxAdd(k, sd, 4, -deep); BlockSync(k); nd++; }
+        TerrEnd(); LOG("mountains: %d turn sides narrowed to their cliffs, %d dropping away", nw, nd); }
+    LOG("mountains: %d..%d - %d S-bends, %d runs painted (L2 %d, L3 %d, L4 %d)", F, L5, nb, nn, L2, L3, L4);
+    free(code); free(in); }
+/* a fork's B apart from A (user, 2026-11-27: "The road forks should not overlap from road a and road b or get close to eachother can you make sure they are completely
+   separated please"): B's own curves plus a swing out just past the fork and its mirror before the join (each a bend and its opposite: B shifted sideways, its heading
+   as it was) - B runs beside A at a distance between them and meets it where it did; the side that takes it further away, the swing made stronger until B's middle
+   (P past the fork .. P before the join) stays at least `want` from A's centre line everywhere (any piece of A) */
+static double SampleForkMid(int fs, int fe, int P)   /* how near B's middle comes to A */
+{   double mind = 1e30; int a, b;
+    for (b = fs + P; b <= fe - P; b++) for (a = fs - 80; a < fe + 80; a++) { double dx, dz, d; if (a < 0 || a > g_c.n) continue; dx = g_c.frameB[b].x - g_c.frame[a].x; dz = g_c.frameB[b].z - g_c.frame[a].z; d = sqrt(dx * dx + dz * dz); if (d < mind) mind = d; }
+    return mind; }
+static void SampleForkSeparate(int fs, int fe, double want)
+{   int n = fe - fs + 1, P = n / 4 > 70 ? 70 : n / 4, j, sg = 1, *sv = (int *)malloc(sizeof(int) * (n > 0 ? n : 1)); double g0, g = 0, gp, gm, C = 0;
+    if (!sv || P < 12 || !g_c.frameB) { free(sv); return; }
+    for (j = 0; j < n; j++) sv[j] = g_c.piece[fs + j].halfB.curve;
+#define FS_SET(c) { for (j = 0; j < n; j++) { RoadSection *q = &g_c.piece[fs + j].halfB; q->curve = sv[j]; Derive(q, 0xb8); BlockSync(fs + j); } if (c) { SampleBendB(fs + 1, P, (c)); SampleBendB(fe - P, P, -(c)); } g_noRedraw = 0; Redraw(); g_noRedraw = 1; }
+    FS_SET(0); g0 = SampleForkMid(fs, fe, P);
+    FS_SET(6); gp = SampleForkMid(fs, fe, P); FS_SET(-6); gm = SampleForkMid(fs, fe, P); sg = gp >= gm ? 1 : -1;
+    for (C = 4; C <= 60; C += 4) { FS_SET(sg * C); g = SampleForkMid(fs, fe, P); if (g >= want) break; }
+#undef FS_SET
+    LOG("fork %d..%d apart: B's middle %.0f from A (was %.0f) - swings of %+.0f over %d pieces", fs, fe, g, g0, sg * C, P);
+    free(sv); }
+/* tidy after the notes (user, 2026-11-27): a fork's B no footpaths ("theres no foot traffic going here") - its verges flush GRAVEL; the ground between a fork's
+   roads the forest ("replace the green grass here with just more of the trees from the right hand side fork") - FOREST on A's and B's inner sides; no trails ("i hate
+   these left hand side foot tracks ... remove it") - every TRAIL verge GRAVEL */
+static int SampleFillEmpty(const char *name, int k0, int k1, int sd, int c)   /* ground `name` on cell c of side sd (half A) of pieces k0 .. k1 - 1 where nothing is painted; the cells done */
+{   int k, n = 0; if (!g_ra.ext) return 0;
+    for (k = k0; k < k1 && k < g_c.n && k < g_ra.next; ) { int e = k;
+        for (; e < k1 && e < g_c.n && e < g_ra.next; e++) { unsigned short *set, *v = CellVal(&g_ra.ext[e], 0, sd, c, &set); if (*v || *set) break; }
+        if (e > k) { SamplePaint(2, name, k, e - k, 0, sd, c); n += e - k; k = e; } else k++; }
+    return n; }
+static void SampleTidy(void)
+{   int k, hh, sd, a = -1, nt = 0, nf = 0; unsigned short tr = (unsigned short)(RRC_BAND | RRC_GEN | 23), gv = (unsigned short)(RRC_BAND | RRC_GEN | C3_GGRAVEL);
+    if (!g_ra.ext) return;
+    for (k = 0; k < g_c.n && k < g_ra.next; k++) for (hh = 0; hh < 2; hh++) for (sd = 0; sd < 2; sd++) { RrcExtra *x = &g_ra.ext[k];
+        if (x->cell[hh][sd][0] == tr) { x->cell[hh][sd][0] = gv; x->cellSet[hh][sd][0] = 0;
+            { unsigned char *g = &x->gutter[hh][sd]; int ks = (*g >> 2) & 7; if (ks != 4 && ks != 5) *g = (unsigned char)((*g & ~(7 << 2)) | 4 << 2); } nt++; } }
+    for (k = 0; k <= g_c.n; k++) { int sp = k < g_c.n && g_c.piece[k].layout == 2;
+        if (sp && a < 0) a = k;
+        if (!sp && a >= 0) { int n = k - a, fi = C3_FitInner(&g_c, a + n / 2, 0), ia = fi >= 0 ? fi : 1, ib = !ia;
+            g_fpFlat = 1; SamplePaint(4, "GRAVEL", a, n, 1, 0, 0); SamplePaint(4, "GRAVEL", a, n, 1, 1, 0); g_fpFlat = 0;
+            SampleCells(2, "FOREST", a, n, 0, ia, 1, 4); SampleCells(2, "FOREST", a, n, 1, ib, 1, 4);
+            LOG("tidy: fork %d..%d - B's verges gravel, FOREST between the roads (A's %s, B's %s)", a, k - 1, ia ? "right" : "left", ib ? "right" : "left"); nf++; a = -1; } }
+    {   int nw = 0, c;   /* no water on the right from the bridge to past the lake: grass (the course's own ground) - user notes 2026-11-27 "just remove the water on the right hand side
+                            here ... and fill it up with grass terrain", "remove teh water here too", "grass over water?".  Through CellVal: the verge is cell[0], P0 .. P2 band[0 .. 2],
+                            P3 cell[1] - the first pass read cell[..][c] and missed the bands */
+        for (k = 860; k < 1300 && k < g_c.n && k < g_ra.next; k++) for (hh = 0; hh < 2; hh++) for (c = 0; c <= 4; c++) { unsigned short *set, *v = CellVal(&g_ra.ext[k], hh, 1, c, &set); unsigned gi;
+            if ((*v & (RRC_BAND | RRC_GEN | RRC_TEXG | RRC_CAT5)) != (RRC_BAND | RRC_GEN)) continue; gi = *v & 0xff;
+            if (gi == 1 || gi == 2 || gi == 14) { *v = 0; *set = 0; nw++; } }
+        LOG("tidy: %d water / hole cells on the right (860..1300) grass", nw); }
+    {   /* the bare stretch filled (user note 2026-11-27 "why is there no p0,p1,p2,p3,p4 etc here can you fill this in please" - 770 .. 1046: nothing painted past the verge, the
+           ground ended in the open): FOREST where nothing is painted - the left P0 .. P3, the right P0 .. P3 to 860 and P3 (its wall of trees) on to 1300, its P0 .. P2 grass */
+        int c, nf2 = 0;
+        for (c = 1; c <= 4; c++) nf2 += SampleFillEmpty("FOREST", 770, 1300, 0, c);
+        for (c = 1; c <= 3; c++) nf2 += SampleFillEmpty("FOREST", 770, 860, 1, c);
+        nf2 += SampleFillEmpty("FOREST", 770, 1300, 1, 4);
+        LOG("tidy: %d empty cells 770..1300 FOREST", nf2); }
+    if (getenv("CE_DUFFFROM")) {   /* P0's needle duff back (my SampleVergeGravel took band[0] for the verge: it is P0 - the cabins' and the redwood road's duff became gravel): where the
+                                      course file named there has DUFF on P0 and this one GRAVEL, DUFF again - level 1's stretch (the mountain is painted anew) */
+        FILE *f = fopen(getenv("CE_DUFFFROM"), "rb"); RrcHeader h; RrcExtra *x = NULL; int nd = 0, F = g_lvFin[0] > g_c.start ? g_lvFin[0] : g_c.n - 1;
+        unsigned short du = (unsigned short)(RRC_BAND | RRC_GEN | C3_GDUFF), gv2 = (unsigned short)(RRC_BAND | RRC_GEN | C3_GGRAVEL);
+        if (f && fread(&h, sizeof h, 1, f) == 1 && h.magic == RRC_MAGIC && h.version == RRC_VERSION && h.n > 0 && h.n < 65536 && !fseek(f, (long)(sizeof h + sizeof(RrcPiece) * (size_t)h.n), SEEK_SET)
+            && (x = (RrcExtra *)calloc(h.n, sizeof(RrcExtra))) != NULL && fread(x, sizeof(RrcExtra), h.n, f) == (size_t)h.n)
+            for (k = g_c.start - 40 > 0 ? g_c.start - 40 : 0; k <= F + 6 && k < h.n && k < g_c.n && k < g_ra.next; k++) for (hh = 0; hh < 2; hh++) for (sd = 0; sd < 2; sd++)
+                if (x[k].band[hh][sd][0] == du && g_ra.ext[k].band[hh][sd][0] == gv2) { g_ra.ext[k].band[hh][sd][0] = du; nd++; }
+        if (f) fclose(f); free(x);
+        LOG("tidy: P0 duff back on %d sides (from %s)", nd, getenv("CE_DUFFFROM")); }
+    {   int nh = 0; TerrBegin();   /* grass hills on the right (user note 2026-11-27 "can you do grass hill please and grass terrain here"): two rolling hills, P0 .. P3 the course's grass */
+        SampleCells(2, "original", 640, 130, 0, 1, 1, 4); SampleCells(2, "original", 640, 130, 1, 0, 1, 4); TerrBegin();   /* (inside the first fork: the gap between the roads grass - its start the forest) */
+        for (k = 640; k < 770 && k < g_c.n; k++) if (TerrRec(k)) { double t = (k - 640) / 130.0, hgt = sin(3.14159265 * t * 2) * sin(3.14159265 * t * 2);
+            VtxAdd(k, 1, 3, (int)(350 * hgt)); VtxAdd(k, 1, 4, (int)(1000 * hgt)); BlockSync(k); nh++; }
+        TerrEnd(); LOG("tidy: grass hills on %d pieces (640..770, right)", nh); }
+    LOG("tidy: %d trail verges gravel, %d forks", nt, nf); }
+static void SampleRails(int k0, int k1)   /* guard rails on the outside of every turn (user, 2026-11-26: "safety rails that stop cars from crashing into the terrain. dont put them
+                                              everywhere but make sure they are on the turns"): a piece of carriageway A curving |curve| >= 20 is a turn - its outside the side whose
+                                              edge runs the longer way round; runs of them, 3 pieces more at each end; not where the side has a footpath, buildings from P0 (a street), water, a bridge or
+                                              a junction (their own railings / kerbs) */
+{   int k, sd, n = 0; unsigned char *on = (unsigned char *)calloc(g_c.n + 1, 1);
+    if (!on || !g_ra.ext) { free(on); return; }
+    for (k = k0; k < k1 && k + 1 < g_c.n; k++) { float a0[3], a1[3], b0[3], b1[3]; double dl, dr;
+        if (abs(g_c.piece[k].halfA.curve) < 20) continue;   /* (the tighter turns only - user: "dont put them everywhere") */
+        C3_PointF(&g_c, g_c.frame, k, -800, 0, a0); C3_PointF(&g_c, g_c.frame, k + 1, -800, 0, a1); C3_PointF(&g_c, g_c.frame, k, 800, 0, b0); C3_PointF(&g_c, g_c.frame, k + 1, 800, 0, b1);
+        dl = (a1[0] - a0[0]) * (a1[0] - a0[0]) + (a1[2] - a0[2]) * (a1[2] - a0[2]); dr = (b1[0] - b0[0]) * (b1[0] - b0[0]) + (b1[2] - b0[2]) * (b1[2] - b0[2]);
+        on[k] = dl > dr ? 1 : 2; }
+    for (k = k0; k < k1; k++) if (on[k] && on[k] < 3) { int j, sdk = on[k]; for (j = k - 3; j <= k + 3; j++) if (j >= k0 && j < k1 && !on[j]) on[j] = (unsigned char)(sdk | 4); }   /* (3 more each end) */
+    for (k = k0; k < k1; k++) if (on[k]) { const RoadSection *s = &g_c.piece[k].halfA; sd = (on[k] & 3) == 1 ? 0 : 1;
+        if (C3_SideWalk(&g_ra, s, k, 0, sd) || C3_SideBld(&g_ra, s, k, 0, sd) == 4 || (C3_SideCells(&g_ra, s, k, 0, sd, C3_GWATER) & 3) || (C3_SideCells(&g_ra, s, k, 0, sd, C3_GBRIDGE) & 1)
+            || (C3_SideCells(&g_ra, s, k, 0, sd, C3_GSIDEST) | C3_SideCells(&g_ra, s, k, 0, sd, C3_GTLIGHTS) | C3_SideCells(&g_ra, s, k, 0, sd, C3_GSTOP)) || C3_SideKind(&g_ra, s, k, 0, sd) != SEC_PROFILE) continue;
+        {   RoadSection *rs = &g_c.piece[k].halfA;   /* (the game's own guard rail: as the GUARD RAIL brush) */
+            if (rs->kindArg[0] != 0 && rs->kindArg[0] != 5) continue;
+            RailSide(k, 0, sd, 1, 1); BlockSync(k); n++; } }   /* (on the footpath: the verge's middle, paved) */
+    free(on); LOG("sample: guard rails on %d pieces' outside", n); }
 static void SampleCourse(const char *path)
 {   int S, F, D, fl, fs, fe, ok = 0, k, a, b, i; double mind = 1e30;
     if (!g_open) { LOG("sample: no course open"); return; }
     ClearCourse(1); g_noRedraw = 1;
+    if (g_ra.ext) memset(g_ra.ext, 0, sizeof(RrcExtra) * g_ra.next);   /* (every extra from scratch - half B's too: a footpath of an older sample was left on B) */
     S = g_c.start; F = g_lvFin[0] > S ? g_lvFin[0] : g_c.n - 1; D = F - S;
     {   /* no junctions (user, 2026-11-23 "remove the junctions please in the test map"): New track takes the cross streets (kind flag 0x20) but left the pieces
            either side of each with flags 8 / 0x10 - True 3D lays the stop line and zebra there (course3d.h C3_Lanes: the "start grid" strips, TEXG 13..15);
@@ -3938,10 +4326,17 @@ static void SampleCourse(const char *path)
         for (j = 0; j < nb; j++) SampleBend(r0 + j * L, L, j & 1 ? -25 : 25);
         for (j = 0; j < nh; j++) SampleHill(r0 + j * Lh, Lh, j & 1 ? -45 : 55); }
     SampleBend(AT(0.60), (AT(0.72) - AT(0.60)) / 2, -12); SampleBend(AT(0.60) + (AT(0.72) - AT(0.60)) / 2, AT(0.72) - AT(0.60) - (AT(0.72) - AT(0.60)) / 2, 12);   /* the lake: two bends, level by the water */
-    {   /* the dunes: three bends, three hills */
-        int d0 = AT(0.75), d1 = AT(0.87), j, L = (d1 - d0) / 3;
-        for (j = 0; j < 3; j++) { SampleBend(d0 + j * L, L, j & 1 ? -14 : 14); SampleHill(d0 + j * L, L, j == 1 ? -30 : 40); } }
+    {   /* the logging camp after the lake (the dunes once; user, 2026-11-26 "a logging camp and make the road bendy"): six bends one into the next, three low hills */
+        int d0 = AT(0.75), d1 = AT(0.87), j, L = (d1 - d0) / 6, Lh = (d1 - d0) / 3;
+        for (j = 0; j < 6; j++) SampleBend(d0 + j * L, L, j & 1 ? -24 : 24);
+        for (j = 0; j < 3; j++) SampleHill(d0 + j * Lh, Lh, j == 1 ? -22 : 28); }
     SampleHill(AT(0.90), AT(0.97) - AT(0.90), 35); SampleBend(AT(0.90), AT(0.97) - AT(0.90), 6);   /* the town: up over a hill, a gentle bend (clear of the junction at AT(0.875)) */
+    {   /* past level 1's finish, up to level 5's: into the Sierra Nevada (user, 2026-11-26 "as we head towards the level 5 endpoint it should closer and closer to mountain territory"):
+           a mountain road - its bends tighter and its crests higher the further it goes */
+        int L5 = g_lvFin[4] > F ? g_lvFin[4] : g_c.n - 1, m0 = F + 12, L = 46, j = 0, k2;
+        for (k2 = m0; k2 + L < L5 - 10; k2 += L, j++) { double t = (double)(k2 - m0) / (L5 - m0); SampleBend(k2, L, (j & 1 ? -1 : 1) * (12 + 16 * t)); }
+        for (k2 = m0, j = 0; k2 + 2 * L < L5 - 10; k2 += 2 * L, j++) { double t = (double)(k2 - m0) / (L5 - m0); SampleHill(k2, 2 * L, (j & 1 ? -1 : 1) * (25 + 45 * t)); }
+        LOG("sample: mountain road %d..%d", m0, L5); }
     g_noRedraw = 0; Redraw(); g_noRedraw = 1;
     /* the fork: A straight, B one gentle sweep to the right and back in (flattened - it stays on its side) */
     fl = D / 4 > 600 ? 600 : D / 4; if (fl < 2 * CE_SAME + 30) fl = 2 * CE_SAME + 30;
@@ -3964,7 +4359,18 @@ static void SampleCourse(const char *path)
             LOG("sample: left fork bends %+.0f: B at least %.0f from A (was %.0f), %.0f on average beside the bends", C, g[t], g0, mean[t]);
             if (t == 1) best = (g[1] >= g0 - 50 && (mean[1] > mean[0] || g[0] < g0 - 50)) ? 1 : 0; }
         free(sv);
-        for (j = 0; j < 4; j++) SampleHill(m0 + j * P, P, j & 1 ? -35 : 40); }   /* (four short hills: two long ones climbed ~2000 units - the ground's edge showed from the top) */
+        for (j = 0; j < 4; j++) SampleHill(m0 + j * P, P, j & 1 ? -35 : 40);
+        {   /* the right fork (B): curvy, with a lot of hills (user, 2026-11-26) - six bends, eight crests and dips; undone if B then comes nearer A than 1800 */
+            int b0 = fs + 40, bn = (fe - 40) - b0, PB = bn / 6, PH = bn / 8, jj, *sc = (int *)malloc(sizeof(int) * 2 * (bn > 0 ? bn : 1)); double gb;
+            if (sc && bn > 120) {
+                for (jj = 0; jj < bn; jj++) { sc[2 * jj] = g_c.piece[b0 + jj].halfB.curve; sc[2 * jj + 1] = g_c.piece[b0 + jj].halfB.hill; }
+                for (jj = 0; jj < 6; jj++) SampleBendB(b0 + jj * PB, PB, jj & 1 ? -14 : 14);
+                for (jj = 0; jj < 8; jj++) SampleHillB(b0 + jj * PH, PH, jj & 1 ? -40 : 48);
+                g_noRedraw = 0; Redraw(); g_noRedraw = 1; gb = SampleForkGap(fs, fe);
+                if (gb < 1800) { for (jj = 0; jj < bn; jj++) { RoadSection *sb = &g_c.piece[b0 + jj].halfB; sb->curve = sc[2 * jj]; sb->hill = sc[2 * jj + 1]; Derive(sb, 0xbc); BlockSync(b0 + jj); }
+                    g_noRedraw = 0; Redraw(); g_noRedraw = 1; LOG("sample: right fork bends undone - B came within %.0f of A", gb); }
+                else LOG("sample: right fork curvy and hilly, B at least %.0f from A", gb); }
+            free(sc); } }   /* (four short hills: two long ones climbed ~2000 units - the ground's edge showed from the top) */
     {   /* past the join, up to the bridge's pavement (AT(0.55) - 26): two bends over a crest */
         int a0 = (ok ? fe : AT(0.47)) + 8, a1 = AT(0.55) - 30, L = (a1 - a0) / 2;
         if (L > 15) { SampleBend(a0, L, 14); SampleBend(a0 + L, L, -14); SampleHill(a0, 2 * L, 40); LOG("sample: bends %d..%d", a0, a0 + 2 * L); } }
@@ -3980,21 +4386,42 @@ static void SampleCourse(const char *path)
         SampleCells(2, "REDWOOD", r0, r1 - r0, 0, 0, 1, 4); SampleCells(2, "REDWOOD", r0, r1 - r0, 0, 1, 1, 4);
         SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 0, 0); SamplePaint(2, "REDWOOD DUFF", r0, r1 - r0, 0, 1, 0);
         SamplePaint(2, "RAIL FENCE", r0 + 6, rm - r0 - 6, 0, 1, 1); SamplePaint(2, "RAIL FENCE", rm + 10, r1 - rm - 16, 0, 0, 1);
-        SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 0, 5); SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 1, 5); }
-    if (ok) { int q = fl / 4;   /* the left fork (A): the red hedge, a town (user, 2026-11-26: pavement on the verge and P0, the buildings from P1, both sides), the dark green hedge */
+        SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 0, 5); SamplePaint(1, "FOREST EDGE", r0, r1 - r0, 0, 1, 5);
+        {   /* a ranger station on the right past the middle (the fence is on the left there): a boardwalk along the verge, duff on P0 and under the station, the giants behind */
+            int g0 = (rm + 14) / C3_CABLOT * C3_CABLOT, gn = 2 * C3_CABLOT;
+            SampleCells(2, "REDWOOD DUFF", g0, gn, 0, 1, 1, 2);
+            g_fpFlat = 1; SamplePaint(4, "BOARDWALK", g0 - 2, gn + 4, 0, 1, 0); g_fpFlat = 0;
+            SamplePaint(3, "RANGER STATION", g0, C3_CABLOT, 0, 1, 2); SamplePaint(3, "WOODSHED", g0 + C3_CABLOT, C3_CABLOT, 0, 1, 2);
+            LOG("sample: ranger station %d..%d", g0, g0 + gn); } }
+    if (ok) { int q = fl / 4, sd;   /* the left fork (A): the red hedge, a settlement in the forest, the dark green hedge (user, 2026-11-26: a town there - "more types of houses/buildings
+                                         ... suitable for sierra nevada red wood / forest ... maybe cabins? ... footpaths that are suitable for that. and replace them for the test map"): a dirt trail
+                                         on the verges (flush), needle duff on P0 and under the cabins (P1), the redwoods behind them; the CABINS mix from P1, both sides */
         SampleCells(2, "SHRUB", fs, q, 0, 0, 1, 4); SampleCells(2, "GREEN SHRUB", fs + 3 * q, fl - 3 * q, 0, 0, 1, 4);
-        SampleCells(2, "CONCRETE", fs + q, 2 * q, 0, 0, 0, 1); SampleCells(2, "CONCRETE", fs + q, 2 * q, 0, 1, 0, 1);
-        SamplePaint(3, "mix", fs + q, 2 * q, 0, 0, 2); SamplePaint(3, "mix", fs + q, 2 * q, 0, 1, 2);
-        LOG("sample: left fork town %d..%d", fs + q, fs + 3 * q);
-        SampleCells(2, "SANDG", fs, fl, 1, 1, 1, 4); SamplePaint(4, "SANDPATH", fs, fl, 1, 1, 0); }   /* (B's outer side) */
+        for (sd = 0; sd < 2; sd++) { SampleCells(2, "REDWOOD DUFF", fs + q, 2 * q, 0, sd, 1, 2); SampleCells(2, "REDWOOD", fs + q, 2 * q, 0, sd, 3, 4); }
+        g_fpFlat = 1; SamplePaint(4, "TRAIL", fs + q, 2 * q, 0, 0, 0); SamplePaint(4, "TRAIL", fs + q, 2 * q, 0, 1, 0); g_fpFlat = 0;
+        SamplePaint(1, "GRAVEL EDGE", fs + q, 2 * q, 0, 0, 5); SamplePaint(1, "GRAVEL EDGE", fs + q, 2 * q, 0, 1, 5);   /* (the road crumbling into gravel at the trail: user note 2026-11-26) */
+        SamplePaint(3, "CABINS", fs + q, 2 * q, 0, 0, 2); SamplePaint(3, "CABINS", fs + q, 2 * q, 0, 1, 2);
+        LOG("sample: left fork cabins %d..%d", fs + q, fs + 3 * q);
+        {   int sd, b0 = fs + q, bn = 2 * q;   /* the right fork (B): a little city (user, 2026-11-26 "put the fork b with some city" - and no sand anywhere on this map): pavement on
+                                                     both sides, the City's buildings from P1 on its outer side (the inner one faces A), firs before and after */
+            for (sd = 0; sd < 2; sd++) { SampleCells(2, "FOREST", fs, q, 1, sd, 1, 4); SampleCells(2, "FOREST", b0 + bn, fl - q - bn, 1, sd, 1, 4); SampleCells(2, "CONCRETE", b0, bn, 1, sd, 0, 1); }
+            SampleCells(2, "FOREST", b0, bn, 1, 0, 2, 4); SamplePaint(3, "mix", b0, bn, 1, 1, 2);
+            LOG("sample: right fork town %d..%d", b0, b0 + bn); } }   /* (B's outer side) */
     k = AT(0.55); i = 40;   /* the bridge: a gorge with a river in it (hole cells: water at the default depth), railings on both verges */
     SampleCells(2, "CLIFF HOLE", k, i, 0, 0, 1, 4); SampleCells(2, "CLIFF HOLE", k, i, 0, 1, 1, 4);
     SamplePaint(2, "BRIDGE", k - 2, i + 4, 0, 0, 0); SamplePaint(2, "BRIDGE", k - 2, i + 4, 0, 1, 0);
     SamplePaint(2, "CONCRETE", k - 26, 24, 0, 0, 0); SamplePaint(2, "CONCRETE", k - 26, 24, 0, 1, 0); SamplePaint(2, "CONCRETE", k + i + 2, 24, 0, 0, 0); SamplePaint(2, "CONCRETE", k + i + 2, 24, 0, 1, 0);   /* (pavement up to the bridge and on from it) */
     LOG("sample: bridge %d..%d", k - 2, k + i + 1);
-    SampleCells(2, "WATER", AT(0.62), AT(0.72) - AT(0.62), 0, 1, 1, 4); SamplePaint(2, "CONCRETE", AT(0.62), AT(0.72) - AT(0.62), 0, 1, 0);   /* (a concrete promenade along the lake) */ SampleCells(2, "FOREST", AT(0.62), AT(0.72) - AT(0.62), 0, 0, 1, 4);   /* the lake (right) */
-    SampleCells(2, "DUNES", AT(0.75), AT(0.87) - AT(0.75), 0, 0, 1, 4); SampleCells(2, "DUNES", AT(0.75), AT(0.87) - AT(0.75), 0, 1, 1, 4);
-    SamplePaint(2, "SANDW", AT(0.75), AT(0.87) - AT(0.75), 0, 0, 0); SamplePaint(2, "SANDW", AT(0.75), AT(0.87) - AT(0.75), 0, 1, 0);
+    SampleCells(2, "WATER", AT(0.62), AT(0.72) - AT(0.62), 0, 1, 1, 4); { int l0 = AT(0.62), l1 = AT(0.72), lt = (l1 - l0) / 3;   /* (a lakeside path: gravel, a boardwalk along the middle third, the road's edge into gravel; the railing on the water's edge
+                                                                  comes by itself - course3d.h C3_LakeRail; user, 2026-11-26 "the foot path next to the lake ... abit more outdoorsy") */
+        g_fpFlat = 1; SamplePaint(4, "GRAVEL", l0, l1 - l0, 0, 1, 0); SamplePaint(4, "BOARDWALK", l0 + lt, lt, 0, 1, 0); g_fpFlat = 0; SamplePaint(1, "GRAVEL EDGE", l0, l1 - l0, 0, 1, 5); } SampleCells(2, "FOREST", AT(0.62), AT(0.72) - AT(0.62), 0, 0, 1, 4);   /* the lake (right) */
+    {   /* the logging camp (the dunes' place - user, 2026-11-26: "a logging camp ... logs tied up in piles"): the yard's mud on the verges, P0 and P1, the firs behind; the LOGGING CAMP mix
+           (log decks, a sawmill, bunkhouses, woodsheds) from P1, both sides; the road's edge into gravel */
+        int c0 = AT(0.75), c1 = AT(0.87), sd;
+        for (sd = 0; sd < 2; sd++) { SampleCells(2, "LOG YARD", c0, c1 - c0, 0, sd, 0, 2); SampleCells(2, "FOREST", c0, c1 - c0, 0, sd, 3, 4); SamplePaint(1, "GRAVEL EDGE", c0, c1 - c0, 0, sd, 5); }
+        SamplePaint(3, "LOGGING CAMP", c0, c1 - c0, 0, 0, 2); SamplePaint(3, "LOGGING CAMP", c0, c1 - c0, 0, 1, 2);
+        LOG("sample: logging camp %d..%d", c0, c1); }
+    {   int L5 = g_lvFin[4] > F ? g_lvFin[4] : g_c.n - 1; SampleMountains(F + 6, g_lvFin[1], g_lvFin[2], g_lvFin[3], L5, S + (L5 - S) / 2); }   /* (the mountain: levels 2 .. 5) */
     SampleCells(2, "CONCRETE", AT(0.89), AT(0.98) - AT(0.89), 0, 0, 0, 1); SampleCells(2, "CONCRETE", AT(0.89), AT(0.98) - AT(0.89), 0, 1, 0, 1);   /* a small town: concrete pavement on the verge and P0, */
     SamplePaint(3, "mix", AT(0.89), AT(0.98) - AT(0.89), 0, 0, 2); SamplePaint(3, "mix", AT(0.89), AT(0.98) - AT(0.89), 0, 1, 2);   /* the buildings from P1 */
     {   /* the way into town: a T junction (the Junction collection) - a side street on the right, traffic lights before it on both verges, a stop sign after it, kerb returns */
@@ -4004,10 +4431,14 @@ static void SampleCourse(const char *path)
         SamplePaint(2, "TRAFFIC LIGHTS", jk - 2, 1, 0, 0, 0); SamplePaint(2, "TRAFFIC LIGHTS", jk - 2, 1, 0, 1, 0); SamplePaint(2, "TRAFFIC LIGHTS", jk + 3, 1, 0, 0, 0);
         SamplePaint(2, "STOP SIGN", jk + 5, 1, 0, 1, 0);
         LOG("sample: junction %d..%d", jk, jk + 1); }
-    LOG("sample: redwood %d..%d, fork %d..%d, bridge %d, lake %d..%d, dunes %d..%d, town %d..%d", AT(0.04), AT(0.20), fs, fe, k, AT(0.62), AT(0.72), AT(0.75), AT(0.87), AT(0.89), AT(0.98));
+    LOG("sample: redwood %d..%d, fork %d..%d, bridge %d, lake %d..%d, logging camp %d..%d, town %d..%d", AT(0.04), AT(0.20), fs, fe, k, AT(0.62), AT(0.72), AT(0.75), AT(0.87), AT(0.89), AT(0.98));
 #undef AT
     g_noRedraw = 0; Redraw();
     {   double hmin = 1e30, hmax = -1e30; for (k = 0; k <= g_c.n; k++) { if (g_c.frame[k].y < hmin) hmin = g_c.frame[k].y; if (g_c.frame[k].y > hmax) hmax = g_c.frame[k].y; } LOG("sample: heights %.0f .. %.0f", hmin, hmax); }
+    {   int L5 = g_lvFin[4] > F ? g_lvFin[4] : g_c.n - 1; SampleEdges(S, L5); SampleRails(S, L5); SampleVergeGravel(S, L5); SampleRamp(S, L5, 20, 3); SampleRedwoodStart(S - 30, S + (int)(0.04 * D) + 2); }
+    g_optTraffic = 50; g_optHorizon = 2; g_optCars = 1 << 1;   /* (Sierra's peaks on the horizon; no taxis - The City's variant 1: user, 2026-11-26) */   /* (half the usual traffic - user, 2026-11-26 "reduce the amount of cars please in this map") */
+    {   int L5 = g_lvFin[4] > S ? g_lvFin[4] : g_c.n - 1; g_optSnow0 = S + (L5 - S) / 2 + 1; g_optSnow1 = g_lvFin[3] > S ? g_lvFin[3] + 280 + 1 : L5 - 60 + 1; }   /* (the Sierra Nevada: snow from half way to level 5's finish, heavy by it - user, 2026-11-26) */
+    LOG("sample: traffic %d %%, snow starts at %d, full at %d (of %d)", g_optTraffic, g_optSnow0 - 1, g_optSnow1 - 1, g_c.n);
     if (path) LOG("sample: saved as %s: %d", path, SaveRrcTo(path)); }
 
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
@@ -4073,7 +4504,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             b = CreateWindowA("BUTTON", "Templates...", WS_CHILD | BS_PUSHBUTTON, 1234, 37, 96, 26, g_main, (HMENU)ID_TPICS, inst, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)g_font, 0);   /* the templates' pictures */
             g_marksChk = CreateWindowA("BUTTON", "Show fields", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 420, 39, 100, 24, g_main, (HMENU)ID_MARKS, inst, NULL); SendMessageA(g_marksChk, WM_SETFONT, (WPARAM)g_font, 0);
             SendMessageA(g_marksChk, BM_SETCHECK, BST_CHECKED, 0);
-            b = CreateWindowA("BUTTON", "Terrain...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 324, 37, 86, 26, g_main, (HMENU)ID_TERRAIN, inst, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)g_font, 0); } }   /* the floating Terrain toolbar */
+            b = CreateWindowA("BUTTON", "Terrain...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 324, 37, 86, 26, g_main, (HMENU)ID_TERRAIN, inst, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)g_font, 0);
+            b = CreateWindowA("BUTTON", "Map settings...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 528, 37, 116, 26, g_main, (HMENU)ID_MAPSET, inst, NULL); SendMessageA(b, WM_SETFONT, (WPARAM)g_font, 0); } }   /* (MapSetShow) */   /* the floating Terrain toolbar */
     g_statusw = CreateWindowA(STATUSCLASSNAMEA, "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, g_main, (HMENU)ID_STATUS, inst, NULL); SendMessageA(g_statusw, WM_SETFONT, (WPARAM)g_font, 0);
     g_list = CreateWindowA(WC_LISTVIEWA, "", WS_CHILD | WS_VISIBLE | WS_BORDER | LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS, 0, 0, 10, 10, g_main, (HMENU)ID_LIST, inst, NULL);
     ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER); SendMessageA(g_list, WM_SETFONT, (WPARAM)g_font, 0);
@@ -4091,7 +4523,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     SendMessageA(g_textChk, BM_SETCHECK, BST_CHECKED, 0);
     g_fpRaiseChk = CreateWindowA("BUTTON", "Raised", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 0, 0, 10, 10, g_main, (HMENU)ID_FPRAISE, inst, NULL); SendMessageA(g_fpRaiseChk, WM_SETFONT, (WPARAM)g_font, 0);
     SendMessageA(g_fpRaiseChk, BM_SETCHECK, BST_CHECKED, 0);
-    {   static const char *const fl[6] = { "Ground", "Road", "Buildings", "Footpaths", "Curbs", "Walls" }; int i;
+    {   static const char *const fl[6] = { "Ground", "Road", "Buildings", "Verge", "Curbs", "Walls" }; int i;
         for (i = 0; i < 6; i++) { g_blkLab[i] = CreateWindowA("STATIC", fl[i], WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0, 10, 10, g_main, NULL, inst, NULL); SendMessageA(g_blkLab[i], WM_SETFONT, (WPARAM)g_font, 0); } }
     {   static const char *const hn[3] = { "Raise", "Lower", "Level" }; static const int st[5] = { 25, 50, 100, 200, 400 }; int i; char t[16]; WNDCLASSA wc; RECT vr;   /* (the Heights toolbar) */
         memset(&wc, 0, sizeof wc); wc.hInstance = inst; wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); wc.lpfnWndProc = HBarProc; wc.lpszClassName = "CEHeightBar"; RegisterClassA(&wc);
@@ -4246,6 +4678,26 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             g_dirty = 1; Redraw(); TerrEnd(); BlockSet(0); } }
     if (getenv("CE_TESTNEW")) { SendMessageA(g_main, WM_COMMAND, ID_NEWTRACK, 0); LOG("test new: %s", g_status); }   /* (tests: New track) */
     if (getenv("CE_SAMPLE")) SampleCourse(getenv("CE_SAMPLE"));   /* (the sample course, saved there) */
+    if (getenv("CE_DUMP") && g_open) { int k0 = 0, k1 = 0, k, hh, sd, c; sscanf(getenv("CE_DUMP"), "%d %d", &k0, &k1);   /* (tests: "<from> <to>": each piece's cells, bands, kinds, widths) */
+        for (k = k0; k <= k1 && k < g_c.n && k < g_ra.next; k++) for (hh = 0; hh < (g_c.piece[k].layout == 2 ? 2 : 1); hh++) for (sd = 0; sd < 2; sd++) { char b[400], *w = b; RrcExtra *x = &g_ra.ext[k]; const RoadSection *s = hh ? &g_c.piece[k].halfB : &g_c.piece[k].halfA;
+            w += sprintf(w, "dump %d%c %c kind %d sk %d walk %d out", k, hh ? 'B' : 'A', sd ? 'R' : 'L', s->kind, C3_SideKind(&g_ra, s, k, hh, sd), C3_SideWalk(&g_ra, s, k, hh, sd));
+            for (c = 1; c <= 4; c++) w += sprintf(w, " %.0f", VtxOut(k, sd, c));
+            w += sprintf(w, " | cell"); for (c = 0; c < 7; c++) w += sprintf(w, " %x/%x", x->cell[hh][sd][c], x->cellSet[hh][sd][c]);
+            w += sprintf(w, " | band"); for (c = 0; c < 7; c++) w += sprintf(w, " %x", x->band[hh][sd][c]);
+            w += sprintf(w, " | wall %d %d %d", s->wall[sd * 3], s->wall[sd * 3 + 1], s->wall[sd * 3 + 2]); LOG("%s", b); } }
+    if (getenv("CE_PORTFROM") && g_open) PortFrom(getenv("CE_PORTFROM"), getenv("CE_PORTSTART") ? atoi(getenv("CE_PORTSTART")) : 48);   /* (another track's course onto this one; then CE_RAMP / a save) */
+    if (getenv("CE_PORTSAVE") && g_open) LOG("port: saved as %s: %d", getenv("CE_PORTSAVE"), SaveRrcTo(getenv("CE_PORTSAVE")));   /* (tests: the port alone) */
+    if (getenv("CE_RAMP") && g_open) { int S = g_c.start, L5 = g_lvFin[4] > S ? g_lvFin[4] : g_c.n - 1, k;   /* (the saved course one climb, the redwoods on to the start - its edits kept; saved there) */
+        if (g_lvFin[3] > S) { g_optSnow0 = S + (L5 - S) / 2 + 1; g_optSnow1 = g_lvFin[3] + 280 + 1; }   /* (snow: falling from half way, full just past level 4's finish - weather.inc eases it) */
+        { int F = g_lvFin[0] > S ? g_lvFin[0] : g_c.n - 1; SampleMountains(F + 6, g_lvFin[1], g_lvFin[2], g_lvFin[3], L5, g_optSnow0 > 0 ? g_optSnow0 - 1 : S + (L5 - S) / 2); SampleRails(F + 6, L5); SampleEdges(F + 6, L5); SampleVergeGravel(F + 6, L5); }
+        SampleRamp(S, L5, 20, 3); SampleRedwoodStart(S - 30, S + (int)(0.04 * ((g_lvFin[0] > S ? g_lvFin[0] : g_c.n - 1) - S)) + 2);
+        for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("ramp: saved as %s: %d", getenv("CE_RAMP"), SaveRrcTo(getenv("CE_RAMP"))); }
+    if (getenv("CE_FINFIX") && g_open) { int ok = FinishesAtMarkers(); LOG("finishes: saved as %s: %d", getenv("CE_FINFIX"), ok ? SaveRrcTo(getenv("CE_FINFIX")) : -1); }   /* (the saved course's finishes at its markers, saved there) */
+    if (getenv("CE_TIDY") && g_open) { int k; SampleTidy(); for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("tidy: saved as %s: %d", getenv("CE_TIDY"), SaveRrcTo(getenv("CE_TIDY"))); }   /* (the notes' tidy on the saved course) */
+    if (getenv("CE_FORKSEP") && g_open) { int k, a = -1;   /* (every fork's B apart from A, saved there) */
+        for (k = 0; k <= g_c.n; k++) { int sp = k < g_c.n && g_c.piece[k].layout == 2; if (sp && a < 0) a = k; if (!sp && a >= 0) { SampleForkSeparate(a, k - 1, 4000); a = -1; } }
+        for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("forks apart: saved as %s: %d", getenv("CE_FORKSEP"), SaveRrcTo(getenv("CE_FORKSEP"))); }
+    if (getenv("CE_GRAVELVERGE") && g_open) { int k; SampleVergeGravel(0, g_c.n); for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("verge gravel: saved as %s: %d", getenv("CE_GRAVELVERGE"), SaveRrcTo(getenv("CE_GRAVELVERGE"))); }   /* (the saved course's verges gravel, saved there) */
     HBarToggle();   /* (Heights and Widths: always shown) */
     if (getenv("CE_TESTTOOL")) { BlockSet(atoi(getenv("CE_TESTTOOL"))); }   /* (tests: a tool on - 5 Raise, 6 Lower, 7 Level) */
     if (getenv("CE_TESTNOGRID")) { g_grid = 0; SendMessageA(g_gridChk, BM_SETCHECK, BST_UNCHECKED, 0); }   /* (tests: no grid) */
@@ -4316,6 +4768,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             s->rowX[0], s->rowX[1], s->rowX[2], s->rowX[3], s->rowX[4], s->rowX[5], g_ra.ext[k0].band[0][0][1], g_ra.ext[k0].band[0][1][1], g_tVal);
         if (g_testSave) { SaveRrc(); LOG("test terrain: saved"); } }
     if (g_pickArg) { int fi; for (fi = 0; fi < NFLD; fi++) if (!_stricmp(g_fld[fi].name, g_pickArg)) { ListView_SetItemState(g_props, fi, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED); PickOpen(fi); break; } }
+    if (getenv("CE_TESTBLOCK")) { int cat = atoi(getenv("CE_TESTBLOCK")); const char *nm = strchr(getenv("CE_TESTBLOCK"), '|'); if (nm) SampleChoose(cat, nm + 1); }   /* (tests / screenshots: a block chosen, as a click on it) */
     for (;;) {
         int busy = 0;
         while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {

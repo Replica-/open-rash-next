@@ -243,6 +243,12 @@ static int HrQuad(const RrGpuQuad *q)
     if (ch || (g_gpuFrame & 15) == 0) HrPrefetch(q->riderSprite, c);
     if (!tx) return 0;   /* (not ready yet: the game's tile this frame) */
     q2 = *q;
+    {   /* the tuck poses on the road (user, 2026-11-27: "the bike is abit floating off the floor when turning"): the game draws 252 / 253 with the tyre 4 units over
+           where the upright pose (3) has it - measured with RR_W3LOGBIKE=2 (world3d.inc W3MapObj: the bottom corners' heights - 3: -26, 252: -22, 253's tyre -22);
+           unseen on the original's small picture, a gap under the 4x one.  Lowered by it (test switch RR_HRDROP=0: as the game has them) */
+        static const struct { short spr; float drop; } t[] = { { 252, 4 }, { 253, 4 } }; static int on = -1; double ocx, ory, osc; int i;
+        if (on < 0) { const char *e = getenv("RR_HRDROP"); on = !(e && *e == '0'); }
+        for (i = 0; on && i < (int)(sizeof t / sizeof t[0]); i++) if (q->riderSprite == t[i].spr && W3OrigAt(q->objDepth, &ocx, &ory, &osc)) for (k = 0; k < 4; k++) q2.y[k] += (float)(t[i].drop * osc); }
     if (p->ox || p->oy || p->w != q->w || p->h != q->h) {   /* an in-between on its canvas: the quad extended over it (bilinear in the tile's texel coordinates) */
         float uL = q->u[0], uR = q->u[0], vT = q->v[0], vB = q->v[0], du, dv;
         for (k = 1; k < 4; k++) { if (q->u[k] < uL) uL = q->u[k]; if (q->u[k] > uR) uR = q->u[k]; if (q->v[k] < vT) vT = q->v[k]; if (q->v[k] > vB) vB = q->v[k]; }

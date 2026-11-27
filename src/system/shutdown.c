@@ -178,6 +178,8 @@ int __stdcall rr_WinMainLoop(HINSTANCE inst, int created, int unused, int cmdSho
             (*(int *)&rec_demoPage.g_raceTrack) = autoTrack; (*(int *)&rec_menuScreen.g_menuScreen) = autoTrack; (&(*(int *)&g_menuScreens.tbl_screenGameMode))[12] = autoTrack - 1;
             if (GetEnvironmentVariableA("RR_LEVEL", lv, sizeof lv) > 0 && lv[0] >= '1' && lv[0] <= '5') (*(unsigned char *)&rec_playerRecord.g_playerLevel) = (unsigned char)(lv[0] - '1');   /* test switch: level 1..5 (the course extractor, world3d_feed.c) */
             if (GetEnvironmentVariableA("RR_BIKE", lv, sizeof lv) > 0 && lv[0] >= '0' && lv[0] <= '9') { int b = 0, i; for (i = 0; lv[i] >= '0' && lv[i] <= '9'; i++) b = b * 10 + (lv[i] - '0'); if (b <= 14) rec_playerRecord.g_playerBike = (unsigned char)b; }   /* test switch: the player's bike 0..14 (rider.c rr_RiderBikeCreate reads it for the player in this race) */
+            else if (testDrive == 2) rec_playerRecord.g_playerBike = 12;   /* (an AI drive: the fastest bike - analysis\bike_race.ps1, City level 1: 12 at frame 14252, the default 15348;
+                                                                             user, 2026-11-27 "the ai drive ... should just be a default thing") */
             SoundThreadStop(1); SoundThreadRequest(2);   /* the race's sound, as picking a race does (menu_pages.c ChoiceScreenPick -> MoviePlay(Start, 6, 2)) - without it
                                                             these races were silent; never the music thread (RaceStart stops it at once) */
             msg.wParam = (WPARAM)autoTrack; autoTrack = 0;

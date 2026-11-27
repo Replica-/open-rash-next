@@ -356,6 +356,72 @@ static void W3GpuBatches(const C3Batch *cb, int n, R3Batch *out)
 
 /* every frame: the ring's stretch of the course from the game's live pieces (RrWorld3DCam.ring); rebuilt when the stretch moved or its decoration changed */
 static void W3GrassLive(void);   /* (below) */
+/* the live stretch built (user, 2026-11-26: "the frame rate drops and resumes periodically" - every q pieces the whole stretch, ~200 pieces, was built again:
+   80 .. 175 ms with the mod's trees on the redwood).  Each piece's vertices are kept; a step of q pieces builds only the pieces new to the stretch (and those whose
+   skirts change: skirtEnd) and puts the rest back from what was kept - the same vertices in the same order as a build of the whole stretch.  Everything is built
+   again on a change (changed: the hidden carriageway, the game's decoration copied in), with forks on (g_w3l.soft: the other carriageway moves with the camera)
+   and in the Course Editor's viewer.  Test switch RR_W3NOPC=1: always the whole stretch */
+typedef struct W3PieceMesh { C3Vert *v; int n, cap, sk, ok, *rt, *rn, nr; } W3PieceMesh;   /* (rt / rn: its triangles sorted by texture - runs of rn vertices of texture rt, as C3_Batches orders them) */
+static W3PieceMesh *g_w3pm; static int g_w3pmN;
+static int W3LiveReserve(int n)   /* room for n vertices in the live mesh (as C3_Push grows it) */
+{   while (g_w3l.cap < n) { int nc = g_w3l.cap ? g_w3l.cap * 2 : 65536; C3Vert *v = (C3Vert *)realloc(g_w3l.v, sizeof(C3Vert) * nc); int *vp;
+        if (!v) return 0; g_w3l.v = v; if (!(vp = (int *)realloc(g_w3l.vpiece, sizeof(int) * nc))) return 0; g_w3l.vpiece = vp; g_w3l.cap = nc; }
+    return 1; }
+static C3Course g_w3sc;   /* (a piece built on its own: the live stretch's course with vertices of its own - g_w3l's stay as drawn) */
+static int W3PieceBuild(int k, int sk)   /* piece k built and kept (sk: its skirts | its small rocks << 1, as the stretch it goes in has them); 0 = no room */
+{   W3PieceMesh *m = &g_w3pm[k]; C3Vert *sv = g_w3sc.v; int *svp = g_w3sc.vpiece, scap = g_w3sc.cap;
+    g_w3sc = g_w3l; g_w3sc.v = sv; g_w3sc.vpiece = svp; g_w3sc.cap = scap; g_w3sc.nv = 0;
+    g_w3sc.skirtEnd = (sk & 1) ? k + 1 : k; g_w3sc.detailEnd = (sk & 2) ? k + 1 : k;   /* (k > 0 here: the stretch starts behind the camera) */
+    C3_BuildRange(&g_w3sc, k, k + 1, &g_w3a);
+    g_w3l.ob = g_w3sc.ob; g_w3l.nob = g_w3sc.nob; g_w3l.obN = g_w3sc.obN; g_w3l.lp = g_w3sc.lp; g_w3l.ntr = g_w3sc.ntr;   /* (its obstacles, posts, trees: the stretch's tables) */
+    if (m->cap < g_w3sc.nv) { C3Vert *v = (C3Vert *)realloc(m->v, sizeof(C3Vert) * (g_w3sc.nv + 64)); if (!v) { m->ok = 0; return 0; } m->v = v; m->cap = g_w3sc.nv + 64; }
+    m->n = g_w3sc.nv; m->nr = 0; free(m->rt); free(m->rn); m->rt = m->rn = NULL;
+    if (m->n) {   /* (its triangles by texture, in order within each: C3_Batches' counting sort, piece by piece) */
+        int i, lo = 0x7fffffff, hi = -1, nt, *cnt, t, nr = 0;
+        for (i = 0; i < m->n; i += 3) { t = (int)g_w3sc.v[i].tex; if (t < lo) lo = t; if (t > hi) hi = t; }
+        nt = hi - lo + 1; cnt = (int *)calloc(nt + 1, sizeof(int));
+        if (!cnt) { m->ok = 0; return 0; }
+        for (i = 0; i < m->n; i += 3) cnt[(int)g_w3sc.v[i].tex - lo + 1] += 3;
+        for (t = 0; t < nt; t++) if (cnt[t + 1]) nr++;
+        m->rt = (int *)malloc(sizeof(int) * nr); m->rn = (int *)malloc(sizeof(int) * nr);
+        if (!m->rt || !m->rn) { free(cnt); m->ok = 0; return 0; }
+        for (t = 0, nr = 0; t < nt; t++) if (cnt[t + 1]) { m->rt[nr] = t + lo; m->rn[nr++] = cnt[t + 1]; }
+        m->nr = nr;
+        for (t = 0; t < nt; t++) cnt[t + 1] += cnt[t];
+        for (i = 0; i < m->n; i += 3) { int o = cnt[(int)g_w3sc.v[i].tex - lo]; cnt[(int)g_w3sc.v[i].tex - lo] += 3; m->v[o] = g_w3sc.v[i]; m->v[o + 1] = g_w3sc.v[i + 1]; m->v[o + 2] = g_w3sc.v[i + 2]; }
+        free(cnt); }
+    m->sk = sk; m->ok = 1; return 1; }
+static int W3PieceSk(int k, int skirtEnd, int detailEnd) { return (skirtEnd <= 0 || k < skirtEnd) | (detailEnd <= 0 || k < detailEnd) << 1; }
+static int W3LiveCached(void) { return !g_w3l.soft && !g_vwHold && !getenv("RR_W3NOPC"); }
+static int W3LiveBuild(int lo, int hi, int changed, C3Batch *out, int max)   /* the stretch built into g_w3l and batched (out: its batches); returns how many */
+{   int k, all = changed || !W3LiveCached(), *cnt = NULL, tlo = 0x7fffffff, thi = -1, nt, t, n = 0, total = 0;
+    if (!all && g_w3pmN != g_w3c.n) { free(g_w3pm); g_w3pm = (W3PieceMesh *)calloc(g_w3c.n, sizeof(W3PieceMesh)); g_w3pmN = g_w3pm ? g_w3c.n : 0; }
+    if (!all && g_w3pm) {
+        for (k = 0; k < g_w3pmN; k++) if ((k < lo - 8 || k >= hi + 24) && g_w3pm[k].v) { free(g_w3pm[k].v); free(g_w3pm[k].rt); free(g_w3pm[k].rn); memset(&g_w3pm[k], 0, sizeof g_w3pm[k]); }   /* (far from the stretch - those just ahead: built in advance, W3LiveAhead) */
+        for (k = lo; k < hi && !all; k++) { W3PieceMesh *m = &g_w3pm[k]; int r, sk = W3PieceSk(k, g_w3l.skirtEnd, g_w3l.detailEnd);
+            if ((!m->ok || m->sk != sk) && !W3PieceBuild(k, sk)) { all = 1; break; }   /* (no room to keep it: the whole stretch as before) */
+            for (r = 0; r < m->nr; r++) { if (m->rt[r] < tlo) tlo = m->rt[r]; if (m->rt[r] > thi) thi = m->rt[r]; total += m->rn[r]; } }
+        if (!all && total > 0 && (!W3LiveReserve(total) || !(cnt = (int *)calloc(thi - tlo + 2, sizeof(int))))) all = 1; }
+    if (all || !g_w3pm) { for (k = 0; k < g_w3pmN; k++) g_w3pm[k].ok = 0; g_w3l.nv = 0; C3_BuildRange(&g_w3l, lo, hi, &g_w3a); return C3_Batches(&g_w3l, out, max); }
+    g_w3l.nv = total;
+    if (!total) return 0;
+    nt = thi - tlo + 1;   /* (the batches: every texture's triangles, piece after piece - what C3_Batches makes of the whole stretch) */
+    for (k = lo; k < hi; k++) { const W3PieceMesh *m = &g_w3pm[k]; int r; for (r = 0; r < m->nr; r++) cnt[m->rt[r] - tlo + 1] += m->rn[r]; }
+    for (t = 0; t < nt; t++) cnt[t + 1] += cnt[t];
+    for (t = 0; t < nt && n < max; t++) if (cnt[t + 1] > cnt[t]) { out[n].first = cnt[t]; out[n].count = cnt[t + 1] - cnt[t]; out[n].tex = t + tlo; n++; }
+    for (k = lo; k < hi; k++) { const W3PieceMesh *m = &g_w3pm[k]; int r, o = 0;
+        for (r = 0; r < m->nr; r++) { int d = cnt[m->rt[r] - tlo], i; cnt[m->rt[r] - tlo] += m->rn[r];
+            memcpy(g_w3l.v + d, m->v + o, sizeof(C3Vert) * m->rn[r]); for (i = 0; i < m->rn[r]; i++) g_w3l.vpiece[d + i] = k; o += m->rn[r]; } }
+    free(cnt);
+    for (t = 0; t < n; t++) if (out[t].tex >= C3_BG - 1) { int i; for (i = out[t].first; i < out[t].first + out[t].count; i++) g_w3l.v[i].tex -= (float)C3_BG; }   /* (as C3_Batches: the shader sees the texture) */
+    return n; }
+/* between steps: the pieces the next step needs (new to the stretch, or their skirts / small rocks changing) built in advance, two a frame - the step then only
+   puts the stretch together */
+static void W3LiveAhead(int q)
+{   int k, n = 0, lo = g_w3lo + q, hi = g_w3hi + q, skE = lo + RRW_LIVE + q, dE = getenv("RR_W3ALLDETAIL") ? 0 : lo + 56 + q;
+    if (g_w3lo < 0 || !g_w3pm || g_w3pmN != g_w3c.n || !W3LiveCached()) return;
+    if (hi > g_w3c.n - 1) hi = g_w3c.n - 1;
+    for (k = lo; k < hi && n < 2; k++) { W3PieceMesh *m = &g_w3pm[k]; int sk = W3PieceSk(k, skE, dE); if (!m->ok || m->sk != sk) { W3PieceBuild(k, sk); n++; } } }
 static void W3Live(void)
 {   static C3Batch lb[4096]; static int q; int lo = (g_w3cam.ringBack - g_w3Piece0) >> 8, hi, hiNeed, i, changed = 0, half;
     int vwk = g_vwHold ? (int)ViewerPiece() : -1;   /* the Course Editor's viewer (viewer.inc): the stretch round the piece it looks at, the draw distance both ways - not the held race's ring */
@@ -432,15 +498,16 @@ static void W3Live(void)
     if (changed || lo != g_w3lo || hiNeed > g_w3hi || g_w3lo < 0) {
         int nb; LARGE_INTEGER t0, t1, fq; static double sum; static int nr, nch;
         QueryPerformanceCounter(&t0);
-        g_w3l.skirtEnd = lo + RRW_LIVE + q; g_w3l.nv = 0; C3_BuildRange(&g_w3l, lo, hi, &g_w3a);        nb = C3_Batches(&g_w3l, lb, 4096);
+        g_w3l.skirtEnd = lo + RRW_LIVE + q; g_w3l.detailEnd = getenv("RR_W3ALLDETAIL") ? 0 : lo + 56 + q; nb = W3LiveBuild(lo, hi, changed, lb, 4096);
         W3GpuBatches(lb, nb, g_w3lb); g_w3lnb = nb;
         W3HydHideLive(); R3_SetLive(&g_w3r, (const R3Vert *)g_w3l.v, g_w3l.nv);   /* (broken hydrants stay gone) */
         g_w3lo = lo; g_w3hi = hi; W3GrassLive();   /* (grass on the live ground) */
         g_w3snb = 0;   /* (no static batches: the one mesh reaches the draw distance - above) */
         QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq); sum += (double)(t1.QuadPart - t0.QuadPart) / fq.QuadPart; nr++;
         if (changed) nch++;
+        if (getenv("RR_W3LOG") && (double)(t1.QuadPart - t0.QuadPart) / fq.QuadPart > 0.1) LOG("world3d live: slow rebuild %d..%d: %.0f ms, %d vertices", lo, hi, (double)(t1.QuadPart - t0.QuadPart) * 1000 / fq.QuadPart, g_w3l.nv);   /* (test switch RR_W3LOG=1: a rebuild that stalls the race) */
         if (getenv("RR_W3LOG") && nr % 100 == 0) LOG("world3d live: %d rebuilds (%d for a change), %.2f ms each, %d vertices, %d batches", nr, nch, sum * 1000 / nr, g_w3l.nv, nb);
-    } }
+    } else W3LiveAhead(q); }
 
 /* ---- lights (weather.inc WxDark: how much they show; police lights always): the course's lamps (sprite textures LAMPPST* / STRTLTE*) and parked police cars
    (COPCAR*), found once among the built billboards.  Each frame the nearest ones light the world (render3d.h point lights) and every one in sight gets a halo
@@ -614,7 +681,7 @@ static void W3GrassCollect(const C3Course *cc, W3GrTri **arr, int *nn, int *capp
     for (i = 0; i + 2 < cc->nv; i += 3) {
         const C3Vert *A = &cc->v[i], *B = &cc->v[i + 1], *C = &cc->v[i + 2]; float u[3], v[3], n[3], l; int t = (int)A->tex, green,
             dry = (A->rgba >> 24) == 0xef && (B->rgba >> 24) == 0xef && (C->rgba >> 24) == 0xef;   /* (dirt, course3d.h C3_TexDirt: sparse dry scrub) */
-        if (A->ox != 0 || A->oy != 0 || B->ox != 0 || B->oy != 0 || (!dry && ((A->rgba >> 24) != 0xff || (B->rgba >> 24) != 0xff || (C->rgba >> 24) != 0xff))) continue;
+        if (A->ox != 0 || A->oy != 0 || B->ox != 0 || B->oy != 0 || (!dry && (((A->rgba >> 24) != 0xff && (A->rgba >> 24) != (C3_GROUNDA >> 24)) || ((B->rgba >> 24) != 0xff && (B->rgba >> 24) != (C3_GROUNDA >> 24)) || ((C->rgba >> 24) != 0xff && (C->rgba >> 24) != (C3_GROUNDA >> 24))))) continue;
         u[0] = B->x - A->x; u[1] = B->y - A->y; u[2] = B->z - A->z; v[0] = C->x - A->x; v[1] = C->y - A->y; v[2] = C->z - A->z;
         n[0] = u[1] * v[2] - u[2] * v[1]; n[1] = u[2] * v[0] - u[0] * v[2]; n[2] = u[0] * v[1] - u[1] * v[0]; l = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
         if (l < 1e-3f || fabsf(n[1]) / l < 0.62f) continue;   /* (flat enough to grow on: up to ~50 degrees) */
@@ -1160,6 +1227,8 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
         if (ViewerOn()) { g_w3c.forkPick = 0; g_w3c.soft = 0; }   /* (the Course Editor's viewer: the forks always seen - both carriageways, B on its own path: course3d.h C3_FramesB) */
         LOG(g_w3fork ? "world3d: forks off - the left road only" : "world3d: forks on - the other carriageway as the original's view places it"); }
     {   const char *b = strrchr(path, 0x5C), *b2 = strrchr(path, 0x2F); if (b2 > b) b = b2; b = b ? b + 1 : path;   /* t<track>_...: City (1) and Peninsula (3) are the towns */
+        { static void HsCourse(int t); HsCourse(g_w3a.opt[3]); }   /* (the course's own horizon: hdsky.inc) */
+        g_c3GroundTrack = b[0] == 0x74 && b[1] >= 0x31 && b[1] <= 0x35 ? b[1] - 0x30 : 0;   /* (its own ground pictures first: ground_art.h) */
         W3GenFacades(b[0] == 0x74 && (b[1] == 0x31 || b[1] == 0x33)); W3RockTex(); W3GroundArt();
         g_w3hdTrack = b[0] == 0x74 && b[1] >= 0x31 && b[1] <= 0x35 ? b[1] - 0x30 : 0; }
     if (g_w3hdTrack == 1) for (i = 0; i < g_w3c.n; i++) {   /* the City's footpaths 10 % lower (user, 2026-11-15: "slightly too high"): the course's own copy, so the
@@ -1184,6 +1253,7 @@ __declspec(dllexport) int __stdcall RR_World3DLoad(const char *path, const RrWor
     g_w3l.skirts = 1;   /* (the skirts round the camera only: course3d.h C3_Skirt) */
     g_w3l.forkPick = g_w3c.forkPick; g_w3l.noGround = g_w3c.noGround;
     g_w3l.bdead = g_w3c.bdead; g_w3l.bfit = g_w3c.bfit; g_w3l.pairA = g_w3c.pairA; g_w3l.pairB = g_w3c.pairB;   /* (shared, g_w3c's) */
+    { int k; for (k = 0; k < g_w3pmN; k++) { free(g_w3pm[k].v); free(g_w3pm[k].rt); free(g_w3pm[k].rn); } free(g_w3pm); g_w3pm = NULL; g_w3pmN = 0; }   /* (a course loaded: no piece kept from the last - W3LiveBuild) */
     g_w3l.n = g_w3c.n; g_w3l.start = g_w3c.start; g_w3l.finish = g_w3c.finish; g_w3l.L = g_w3c.L; g_w3l.frame = g_w3c.frame; g_w3l.frameB = g_w3c.frameB; g_w3l.fr = g_w3l.frame;
     if ((g_w3l.piece = (RoadPiece *)malloc(sizeof(RoadPiece) * g_w3c.n)) != NULL) memcpy(g_w3l.piece, g_w3c.piece, sizeof(RoadPiece) * g_w3c.n);
     if (!g_w3fork && g_w3c.frameB && g_w3c.soft) {   /* forks on: the live copy's own frames (C3_SoftFrames), side by side pairing, the game's ring per piece - not on a course
@@ -1250,6 +1320,7 @@ __declspec(dllexport) void __stdcall RR_World3DFrame(const RrWorld3DCam *c)
 {   static unsigned n;
     if (!c || !g_w3On) return;
     g_w3cam = *c; g_w3HaveCam = 1;
+    g_pfPiece = (int)(c->viewPos - g_w3Piece0) >> 8;   /* (RR_FRAMELOG: each frame's piece) */
     W3Track();
     ++n;
     if (getenv("RR_W3LOG") && (n % 150 == 0 || (getenv("RR_W3LOGN") && n % atoi(getenv("RR_W3LOGN")) == 0))) {   /* test switch: the game's camera every 150 frames (RR_W3LOGN=<k>: every k) */
@@ -1417,7 +1488,7 @@ static int W3MapObj(const W3Spr *s, int w, int h, const float *m, double vp, flo
         if (kp >= 0 && kp < g_w3c.n - 1 && (!half || cc->piece[kp].layout == 2)) {
             g = C3_GroundAt(cc, kp, half && cc->piece[kp].layout == 2, fu);
             if (g > H[kf] + 80) lift = g - H[kf]; } }
-    {   static double lastVp = -1; int logb = s->kind == RRO_PLAYER && getenv("RR_W3LOGBIKE") && vp != lastVp;   /* (test switch RR_W3LOGBIKE=1: the player's lateral as mapped (U) against the game's own (lat), and where it lands on the screen, each frame) */
+    {   static double lastVp = -1; static int lb = -1; int logb; if (lb < 0) { const char *e = getenv("RR_W3LOGBIKE"); lb = e ? atoi(e) : 0; } logb = s->kind == RRO_PLAYER && lb && (vp != lastVp || lb > 1);   /* (2: every polygon of the player, not the first alone) */   /* (test switch RR_W3LOGBIKE=1: the player's lateral as mapped (U) against the game's own (lat), and where it lands on the screen, each frame) */
     for (k = 0; k < 4; k++) { float pt[3]; double X, Y, W;
         static int curve = -1; if (curve < 0) curve = getenv("RR_W3BIKECURVE") != NULL;
         if (s->kind == RRO_PLAYER && !curve) { double c = cos(g_w3view[2]), sn = sin(g_w3view[2]), a = (q - g_w3view[4]) * W3_L, x = U[k] - g_w3view[3];
@@ -1432,7 +1503,7 @@ static int W3MapObj(const W3Spr *s, int w, int h, const float *m, double vp, flo
         ox[k] = (float)((X / W + 1.0) * 0.5 * w); oy[k] = (float)((1.0 - Y / W) * 0.5 * h);
         if (W < dmin) dmin = W; }
     if (logb) { double mx = (s->x[0] + s->x[1] + s->x[2] + s->x[3]) / 4, fu2 = (U[0] + U[1] + U[2] + U[3]) / 4; lastVp = vp;
-        LOG("w3bike vp %.3f D %.3f U %.1f lat %.1f diff %.1f mx %.1f cx %.1f sc %.4f camX %d sx %.1f", vp, s->objDepth, fu2, s->lat, fu2 - s->lat, mx, cx, sc, g_w3cam.camX, (ox[0] + ox[1] + ox[2] + ox[3]) / 4); } }
+        LOG("w3bike vp %.3f D %.3f U %.1f lat %.1f diff %.1f mx %.1f cx %.1f sc %.4f camX %d sx %.1f H %.1f %.1f %.1f %.1f lift %.1f fl %x '%.8s'", vp, s->objDepth, fu2, s->lat, fu2 - s->lat, mx, cx, sc, g_w3cam.camX, (ox[0] + ox[1] + ox[2] + ox[3]) / 4, H[0], H[1], H[2], H[3], lift, s->oflags, s->name); } }   /* (H: the corners' heights over the road, in the game's units) */
     *dist = dmin;
     return 1; }
 

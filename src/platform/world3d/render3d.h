@@ -24,7 +24,7 @@ typedef struct R3 {
     ID3D11DeviceContext *imm, *ctx;     /* ctx = deferred context (or imm) */
     int deferred;
     ID3D11VertexShader *vs; ID3D11PixelShader *ps, *psGlow, *psLens; ID3D11InputLayout *il; ID3D11BlendState *bsAdd, *bsShadow, *bsLens; ID3D11DepthStencilState *dsShadow;
-    ID3D11Buffer *cb, *vbStatic, *vbDyn, *vbLive; int nStatic, capDyn, nLive;
+    ID3D11Buffer *cb, *vbStatic, *vbDyn, *vbLive; int nStatic, capDyn, nLive, capLive;
     ID3D11RasterizerState *rs; ID3D11DepthStencilState *dsOn, *dsTest; ID3D11BlendState *bsOff, *bsAlpha; ID3D11SamplerState *smp;
     ID3D11Texture2D *depth; ID3D11DepthStencilView *dsv; int dw, dh;
     ID3D11Texture2D *rfDepth; ID3D11DepthStencilView *rfDsv; ID3D11RenderTargetView *rfRtv; ID3D11ShaderResourceView *rfSrv; int rw, rh;   /* the puddles' mirror picture (R3Frame.reflect), half size */
@@ -71,6 +71,9 @@ static const char r3_hlsl[] =
                                                                                                        /* has none: its ground's grain is the full texture's) */
     "  if (abs(i.c.a - 0.9098) < 0.0015) { float m = 0.5 * max(abs(dx.y), abs(dy.y)) + 0.5 / sz.y; uv.y = clamp(uv.y, m, 1 - m); }\n"   /* a cut-out picture standing up (vertex alpha 232, course3d.h C3_CUTV): v kept a footprint off its top / bottom - the wrap took the other edge's texels in (a thin dark line over far hedges) */
     "  float4 c = T.SampleGrad(S, uv, dx, dy) * i.c;\n"
+    "  if (abs(i.c.a - 0.9255) < 0.0015 && lit.w == 0 && rfl.y <= 0) { float b = smoothstep(0.32, 0.68, Nu(i.w.xz / 2300 + 31)); if (b > 0.002) c = lerp(c, T.SampleGrad(S, uv + float2(0.37, 0.61), dx, dy) * i.c, b);\n"   /* the ground (vertex alpha 236, course3d.h C3_GROUNDA - not sprites): less alike */
+    "    c.rgb *= 0.9 + 0.2 * Nu(i.w.xz / 5200 + 7); }\n"   /* from copy to copy (user, 2026-11-26 "less monotonous"): the same picture moved half over itself where a slow noise says, and light / dark patches */
+    "  else if (abs(i.c.a - 0.9725) < 0.0015) c.rgb *= 0.95 + 0.1 * Nu(i.w.xz / 3600 + 3);\n"   /* (the road: patches only - its lane lines stay put) */
     "  if (abs(i.c.a - 0.9294) < 0.0015) c.a = min(c.a * (1 + opt.w * max(0, log2(max(length(dx * sz), length(dy * sz))))), i.c.a);\n"   /* grass tufts (vertex alpha 237): far off the smaller mips average the thin blades with the gaps between them and the cut-out lost them - the tufts thinned out with distance until the rider came near (user, 2026-11-15); alpha raised by the mip level */
     "  if (c.a < 0.5 || (rfl.y > 0 && (i.w.y < rfl.x - 40 || abs(normalize(n).y) > 0.8))) discard;\n"   /* (the mirror pass: only what stands up above the mirror - buildings, hillsides; not the road / ground) */
     "  float y = dot(c.rgb, float3(0.299, 0.587, 0.114)); float3 a = tint.rgb; int k; c.rgb = lerp(y.xxx, c.rgb, tint.w);\n"   /* time of day / weather: saturation, then the light */
@@ -447,10 +450,14 @@ static void R3_SetStatic(R3 *r, const R3Vert *v, int n)
     r->vbStatic = n > 0 ? R3_Buffer(r, v, n, 0) : NULL; r->nStatic = r->vbStatic ? n : 0;
 }
 /* the part of the course rebuilt from the game's live road (drawn instead of that range of the static mesh); replaced whenever it changes */
-static void R3_SetLive(R3 *r, const R3Vert *v, int n)
+static void R3_SetLive(R3 *r, const R3Vert *v, int n)   /* (one dynamic buffer, written over each time - a new immutable one every q pieces was a hitch: world3d.inc W3Live) */
 {
-    if (r->vbLive) ID3D11Buffer_Release(r->vbLive);
-    r->vbLive = n > 0 ? R3_Buffer(r, v, n, 0) : NULL; r->nLive = r->vbLive ? n : 0;
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (n <= 0) { r->nLive = 0; return; }
+    if (n > r->capLive || !r->vbLive) { if (r->vbLive) ID3D11Buffer_Release(r->vbLive); r->capLive = n + n / 4; r->vbLive = R3_Buffer(r, NULL, r->capLive, 1); if (!r->vbLive) r->capLive = 0; }
+    r->nLive = 0;
+    if (r->vbLive && SUCCEEDED(ID3D11DeviceContext_Map(r->ctx, (ID3D11Resource *)r->vbLive, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        memcpy(m.pData, v, sizeof(R3Vert) * n); ID3D11DeviceContext_Unmap(r->ctx, (ID3D11Resource *)r->vbLive, 0); r->nLive = n; }
 }
 
 static void R3_Ensure(R3 *r, int w, int h)

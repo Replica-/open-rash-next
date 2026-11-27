@@ -31,7 +31,10 @@ int rr_TrafficPct(void)
     static int (__stdcall *f)(void); static int looked; int p;
     if (!looked) { HMODULE sh = GetModuleHandleA("rrddraw.dll"); f = sh ? (int (__stdcall *)(void))GetProcAddress(sh, "RR_Traffic") : 0; looked = 1; }
     p = f ? f() : 100;
-    return p < 100 ? 100 : p > 400 ? 400 : p;
+    p = p < 100 ? 100 : p > 400 ? 400 : p;
+    {   int rr_CourseEditOpt(int i); int c = rr_CourseEditOpt(0);   /* (an edited course's own traffic: percent of that - its cars that much more / less often) */
+        if (c > 0) { p = p * c / 100; if (p < 10) p = 10; if (p > 400) p = 400; } }
+    return p;
 }
 #define TRAFFIC_IV(x, pct) ((pct) == 100 ? (x) : (int)((long long)(x) * 100 / (pct)))   /* an interval at this traffic (Default: untouched) */
 
@@ -90,6 +93,7 @@ void __fastcall rr_RoadFeatureCountdown(int step)
 /* ---- spawn a road-side object ---- */
 /* kind = object class (bit 0: oncoming/behind type placed at +param_3, class 2: other), lane = signed lane index, from = optional owner rider (param_4), seg = section record. Picks a random sprite variant among those the class allows (RiderSpriteObject flags), copies the class template (6 words at tbl_featureClasses + kind*0x18 -> g_featureClass), creates the object (SpawnFromTemplate) and fills its state words +0x1c0.. */
 RR_REPLACE_FAST(RoadObjectSpawn, rr_RoadObjectSpawn, 20);
+int rr_CourseEditOpt(int i);
 void __fastcall rr_RoadObjectSpawn(unsigned kind, char lane, int posAdd, int from, int seg)
 {
     unsigned mask, flags;
@@ -120,7 +124,8 @@ void __fastcall rr_RoadObjectSpawn(unsigned kind, char lane, int posAdd, int fro
         if (g_riderSpriteCount != 1 && -1 < g_riderSpriteCount + -1) {
             do {
                 flags = RiderSpriteObject(i);
-                if (((flags & 0x1c0000) == 0) || ((mask & flags) != 0)) {
+                if ((((flags & 0x1c0000) == 0) || ((mask & flags) != 0)) && !(i < 32 && (rr_CourseEditOpt(4) >> i & 1))) {   /* (a vehicle this course leaves out: never - the Course Editor's
+                                                                                                                  Map settings, user 2026-11-26 "i dont want taxis appearing in this map") */
                     k = (int)count;
                     count = count + '\x01';
                     choice[k] = i;
@@ -128,6 +133,11 @@ void __fastcall rr_RoadObjectSpawn(unsigned kind, char lane, int posAdd, int fro
                 i = i + '\x01';
             } while ((int)i < g_riderSpriteCount + -1);
         }
+        if (count == '\0' && rr_CourseEditOpt(4)) {   /* (every one left out: the course's choice ignored) */
+            i = '\0';
+            if (g_riderSpriteCount != 1 && -1 < g_riderSpriteCount + -1) {
+                do { flags = RiderSpriteObject(i); if (((flags & 0x1c0000) == 0) || ((mask & flags) != 0)) { k = (int)count; count = count + '\x01'; choice[k] = i; } i = i + '\x01'; } while ((int)i < g_riderSpriteCount + -1);
+            } }
         if ('\0' < count) {
             variant = choice[rand() % (int)count];
             src = (int *)(&tbl_featureClasses + kind * 0x18);

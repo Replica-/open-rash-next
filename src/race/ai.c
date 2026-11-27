@@ -76,6 +76,12 @@ static int rival_rating(int r, int other)
    closer one) becomes the rival ai+0x168 with rating ai+0x174. The chaser drops a rival it cannot reach (AiDropRival). For the others
    the target speed ai+0x1a4 is set from the base speed for the level (ai+0x1bc[level]) by position: near the player by the
    tbl_rubberBand rubber band, otherwise by who is ahead / behind; it is cut when the player is down and far away. */
+/* the Course Editor's AI drive (system\shutdown.c RR_TESTDRIVE=ai: the game's demo rider on the player's bike): that rider as fast and as aggressive as the AI goes
+   (user, 2026-11-27 "the ai drive from course editor ... the best bike and most aggressive ai possible. it should just be a default thing") - its target speed the
+   hardest level's base + 25 %, never held back; it takes the attack branch whenever it may (AiAttackTick).  Only in an AI drive: demo mode and RR_TESTDRIVE=ai */
+static int AiDriveRider(int r)
+{   static int on = -1; if (on < 0) { char e[8]; on = GetEnvironmentVariableA("RR_TESTDRIVE", e, sizeof e) > 0 && e[0] == 'a'; }
+    return on && g_demoMode && r != 0 && r == g_playerRider; }
 RR_REPLACE_FAST(AiSpeedControl, rr_AiSpeedControl, 4);
 void __fastcall rr_AiSpeedControl(int r)
 {
@@ -215,6 +221,8 @@ void __fastcall rr_AiSpeedControl(int r)
             I32(ai, 0x1a4) = I32(ai, 0x1a4) / 2;
         }
     }
+    if (AiDriveRider(r)) { int l, top = 0, top2 = 0; for (l = 0; l < 5; l++) { if (I32(ai, 0x1bc + l * 4) > top) top = I32(ai, 0x1bc + l * 4); if (I32(ai, 0x1a8 + l * 4) > top2) top2 = I32(ai, 0x1a8 + l * 4); }
+        I32(ai, 0x1a4) = top + top / 4; I32(ai, 0x1a0) = top2; }   /* (the AI drive: flat out) */
 }
 
 /* ---- AI behaviour chooser ---- */
@@ -582,7 +590,8 @@ void __fastcall rr_AiAttackTick(int self)
     RRF_AiCatchUpSteer(self);
     if ((char)RRF_RiderInLaneSlots(self) == 0) {
         unsigned flag;
-        if ((int)Random() % S8(edi, 0x1d0) != 0 || (g_copRider != 0 && I32(g_copRider, 0x2fc) == ebx)) {
+        int calm = (int)Random() % S8(edi, 0x1d0) != 0; if (AiDriveRider(self)) calm = 0;   /* (the AI drive: always the attack - the roll still made, the game's random sequence kept) */
+        if (calm || (g_copRider != 0 && I32(g_copRider, 0x2fc) == ebx)) {
             I32(I32(self, 0x2fc), 0x1d4) = I32(I32(self, 0x2fc), 0x1c8);
             flag = ((int)Random() % S8(edi, 0x1d1)) == 0;
         } else {

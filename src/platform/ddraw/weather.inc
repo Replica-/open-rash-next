@@ -34,9 +34,29 @@ static void WxSound(int kind, float v)
 
 static int WxEnv(const char *n, int v, int lo, int hi) { const char *e = getenv(n); if (e && *e) { v = atoi(e); if (v < lo) v = lo; if (v > hi) v = hi; } return v; }
 static int WxTod(void) { return WxEnv("RR_TOD", g_vid.tod, 0, 4); }
-static int WxWeatherRaw(void) { return WxEnv("RR_WEATHER", g_vid.weather, 0, 5); }   /* the setting: 0 clear, 1 rain, 2 snow, 3 heavy rain, 4 heavy snow, 5 torrential rain */
+/* the course's snow (user, 2026-11-26: "start snow at marker so then the snow gradually builds up to the max level" - the Course Editor's SNOW STARTS / FULL SNOW
+   markers, RrxAssets.opt from the course file): 0 before the start, rising to 1 at the full-snow piece (the camera's piece); 0 = none on this course */
+static float WxCourseSnow(void)
+{   int s0 = g_w3a.opt[0] - 1, s1 = g_w3a.opt[1] - 1, k = g_pfPiece; float t; const char *e = getenv("RR_COURSESNOW");
+    if (e && *e) { s0 = atoi(e); s1 = strchr(e, ',') ? atoi(strchr(e, ',') + 1) : s0; }   /* (test switch RR_COURSESNOW=<start>,<full>: the markers there) */
+    if (!g_w3On || s0 < 0 || k < s0) return 0;
+    if (s1 <= s0) return 1;
+    t = (float)(k - s0) / (float)(s1 - s0); if (t > 1) t = 1;
+    {   float u = (t - 0.82f) / 0.18f; if (u < 0) u = 0; if (u > 1) u = 1; return 0.35f * t + 0.65f * u * u * (3 - 2 * u); } }   /* (light - a third by 82 % of the way - then
+                                                                     heavy fast: user, 2026-11-27 "it needs to ramp up dramatically after the level 4 finish line") */
+/* how much taller the horizon's skyline stands (hdsky.inc HsWrap): on a course with snow, from the start to the full-snow piece the panorama stretched up from its foot to
+   1.9 times - the mountains closing in, less and less sky (user, 2026-11-27 "the background should slowly show less and less sky over time"); 1 = as it is */
+static float HsStretch(void)
+{   int s1 = g_w3a.opt[1] - 1, k = g_pfPiece; float t; const char *e = getenv("RR_COURSESNOW");
+    if (e && *e) s1 = strchr(e, ',') ? atoi(strchr(e, ',') + 1) : atoi(e);
+    if (!g_w3On || s1 <= 0 || k <= 0) return 1;
+    t = (float)k / (float)s1; if (t > 1) t = 1; return 1 + 0.9f * t * sqrtf(t); }
+static int g_wxForce = -1;   /* (WxCompute's passes for the course's snow: the setting they are made with) */
+static int WxWeatherSet(void) { return WxEnv("RR_WEATHER", g_vid.weather, 0, 5); }   /* the setting: 0 clear, 1 rain, 2 snow, 3 heavy rain, 4 heavy snow, 5 torrential rain */
+static int WxWeatherRaw(void) { int r = g_wxForce >= 0 ? g_wxForce : WxWeatherSet(); if (g_wxForce < 0 && r == 0) { float s = WxCourseSnow(); if (s > 0.02f) r = s > 0.75f ? 4 : 2; } return r; }   /* (a clear day on a course's snow: snowing) */
 static int WxWeather(void) { int r = WxWeatherRaw(); return r == 3 || r == 5 ? 1 : r == 4 ? 2 : r; }   /* its kind: 0 clear, 1 rain, 2 snow */
 static int WxHeavy(void) { return WxWeatherRaw() >= 3; }
+static float WxSnowShare(void) { return g_wxForce < 0 && WxWeatherSet() == 0 ? WxCourseSnow() : 1.0f; }   /* (how much of the snow there is: the course's snow, else all of it) */
 static int WxTorrent(void) { return WxWeatherRaw() == 5; }   /* torrential rain (also heavy) */
 /* the Fog setting: 0 auto (with the weather), 1 off, 2 light, 3 heavy, 4 haze, 5 medium, 6 pea soup, 7 ground mist (the stored numbers; the pause
    steps through them in WX_FOGORD order, thinnest to thickest) */
@@ -56,7 +76,7 @@ static void WxL3(float *o, const float *a, const float *b, float t) { int i; for
 static unsigned WxRnd(unsigned *s) { *s = *s * 1664525u + 1013904223u; return *s >> 8; }
 static float WxRf(unsigned *s) { return (WxRnd(s) & 0xffff) / 65535.0f; }
 
-static void WxCompute(float dt)
+static void WxCompute1(float dt)
 {   static const float nTop[3] = { 0.02f, 0.03f, 0.10f }, nHor[3] = { 0.08f, 0.10f, 0.20f }, tTop[3] = { 0.16f, 0.20f, 0.42f },
         dawnHor[3] = { 1.00f, 0.66f, 0.47f }, duskHor[3] = { 1.00f, 0.47f, 0.24f }, nTint[3] = { 0.22f, 0.26f, 0.42f }, twTint[3] = { 1.0f, 0.68f, 0.52f },
         one[3] = { 1, 1, 1 }, nCloud[3] = { 0.16f, 0.18f, 0.28f }, twCloud[3] = { 1.0f, 0.70f, 0.60f };
@@ -122,6 +142,15 @@ static void WxCompute(float dt)
     if (w->flash > 0) for (i = 0; i < 3; i++) { float b = w->flash * (WxTorrent() ? 0.35f : 1.0f);   /* (in the torrent's fog a flash only lights it up a little) */
         w->tint[i] += b * 0.9f; w->skyTop[i] = WxL(w->skyTop[i], 0.80f, b * 0.8f); w->skyHor[i] = WxL(w->skyHor[i], 0.90f, b * 0.8f); w->fog[i] = WxL(w->fog[i], 0.85f, b * 0.6f); }
 }
+/* the weather's colours, fog, cover - on a course's snow (WxCourseSnow) between a clear day's and the snow's: up to 0.6 clear -> snow, then snow -> heavy snow */
+static void WxCompute(float dt)
+{   float c = (g_wxForce < 0 && WxWeatherSet() == 0) ? WxCourseSnow() : 0, *o, *a2, *b2, t; WxState A, B; int i, n = (int)(sizeof(WxState) / sizeof(float));
+    if (c <= 0.001f) { WxCompute1(dt); return; }
+    g_wxForce = c < 0.6f ? 0 : 2; WxCompute1(dt); A = g_wx;
+    g_wxForce = c < 0.6f ? 2 : 4; WxCompute1(0); B = g_wx; g_wxForce = -1;
+    t = c < 0.6f ? c / 0.6f : (c - 0.6f) / 0.4f; t = t * t * (3 - 2 * t);
+    o = (float *)&g_wx; a2 = (float *)&A; b2 = (float *)&B;
+    for (i = 0; i < n; i++) o[i] = a2[i] + (b2[i] - a2[i]) * t; }
 /* once per composed frame of a GPU race (GpuCompose) */
 static void WxUpdate(void)
 {   LARGE_INTEGER n, fq; double dt;
@@ -130,7 +159,7 @@ static void WxUpdate(void)
     if (dt < 0 || dt > 0.25) dt = 0;
     if (!g_w3On) { WxSound(0, 0); return; }
     if (getenv("RR_TEST_PAUSE") && !g_wxPause && g_wxTime > atof(getenv("RR_TEST_PAUSE"))) { g_wxPause = 1; g_wxSel = 1; }   /* test switch RR_TEST_PAUSE=<s>: the pause panel shown (a picture of it) */
-    WxSound(WxWeather(), (g_wxPause ? 0.25f : WxHeavy() ? 1.0f : 0.8f) * (1 - 0.7f * g_wxShelter));   /* (quieter in the pause, louder when heavy) */
+    WxSound(WxWeather(), (g_wxPause ? 0.25f : WxHeavy() ? 1.0f : 0.8f) * (1 - 0.7f * g_wxShelter) * WxSnowShare());   /* (quieter in the pause, louder when heavy) */
     g_wxTime += dt;   /* (on in the pause too: the rain / snow, clouds, water and a setting changed there keep moving behind the panel - only the day stands still) */
     if (!WxTod() && !g_wxPause) g_wxClock = fmod(g_wxClock + dt / (g_vid.dayMin * 60.0), 1.0);
     WxCompute((float)dt); }
@@ -360,7 +389,7 @@ static void WxParticles(int fw, int fh)
 {   static double lastT = -1; static int lastPos; static double lastHd; static SDL_Vertex *vx; static int *ix, cap;
     int kind = WxWeather(), n = kind == 1 ? (WxTorrent() ? 9600 : WxHeavy() ? 3200 : 1400) : (WxHeavy() ? 2800 : 1200), i, nq = 0; float dt, F, cx, hy, ground, fall, speed, dh, ca, sa; double hd;
     (void)fw; (void)fh;
-    if (!g_vid.wxfx) { g_wxpKind = -1; return; } if (g_vid.wxfx == 1) n = n * 2 / 5;   /* (True 3D detail > Weather particles: off / low 40 % / high) */
+    if (!g_vid.wxfx) { g_wxpKind = -1; return; } if (g_vid.wxfx == 1) n = n * 2 / 5;   { float sh = WxSnowShare() * 1.4f; if (sh < 1) n = (int)(n * sh); }   /* (a course's snow coming on: fewer flakes) */   /* (True 3D detail > Weather particles: off / low 40 % / high) */
     if (!g_w3On || !g_w3HaveCam || !kind) { g_wxpKind = -1; return; }
     if (!g_wxGlow) WxGlowMake();
     F = (float)(W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1)); cx = (float)g_w3cam.centreX; hy = (float)g_w3cam.horizonY;
@@ -420,12 +449,13 @@ static void WxParticles(int fw, int fh)
  * around"): bits of redwood foliage and dry leaves drifting down round the camera - as many as the REDWOOD trees near it (course3d.h C3Course.ntr, from the pieces
  * just behind to a dozen ahead), each fluttering, turning over, carried by a breeze that gusts; drawn as the rain is (over the world, under the HUD) ---- */
 #define WX_NL 1600
-typedef struct WxLeaf { float x, y, z, ph, sp, sz; unsigned col; } WxLeaf;
-static WxLeaf g_wxl[WX_NL]; static unsigned g_wxlSeed = 4243; static int g_wxlOn;
+#include "leaf_art.h"   /* (16 real leaves, cut from Fooocus pictures: user, 2026-11-27 "make them actual leafs of different colours") */
+typedef struct WxLeaf { float x, y, z, ph, sp, sz; unsigned col; int pic; } WxLeaf;
+static WxLeaf g_wxl[WX_NL]; static unsigned g_wxlSeed = 4243; static int g_wxlOn; static SDL_Texture *g_wxLeafTex;
 static void WxLeafSpawn(WxLeaf *l, float ground, int top)
 {   static const unsigned cols[6] = { 0xc06a2e, 0x9a4a22, 0xd89a3a, 0x6e7a2a, 0x8a5a2a, 0xb07a40 };   /* (RGB: rust, bark brown, gold, olive, tan) */
     l->x = (WxRf(&g_wxlSeed) * 2 - 1) * 3200; l->z = 80 + WxRf(&g_wxlSeed) * 4200; l->y = top ? 2600 + WxRf(&g_wxlSeed) * 600 : ground + WxRf(&g_wxlSeed) * (3000 - ground);
-    l->ph = WxRf(&g_wxlSeed) * 6.283f; l->sp = 0.6f + WxRf(&g_wxlSeed) * 1.4f; l->sz = 7 + WxRf(&g_wxlSeed) * 9; l->col = cols[(int)(WxRf(&g_wxlSeed) * 5.99f)]; }
+    l->ph = WxRf(&g_wxlSeed) * 6.283f; l->sp = 0.6f + WxRf(&g_wxlSeed) * 1.4f; l->sz = 7 + WxRf(&g_wxlSeed) * 9; l->col = cols[(int)(WxRf(&g_wxlSeed) * 5.99f)]; l->pic = (int)(WxRf(&g_wxlSeed) * 15.99f); }   /* (pic: its leaf in leaf_art.h) */
 static void WxLeaves(int fw, int fh)
 {   static double lastT = -1; static int lastPos; static double lastHd; static SDL_Vertex *vx; static int *ix, cap;
     int n = 0, i, nq = 0, k, k0, k1; float dt, F, cx, hy, ground, speed, dh, ca, sa, bx, bz; double hd, vp;
@@ -435,6 +465,8 @@ static void WxLeaves(int fw, int fh)
     for (k = k0; k < k1; k++) { int a = g_w3c.ntr[k], b = g_w3lo >= 0 && g_w3l.ntr && k < g_w3l.obN ? g_w3l.ntr[k] : 0; n += a > b ? a : b; }   /* (the live stretch's trees: its own build) */
     n *= 9; if (n > WX_NL) n = WX_NL; if (g_vid.wxfx == 1) n = n * 2 / 5;
     if (n <= 0) { g_wxlOn = 0; return; }
+    if (!g_wxLeafTex && (g_wxLeafTex = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, WX_LEAFW, WX_LEAFH)) != NULL) {
+        SDL_UpdateTexture(g_wxLeafTex, NULL, k_wxLeafPx, WX_LEAFW * 4); SDL_SetTextureBlendMode(g_wxLeafTex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(g_wxLeafTex, SDL_SCALEMODE_LINEAR); }
     F = (float)(W3_F * (g_w3cam.pxPerUnit > 0 ? g_w3cam.pxPerUnit : 1)); cx = (float)g_w3cam.centreX; hy = (float)g_w3cam.horizonY;
     ground = (float)-g_w3cam.camY; if (ground > -50) ground = -50;
     {   int kk = (int)floor(vp); const C3Frame *Fr = W3Fr(); double fr = vp - kk; if (kk < 0) kk = 0; if (kk >= g_w3c.n) kk = g_w3c.n - 1; hd = Fr[kk].heading + (Fr[kk + 1].heading - Fr[kk].heading) * fr; }
@@ -456,18 +488,20 @@ static void WxLeaves(int fw, int fh)
         if (l->y < ground) WxLeafSpawn(l, ground, 1);
         sx = cx + F * l->x / l->z; sy = hy - F * l->y / l->z;
         if (sx < g_gpuClip[0] - 20 || sx > g_gpuClip[2] + 20 || sy < g_gpuClip[1] - 20 || sy > g_gpuClip[3] + 20) continue;
-        w = F * l->sz / l->z; if (w < 0.6f) w = 0.6f; if (w > 14) w = 14;
-        flip = cosf((float)g_wxTime * 3.1f * l->sp + l->ph); h = w * (0.25f + 0.45f * fabsf(flip));   /* (turning over: thin edge-on, wide face-on) */
+        w = F * l->sz / l->z * (g_wxLeafTex ? 1.5f : 1); if (w < 0.8f) w = 0.8f; if (w > 20) w = 20;   /* (a picture: a little bigger - its edges are see-through) */
+        flip = cosf((float)g_wxTime * 3.1f * l->sp + l->ph); h = w * (g_wxLeafTex ? 0.15f + 0.85f * fabsf(flip) : 0.25f + 0.45f * fabsf(flip));   /* (turning over: thin edge-on, wide face-on) */
         an = (float)g_wxTime * 1.3f * l->sp + l->ph * 2; c0 = cosf(an); s0 = sinf(an);
-        c.r = ((l->col >> 16) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.g = ((l->col >> 8) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.b = (l->col & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f);
+        if (g_wxLeafTex) c.r = c.g = c.b = flip > 0 ? 1.0f : 0.72f;   /* (the picture's own colours; its back darker) */
+        else { c.r = ((l->col >> 16) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.g = ((l->col >> 8) & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); c.b = (l->col & 255) / 255.0f * (flip > 0 ? 1.0f : 0.72f); }
         c.a = 0.95f * (1 - l->z / 4400) * (1 - g_wxShelter);
-        for (q = 0; q < 4; q++) { SDL_Vertex *o = &vx[nq * 4 + q]; float px = (q & 1) ? w : -w, py = (q & 2) ? h : -h; if (q == 1 || q == 2) px *= 0.6f;   /* (a little lopsided: a leaf) */
-            o->position.x = sx + px * c0 - py * s0; o->position.y = sy + px * s0 + py * c0; o->color = c; o->tex_coord.x = 0.5f; o->tex_coord.y = 0.5f; }
+        for (q = 0; q < 4; q++) { SDL_Vertex *o = &vx[nq * 4 + q]; float px = (q & 1) ? w : -w, py = (q & 2) ? h : -h; if (!g_wxLeafTex && (q == 1 || q == 2)) px *= 0.6f;   /* (no picture: a little lopsided, a leaf) */
+            o->position.x = sx + px * c0 - py * s0; o->position.y = sy + px * s0 + py * c0; o->color = c;
+            o->tex_coord.x = g_wxLeafTex ? ((l->pic & 7) + ((q & 1) ? 0.98f : 0.02f)) / 8.0f : 0.5f; o->tex_coord.y = g_wxLeafTex ? ((l->pic >> 3) + ((q & 2) ? 0.98f : 0.02f)) / 2.0f : 0.5f; }
         ix[nq * 6] = nq * 4; ix[nq * 6 + 1] = nq * 4 + 1; ix[nq * 6 + 2] = nq * 4 + 2; ix[nq * 6 + 3] = nq * 4 + 1; ix[nq * 6 + 4] = nq * 4 + 3; ix[nq * 6 + 5] = nq * 4 + 2; nq++;
     }
     if (nq) { SDL_Rect vr; vr.x = g_gpuClip[0]; vr.y = g_gpuClip[1]; vr.w = g_gpuClip[2] - g_gpuClip[0]; vr.h = g_gpuClip[3] - g_gpuClip[1] + 1;
         SDL_SetRenderClipRect(g_ren, &vr); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_BLEND);
-        SDL_RenderGeometry(g_ren, NULL, vx, nq * 4, ix, nq * 6); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); SDL_SetRenderClipRect(g_ren, NULL); } }
+        SDL_RenderGeometry(g_ren, g_wxLeafTex, vx, nq * 4, ix, nq * 6); SDL_SetRenderDrawBlendMode(g_ren, SDL_BLENDMODE_NONE); SDL_SetRenderClipRect(g_ren, NULL); } }
 
 /* ---- the race's Esc pause: the settings panel (drawn with GDI at twice the frame's resolution, shown under the game's own question) ---- */
 static void IcBox(HDC dc, int x, int y, int w, int h, COLORREF fill, COLORREF frame, int r);   /* inputcfg.inc */

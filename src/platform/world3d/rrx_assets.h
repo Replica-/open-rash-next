@@ -53,6 +53,9 @@ typedef struct RxAssets {
     int dholeTex;                              /* DIRT HOLE's walls: a dirt cliff face (DHOLE_HEDGE.png, tex index + 1; 0 none: CLIFF's rock - course3d.h C3_HoleWall) */
     int shrubGTex;                             /* SHRUBG's blocks: SHRUB's hedge in dark green (made at load: ground_art.h C3_GroundArt; tex index + 1; 0 none) */
     int shrubTex;                              /* SHRUB's blocks (ground_art.h): the hedge picture on their sides (tex index + 1; 0 none - course3d.h C3_Shrub) */
+    int cab0, ncab;                            /* the forest buildings (ground_art.h C3_CabinArt): their materials tex[cab0 + C3C_*], each kind's thumbnail tex[cab0 + C3C_NTEX + kind]; ncab 0 = none */
+    int railTex;                               /* the original guard rail picture RRRAIL1 (rail_art.h: for a track whose sets have none - course3d.h C3_SideStructs; tex index + 1, 0 none) */
+    int opt[4];                                /* an edited course's settings (COPT chunk, road_build.c): snow starts / is full at piece + 1 (0 none), traffic percent, the horizon (a track's 1..5: hdsky.inc HsCourse) (weather.inc WxCourseSnow) */
     RrcExtra *ext; int next;                   /* per piece: an edited course's extras (CEXT: painted terrain bands, course3d.h C3_ProfileTex; NULL = none) - its own memory */
 } RxAssets;
 
@@ -83,6 +86,7 @@ static int RX_Load(RxAssets *a, const char *path)
         if (total + ch[1] > cap || fread(p, 1, ch[1], f) != ch[1]) break;
         total += (ch[1] + 3) & ~3u;
         if (ch[0] == 0x52554350) { a->pcur = (unsigned (*)[6])p; a->npiece = (int)(ch[1] / 24); }
+        else if (ch[0] == 0x54504f43 && ch[1] >= 8) memcpy(a->opt, p, ch[1] < sizeof a->opt ? ch[1] : sizeof a->opt);
         else if (ch[0] == 0x54584543 && !a->ext && (a->ext = (RrcExtra *)malloc(ch[1] + 1)) != NULL) { memcpy(a->ext, p, ch[1]); a->next = (int)(ch[1] / sizeof(RrcExtra)); }
         else if (ch[0] == 0x4b52414d && a->nmark < 256) { RxMarks *m = &a->mark[a->nmark++]; m->img = w[0]; m->count = (int)w[3]; m->rec = p + 4 + 0x18; }
         else if (ch[0] == 0x204c4150) memcpy(a->pal, p, 1024);

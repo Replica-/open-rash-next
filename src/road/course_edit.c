@@ -55,6 +55,9 @@ void rr_CourseEditLoad(int track, int level)
 }
 
 /* the extras of the piece at road position pos (course_edit.h RrcExtra; NULL = none): the course file's CEXT chunk (road\road_build.c CourseExtract) */
+/* an edited course's own settings (RrcHeader.spare[2..4], the Course Editor's - 0 = none): 0 traffic, percent of the usual (user, 2026-11-26 "reduce the amount of cars
+   please in this map"), 1 / 2 the piece where snow starts / is full, + 1 (user: "start snow at marker so then the snow gradually builds up to the max level") */
+int rr_CourseEditOpt(int i) { extern int rr_courseEdited; return rr_courseEdited && i >= 0 && i < 5 ? g_rrcHdr.spare[2 + i] : 0; }   /* (3: the horizon - a track's, 1..5; 0 its own; 4: the vehicles left out - bit n = traffic variant n) */
 const RrcExtra *rr_CourseEditExtra(unsigned pos)
 {
     int k;
@@ -299,13 +302,32 @@ static void CeForksTell(void)
     if (fp) fp(rr_ceForks < CE_NFORK ? rr_ceForks : CE_NFORK, g_forkRec);
     if (GetEnvironmentVariableA("RR_FORKMAKE", 0, 0)) { char m[80]; wsprintfA(m, "fork tell: %d fork(s), shim %d", rr_ceForks, f != 0); Log(m); } }
 
+/* the track's own forks taken out (RrcHeader.spare[7] bit 0, the Course Editor's port of a course onto another track - user, 2026-11-27 "replace those forks
+   compleetely please": Sierra's two split roads under a course made for The City): each split of the main road made its road A - the node before linked to A's first
+   part, A's last to the node after the join; B left out of the chain.  Every word changed logged (CeW) - CeForkUndo puts them back.  Before the map and the editor's forks */
+static void CeUnsplitTrack(int *course)
+{   int *q = course, g = 0, n = 0; char m[80];
+    while (q && g++ < 4096) {
+        if (q[0] == 0) { q = (int *)q[2]; continue; }
+        if (q[0] == 2) { q = (int *)q[4]; continue; }
+        if (q[0] != 1) break;
+        {   int *prev = (int *)q[4], *af = (int *)q[2], *e = af, *al = 0, *join = 0, *next, g2 = 0;
+            while (e && g2++ < 4096) { if (e[0] == 0) { al = e; e = (int *)e[2]; } else if (e[0] == 2) { join = e; break; } else { e = 0; break; } }   /* (A's parts to the join) */
+            if (!prev || !af || af[0] != 0 || !al || !join) break;
+            next = (int *)join[4];
+            if (prev[0] == 0) CeW(&prev[2], (int)af); else if (prev[0] == 2) CeW(&prev[4], (int)af); else break;
+            CeW(&af[3], (int)prev);
+            CeW(&al[2], (int)next);
+            if (next) { if (next[0] == 0) CeW(&next[3], (int)al); else if (next[0] == 1) CeW(&next[4], (int)al); }
+            n++; q = next; } }
+    wsprintfA(m, "course edit: %d of the track's own split(s) made single road", n); Log(m); }
 void rr_CourseEditMap(int *course)
 {
     int *q = course, p = 0, g = 0, r = 0, split = 0, b0, ok = 1, i, lo, hi;
     if (course != g_mapCourse) { g_nmap = g_nfin = 0; g_nfkw = 0; }   /* (another course: its blocks are not ours to put back) */
     else CeForkUndo();   /* (the same course set up again: its forks undone first, then its map - MapUndo) */
     MapUndo(); g_mapCourse = course;
-    rr_ceForks = 0; CeForkMake(course);   /* (test switch RR_FORKMAKE: a new fork) */
+    rr_ceForks = 0; if (g_rrc && (g_rrcHdr.spare[7] & 1) && course) CeUnsplitTrack(course); CeForkMake(course);   /* (test switch RR_FORKMAKE: a new fork) */
     if (GetEnvironmentVariableA("RR_CHAINLOG", 0, 0) && course) {   /* (test switch RR_CHAINLOG=1: the course's chain of blocks - each node's first words, a block's header) */
         int *c2 = course, g3 = 0, *seen[64], ns = 0, k3; char b[300];
         while (c2 && g3++ < 200) { for (k3 = 0; k3 < ns && seen[k3] != c2; k3++) ; if (k3 < ns) break; if (ns < 64) seen[ns++] = c2;

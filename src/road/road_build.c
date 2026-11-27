@@ -1266,6 +1266,8 @@ static void CourseExtract(int *course, int start)
         for (i = 0; x && i < n; i++) { const RrcExtra *e = rr_CourseEditExtra(back + (unsigned)i * 0x100); if (e) { x[i] = *e; any = 1; } }
         if (x && any) XChunk(f, 0x54584543, x, (unsigned)n * sizeof(RrcExtra), NULL, 0);
         if (x) HeapFree(GetProcessHeap(), 0, x); }
+    {   int rr_CourseEditOpt(int i); int o[4]; o[0] = rr_CourseEditOpt(1); o[1] = rr_CourseEditOpt(2); o[2] = rr_CourseEditOpt(0); o[3] = rr_CourseEditOpt(3);   /* COPT: an edited course's settings - snow start / full (piece + 1), traffic */
+        if (o[0] | o[1] | o[2] | o[3]) XChunk(f, 0x54504f43, o, sizeof o, NULL, 0); }
     {   unsigned slot[4];                                                        /* SLOT: the set in each slot at the set-up (the pieces before a slot's first marker) */
         for (i = 0; i < 4; i++) { unsigned id = (unsigned)(&(*(int *)&rec_featureAccum1.tbl_spriteSetIds))[i]; int j; slot[i] = (int)id > 0 ? id : 0;
             for (j = 0; j < nset && setId[j] != slot[i]; j++) ;

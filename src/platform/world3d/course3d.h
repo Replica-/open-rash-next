@@ -42,6 +42,7 @@ typedef struct C3Course {
     int bldKind;                /* the buildings C3_Building is putting up: 0 a street's (C3_Roadside), 1 / 2 on a terrain side from that band (C3_BandBuildings) */
     int skirts;                 /* C3_BuildRange: build the skirts (C3_Skirt) - only the live stretch round the camera, never the whole course */
     int skirtEnd;               /* C3_BuildRange: > 0 = skirts only on the pieces before it (the game's ring: the far part of the one mesh has none, as the course file's had not) */
+    int detailEnd;              /* C3_BuildRange: > 0 = small rocks (C3_Rock under 40: pebbles, stones) only on the pieces before it - the live stretch's far part has none (world3d.inc W3Live: the frame rate) */
     int forkPick;               /* 1 = forks off: a split is only its left road A, built as an ordinary road (no B / rails / median); 0 = both */
     int noGround;               /* 1 = no rocks, fallen leaves (Video Options > True 3D detail > Ground detail off: C3_Leaves, C3_DirtRocks) */
     int snapN; double snapP[2], snapU[2]; float snapW[2][3];   /* while a fitted fork's half is built: its inner side's end (row at piece snapP, lateral snapU) put on the
@@ -406,8 +407,11 @@ static int C3_IsBridgeTex(const RxAssets *ra, int t) { return ra && ra->nground 
 #define C3_GSHRUBG 19     /* GREEN SHRUB: SHRUB's blocks, its hedge dark green (RxAssets.shrubGTex) */
 #define C3_GCONCRETE 20   /* CONCRETE: poured pavement slabs - footpath, verge, P0 .. P3 */
 #define C3_GDUFF 21       /* REDWOOD DUFF: the forest floor's needle litter (the verge of a redwood road) */
+#define C3_GGRAVEL 25     /* GRAVEL: grey grit (ground_art.h C3G_Gravel) - the City sample's verges (user, 2026-11-27) */
 #define C3_GFENCE 22      /* RAIL FENCE: duff with a split-rail fence along its road side (C3_Fence) - on the verge or P0 */
-static int C3_IsJunctionTex(const RxAssets *ra, int t) { int g = ra ? t - ra->ground0 : -1; return ra && g >= 0 && g < ra->nground && (g == C3_GSIDEST || g == C3_GTLIGHTS || g == C3_GSTOP || g == C3_GCONCRETE || g == C3_GFENCE); }   /* (laid / built ground: never blended)   /* (never blended: their edges sharp, as a street's) */
+#define C3_GBOARD 24      /* BOARDWALK: a forest footpath of planks (23 TRAIL, 25 GRAVEL, 26 WOODCHIP: ground_art.h C3G_Path) - laid: never blended */
+#define C3_GLOGYARD 27    /* LOG YARD: a logging camp's mud, bark and sawdust (C3_YardFloor: rounds, log ends, bark heaps) */
+static int C3_IsJunctionTex(const RxAssets *ra, int t) { int g = ra ? t - ra->ground0 : -1; return ra && g >= 0 && g < ra->nground && (g == C3_GSIDEST || g == C3_GTLIGHTS || g == C3_GSTOP || g == C3_GCONCRETE || g == C3_GFENCE || g == C3_GBOARD); }   /* (laid / built ground: never blended)   /* (never blended: their edges sharp, as a street's) */
 static int C3_IsPitTex(const RxAssets *ra, int t);
 static int C3_NotPitTex(const RxAssets *ra, const int *tex, int i)   /* (a hole's sides / its end wall: the picture of the nearest strip on its side that is no pit - towards the
                                                                        road first, then outwards; -1 none) */
@@ -540,6 +544,7 @@ static void C3_SectionAt(const RxAssets *ra, const RoadSection *sec, int k, int 
 static void C3_EdgeStyle(const RxAssets *ra, int k, int h, int side, double *kmul, double *roll, double *gw, double *gd)
 {
     int g = ra && ra->ext && k >= 0 && k < ra->next ? ra->ext[k].gutter[h & 1][side & 1] : 0, ks = (g >> 2) & 7, gs = (g >> 5) & 3;
+    if (ks == 5) ks = 4;   /* (ASPHALT EDGE: flush, as FOREST EDGE - C3_AsphaltEdge) */
     static const double km[5] = { 1, 0.5, 2, 1, 0 }, gws[3] = { 45, 90, 60 }, gds[3] = { 6, 6, 18 };
     *kmul = ks < 5 ? km[ks] : 1; *roll = ks == 3 ? 45 : 0; *gw = gws[gs < 3 ? gs : 0]; *gd = gds[gs < 3 ? gs : 0];
     if (g_c3Editor) { *kmul = 0; *roll = 0; *gd = 0; }
@@ -605,6 +610,8 @@ static void C3_QuadTint(C3Course *c, const float *a, const float *b, const float
 }
 static void C3_QuadT(C3Course *c, const float *a, const float *b, const float *cc, const float *d, unsigned rgba, int tex, const float *uv) { C3_QuadTint(c, a, b, cc, d, rgba, tex, uv, 0xffffffffu); }
 static void C3_Quad(C3Course *c, const float *a, const float *b, const float *cc, const float *d, unsigned rgba) { C3_QuadT(c, a, b, cc, d, rgba, -1, NULL); }
+#define C3_GROUNDA 0xec000000u   /* vertex alpha 236: a ground strip's own textured quad (C3_Strip) - the world shader breaks up its picture's repeats (user, 2026-11-26 "less
+                                    monotonous"); grass grows on it as on 255 (world3d.inc W3GrassCollect).  Sprites, props and the rest keep 255 */
 static void C3_Mark(C3Course *c, int from, unsigned a)   /* vertices from .. now: vertex alpha a (a surface the shader knows), where it is still 255 */
 {   int j; for (j = from; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | (a << 24); }
 
@@ -768,6 +775,7 @@ static int C3_ObRoom(C3Course *c)   /* (the per-piece tables: as long as the cou
 static void C3_Rock(C3Course *c, double p, double x, double y, double r, unsigned s, unsigned rgba, int tex)   /* (tex: the rock texture, -1 = flat colour) */
 {
     enum { NS = 7 }; float ring[NS][3], mid[NS][3], top[3]; double h = r * (0.45 + ((s >> 9) % 40) / 100.0), sq = 0.75 + ((s >> 3) % 50) / 100.0; int i, m0 = c->nv;
+    if (r < 40 && c->detailEnd > 0 && c->cur >= c->detailEnd) return;   /* (far out in the live stretch: no pebbles - nobody sees them, and they were most of its vertices) */
     for (i = 0; i < NS; i++) {
         double a = 6.2831853 * i / NS + ((s >> (i % 8)) & 7) * 0.05, j = 0.8 + (((s * (i + 3)) >> 11) % 40) / 100.0;
         C3_Point(c, p + sin(a) * r * j * sq / c->L, x + cos(a) * r * j, y - r * 0.08, ring[i]);
@@ -834,6 +842,64 @@ static void C3_TreeSize(int g, double *ht0, double *htv, double *sp) { if (g == 
 #define C3_CUTV 0xe8ffffffu   /* tint of a cut-out picture standing up (trees, hedges, shrub sides, walls of trees): vertex alpha 232 - render3d.h keeps its v off the
                                  picture's top / bottom edge (the sampler wraps: the top row took the bottom's dark foliage, a thin black line over every far hedge -
                                  user, 2026-11-24 "theres a black line here") */
+/* the forest buildings' kinds and materials (C3_Cabin, ground_art.h C3_CabinArt) */
+enum { C3C_LOGS, C3C_BOARD, C3C_SHINGLE, C3C_METAL, C3C_STONE, C3C_WINDOW, C3C_DOOR, C3C_FERN, C3C_NTEX };   /* (C3C_FERN: the forest floor's ferns - C3_DuffFloor) */
+enum { C3_CAB_LOG, C3_CAB_AFRAME, C3_CAB_LODGE, C3_CAB_RANGER, C3_CAB_SHED, C3_CAB_MIX, C3_CAB_LOGPILE, C3_CAB_SAWMILL, C3_CAB_CAMP, C3_NCABCODE };   /* (codes as saved: C3_CABGEN + code - only ever added to;
+   C3_CAB_MIX the CABINS mix, C3_CAB_CAMP the LOGGING CAMP mix - user, 2026-11-26 "a logging camp ... logs tied up in piles") */
+#define C3_NCAB C3_CAB_MIX
+/* the forest floor of a REDWOOD DUFF cell (user note 2026-11-26: "this is too bland, the dirt here cant just be dirt maybe fill it up with random stuff suitable?"): on each
+   quad of it clumps of sword ferns (the C3C_FERN picture, crossed), a fallen log now and then (bark, its sawn / broken ends pale, moss on top), mossy rocks, a stump, a low bush
+   (SHRUB's picture), and a litter of cones and twigs; the logs, rocks over 50 and stumps solid (C3_Obst).  The game only (the editor's P3D flat); not on the verge, not where
+   buildings stand (C3_StripUnderBld) - the same wherever this piece is built */
+static void C3_Upright(C3Course *c, double p, double x, double y, double w, double ht, double ang, int tex, unsigned tint)   /* two crossed upright quads of a cut-out picture, foot at (p, x, y) */
+{   static const float uv[8] = { 0, 1, 1, 1, 1, 0, 0, 0 }; int j;
+    for (j = 0; j < 2; j++) { double a = ang + j * 1.5707963, dx = cos(a) * w * 0.5, dp = sin(a) * w * 0.5 / c->L; float A[3], B[3], CC[3], D[3];
+        C3_Point(c, p - dp, x - dx, y - 6, A); C3_Point(c, p + dp, x + dx, y - 6, B); C3_Point(c, p + dp, x + dx, y + ht, CC); C3_Point(c, p - dp, x - dx, y + ht, D);
+        C3_QuadTint(c, A, B, CC, D, 0xffffffffu, tex, uv, tint); } }
+static void C3_DuffFloor(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1, const RxAssets *ra)
+{
+    double w = fabs(u1 - u0); unsigned s = (unsigned)k * 2246822519u ^ (unsigned)(int)(u0 * 3.0) * 374761393u ^ 0x5bd1e995u; int i, n, fern = ra->ncab >= C3_NCABCODE ? ra->cab0 + C3C_FERN : -1;
+    int bush = ra->nground > C3_GSHRUB && ra->groundTree[C3_GSHRUB] ? ra->groundTree[C3_GSHRUB] - 1 : -1;
+    if (c->noGround || w < 200) return;
+    s = (s ^ (s >> 15)) * 2654435761u; n = 3 + (int)(w / 400.0); if (n > 8) n = 8;   /* (the live stretch holds ~200 pieces of it: few vertices each) */
+    for (i = 0; i < n; i++) {
+        double f, pp, x, y, r; unsigned col; int g, kind;
+        s = s * 1664525u + 1013904223u; f = 0.08 + 0.84 * ((s >> 8) / 16777216.0); s = s * 1664525u + 1013904223u; pp = k + 0.05 + 0.9 * ((s >> 8) / 16777216.0);
+        { double t = pp - k, a0 = u0 + (v0 - u0) * t, a1 = u1 + (v1 - u1) * t, y0 = h0 + (g0 - h0) * t, y1 = h1 + (g1 - h1) * t; x = a0 + (a1 - a0) * f; y = y0 + (y1 - y0) * f; }
+        s = s * 1664525u + 1013904223u; kind = (int)((s >> 24) % 100);
+        if (kind < 38 && fern >= 0) { int m, nm = 2 + (int)((s >> 4) % 3);   /* a clump of ferns */
+            for (m = 0; m < nm; m++) { double ht, dx, dp; unsigned tint; s = s * 1664525u + 1013904223u; ht = 70 + (s >> 8) % 90; dx = (double)((s >> 12) % 160) - 80; dp = ((double)((s >> 20) % 160) - 80) / c->L;
+                tint = 0xe8000000u | (unsigned)(200 + (s >> 3) % 56) << 8 | (unsigned)(170 + (s >> 9) % 60) | (unsigned)(150 + (s >> 15) % 60) << 16;   /* (ABGR: a little yellower or bluer) */
+                C3_Upright(c, pp + dp, x + dx, y, ht * 1.7, ht, ((s >> 5) % 314) / 100.0, fern, tint); } }
+        else if (kind < 50) {   /* a fallen log: an six-sided trunk lying half sunk in the litter */
+            double ln = 240 + (s >> 8) % 320, rr = 15 + (s >> 13) % 16, th = ((s >> 3) % 628) / 100.0, ca = cos(th), sa = sin(th); float P[2][6][3]; int e, j;
+            int bv = (int)((s >> 17) % 18); unsigned bark = 0xff000000u | (unsigned)(34 + bv) << 16 | (unsigned)(46 + bv) << 8 | (unsigned)(64 + bv * 2);
+            for (e = 0; e < 2; e++) for (j = 0; j < 6; j++) { double a = j * 1.0471976, along = (e ? 0.5 : -0.5) * ln * (e ? 1 : 0.92), side = cos(a) * rr, up = sin(a) * rr + rr * 0.45;
+                C3_Point(c, pp + (along * ca - side * sa) / c->L, x + along * sa + side * ca, y + up, P[e][j]); }
+            for (j = 0; j < 6; j++) { int j2 = (j + 1) % 6; unsigned cl = j == 1 ? 0xff38584au : bark;   /* (moss along its top) */
+                C3_Quad(c, P[0][j], P[0][j2], P[1][j2], P[1][j], cl); }
+            for (e = 0; e < 2; e++) for (j = 1; j < 5; j++) C3_Quad(c, P[e][0], P[e][j], P[e][j + 1], P[e][j + 1], e ? 0xff5a86aeu : 0xff3c5a7au);   /* (the ends: one sawn pale, one broken dark) */
+            for (j = -1; j <= 1; j++) { double pj = pp + j * 0.33 * ln * ca / c->L, xj = x + j * 0.33 * ln * sa; if ((int)floor(pj) == k) C3_Obst(c, pj, xj, rr + 14); } }
+        else if (kind < 66) { r = 24 + (s >> 8) % 70; g = 110 + (int)((s >> 16) % 50);   /* a mossy rock */
+            col = 0xff000000u | (unsigned)(g * 0.66) << 16 | (unsigned)(g * 0.95) << 8 | (unsigned)(g * 0.76);
+            C3_Rock(c, pp, x, y - r * 0.2, r, s, col, ra->rockTex); if (r > 50) C3_Obst(c, pp, x, r * 0.8); }
+        else if (kind < 74) { double sr = 16 + (s >> 8) % 14, sh = 24 + (s >> 12) % 40, dp = sr / c->L; float q[8][3]; int j, f2; static const int fc[5][4] = { { 0, 1, 5, 4 }, { 1, 3, 7, 5 }, { 3, 2, 6, 7 }, { 2, 0, 4, 6 }, { 4, 5, 7, 6 } };
+            for (j = 0; j < 8; j++) C3_Point(c, pp + (j & 1 ? dp : -dp), x + (j & 2 ? sr : -sr), y - 10 + (j & 4 ? sh + 10 : 0), q[j]);   /* a stump */
+            for (f2 = 0; f2 < 5; f2++) C3_Quad(c, q[fc[f2][0]], q[fc[f2][1]], q[fc[f2][2]], q[fc[f2][3]], f2 == 4 ? 0xff5c88b4u : 0xff28405au);
+            C3_Obst(c, pp, x, sr + 6); }
+        else if (kind < 86 && bush >= 0) { double ht = 110 + (s >> 8) % 120; const RxTex *bt = &ra->tex[bush];   /* a low bush (huckleberry, salal) */
+            C3_Upright(c, pp, x, y, ht * (bt->h > 0 ? (double)bt->w / bt->h : 1.0), ht, ((s >> 5) % 314) / 100.0, bush, 0xe8c8f0d0u); }
+        /* (else nothing: the duff's own cones and twigs - its picture) */
+    }
+}
+/* strip i of the piece being built lies where buildings stand on its side (C3_SideBld: from their first cell out) */
+static int C3_StripUnderBld(const C3Course *c, const RxAssets *ra, int k, int i)
+{   int side = i >= C3_NP / 2, h = c->obH, b, cell; const RoadSection *s;
+    if (k < 0 || k >= c->n || (h && c->piece[k].layout != 2)) return 0;
+    s = h ? &c->piece[k].halfB : &c->piece[k].halfA;
+    if (!(b = C3_SideBld(ra, s, k, h, side))) return 0;
+    cell = side ? i - 9 : 4 - i;
+    return cell >= (b == 4 ? 1 : b + 1); }
 static void C3_GroundTrees(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1, int tex, int g, double aspect)
 {
     double w = fabs(u1 - u0), ht0, htv, sp; unsigned s = (unsigned)k * 2246822519u ^ (unsigned)(int)(u0 * 3.0) * 3266489917u; int i, n;
@@ -861,7 +927,7 @@ static void C3_GroundTrees(C3Course *c, int k, double u0, double u1, double h0, 
 #define C3_HEDGEH 1300.0
 #define C3_HEDGEIN 80.0
 #define C3_SHRUBOUT 1500.0   /* (C3_Shrub: SHRUB's reach past P2) */
-#define C3_FORESTOUT 8000.0   /* (FOREST past P2: far further than a hedge - user, 2026-11-21 note: "make the forest wall texture extend beyond p2"; any P3 wall's open end out this far) */
+#define C3_FORESTOUT 40000.0   /* (40000: on out of the player's view - user note 2026-11-27 "the wall here should go all the way to the left until its out of view ... all the ground that have walls should do that") */   /* (FOREST past P2: far further than a hedge - user, 2026-11-21 note: "make the forest wall texture extend beyond p2"; any P3 wall's open end out this far) */
 static void C3_GroundHedge(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1, int tex)
 {
     int in = i == 0 ? 1 : i, out = i == 0 ? 0 : i + 1, rr; float p[2][2][3], uv[8]; double rep = c->L / (2 * C3_HEDGEH);
@@ -908,6 +974,10 @@ static void C3_Shrub(C3Course *c, int k, int i, const C3Row *r0, const C3Row *r1
                                                                                            piece before / after: c->wcap), out across it (user, 2026-11-22 note) */
         if (beyond && !(c->wcap[!left] >> rr & 1)) continue;
         uv[0] = 0; uv[1] = 1; uv[2] = (float)wr; uv[3] = 1; uv[4] = (float)wr; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+        if (beyond) { double lo = hi[rr] < ho[rr] ? hi[rr] : ho[rr], tp = (hi[rr] > ho[rr] ? hi[rr] : ho[rr]) + HT; float q[4][3];   /* (P3's end: an upright wall from the lower ground to
+                                                                     above the higher - it slanted with the ground going away: user note 2026-11-27 "This is angled ... it should just be solid wall") */
+            C3_Point(c, k + rr, ui[rr], lo, q[0]); C3_Point(c, k + rr, uo[rr], lo, q[1]); C3_Point(c, k + rr, uo[rr], tp, q[2]); C3_Point(c, k + rr, ui[rr], tp, q[3]);
+            C3_QuadTint(c, q[0], q[1], q[2], q[3], 0xffffffffu, tex, uv, C3_CUTV); C3_QuadTint(c, q[1], q[0], q[3], q[2], 0xffffffffu, tex, uv, C3_CUTV); continue; }
         C3_QuadTint(c, P[rr][0][0], P[rr][1][0], P[rr][1][1], P[rr][0][1], 0xffffffffu, tex, uv, C3_CUTV);
         C3_QuadTint(c, P[rr][1][0], P[rr][0][0], P[rr][0][1], P[rr][1][1], 0xffffffffu, tex, uv, C3_CUTV); }
     if (top && !beyond) {   float t[4][3]; int q; const float drop = (float)(HT * 0.12);   /* the top: leafy green, a little below the ragged top of the picture */
@@ -976,18 +1046,107 @@ static void C3_RailSeg(C3Course *c, double p0, double p1, double u0, double u1, 
 {   float q[8][3]; int j, f; static const int fc[4][4] = { { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 }, { 2, 3, 7, 6 } };
     for (j = 0; j < 8; j++) C3_Point(c, j & 1 ? p1 : p0, (j & 1 ? u1 : u0) + (j & 2 ? t : -t) * 0.5, (j & 1 ? h1 : h0) + (j & 4 ? t : 0), q[j]);
     for (f = 0; f < 4; f++) { C3_Quad(c, q[fc[f][0]], q[fc[f][1]], q[fc[f][2]], q[fc[f][3]], col); C3_Quad(c, q[fc[f][3]], q[fc[f][2]], q[fc[f][1]], q[fc[f][0]], col); } }
+/* paving beside the road (user, 2026-11-26): the track's plain lane asphalt (TEXG 17, vertex alpha 248 - the road's surface) from just inside the lane edge out to lateral
+   b0 / b1 (at k / k + 1, measured outwards from the road), then torn raggedly 50 .. 150 further (hashed on the course's quarter piece: it runs on from piece to piece) - six
+   slices across, each at the ground's own height there (C3_RowH: the row's points), so the verge / P0 never show through.  ASPHALT EDGE (Curbs: kerb style 5) paves the
+   verge; a guard rail (the game's own: kindArg[0] 5) paves to just past the rail, where it stands - curb, footpath or P0 (the editor's three GUARD RAIL blocks) */
+static double C3_RowH(const C3Row *r, int sd, double u)   /* the ground's height at lateral u on that side (its row points: edge .. far) */
+{   int a, b; for (a = sd ? 8 : 6; sd ? a < C3_NP - 1 : a > 0; a += sd ? 1 : -1) { double ua, ub; b = a + (sd ? 1 : -1); ua = r->u[a]; ub = r->u[b];
+        if ((u - ua) * (sd ? 1 : -1) <= (ub - ua) * (sd ? 1 : -1)) { double f = fabs(ub - ua) > 1e-6 ? (u - ua) / (ub - ua) : 0; if (f < 0) f = 0; return r->h[a] + (r->h[b] - r->h[a]) * f; } }
+    return r->h[sd ? C3_NP - 1 : 0]; }
+static void C3_PaveTo(C3Course *c, int k, int h, const RoadSection *s0, const RoadSection *s1, const C3Row *r0, const C3Row *r1, int sd, double b0, double b1, const RxAssets *ra, int gravel)
+{   double sg = sd ? 1 : -1, ea = sd ? s0->laneEdgeR : s0->laneEdgeL, eb = sd ? s1->laneEdgeR : s1->laneEdgeL; int j, q, z, t = gravel ? (ra->nground > 25 ? ra->ground0 + 25 : -1) : ra->global[17];   /* (gravel: under a guard rail - user note 2026-11-27) */
+    enum { NS = 6 };
+    if (t < 0) return;
+    for (j = 0; j < 4; j++) { double u[2][NS + 1], hh[2][NS + 1];
+        for (q = 0; q < 2; q++) { double f = (j + q) / 4.0, in = ea + (eb - ea) * f - sg * 22, out, w; const C3Row *rr = q ? r1 : r0; C3Row mix; int m;
+            unsigned hs = (unsigned)(k * 4 + j + q) * 2246822519u ^ (unsigned)(sd * 6151 + h * 99991 + 17); hs ^= hs >> 15; hs *= 2654435761u; hs ^= hs >> 13;
+            w = 50 + hs % 100; out = (b0 + (b1 - b0) * f) + sg * w;
+            for (m = 0; m < C3_NP; m++) { mix.u[m] = r0->u[m] + (r1->u[m] - r0->u[m]) * f; mix.h[m] = r0->h[m] + (r1->h[m] - r0->h[m]) * f; } (void)rr;
+            for (z = 0; z <= NS; z++) { double uu = in + (out - in) * z / NS; u[q][z] = uu; hh[q][z] = z == 0 ? 1.4 : C3_RowH(&mix, sd, uu) + 1.6; } }
+        for (z = 0; z < NS; z++) { float P[4][3], uv[8]; int n0 = c->nv, m; double f0 = j / 4.0, f1 = (j + 1) / 4.0;
+            C3_Point(c, k + f0, u[0][z], hh[0][z], P[0]); C3_Point(c, k + f0, u[0][z + 1], hh[0][z + 1], P[1]); C3_Point(c, k + f1, u[1][z + 1], hh[1][z + 1], P[2]); C3_Point(c, k + f1, u[1][z], hh[1][z], P[3]);
+            {   double ts = gravel ? 256 : 512;   /* (a tile: GRAVEL a texel a unit) */
+                uv[0] = (float)(u[0][z] / ts); uv[1] = (float)((k + f0) * c->L / ts); uv[2] = (float)(u[0][z + 1] / ts); uv[3] = uv[1];
+                uv[4] = (float)(u[1][z + 1] / ts); uv[5] = (float)((k + f1) * c->L / ts); uv[6] = (float)(u[1][z] / ts); uv[7] = uv[5]; }
+            C3_QuadTint(c, P[0], P[1], P[2], P[3], 0xffffffffu, t, uv, 0xffffffffu);
+            for (m = n0; m < c->nv; m++) c->v[m].rgba = (c->v[m].rgba & 0xffffffu) | (gravel ? 0xef000000u : 0xf8000000u); } }   /* (gravel: alpha 239 - bumped as the dirt, render3d.h) */   /* (asphalt: the road's surface, alpha 248; gravel: ground, 236) */
+}
+/* a side's paving: to the verge's outer edge (ASPHALT EDGE), to 40 past its guard rail (outer edge + its offset kindArg[2], + outwards - as course3d.h C3_SideStructs and the
+   game's physics place it); whichever reaches further; 0 = none */
+static int C3_PaveOut(const RxAssets *ra, const RoadSection *s, int k, int h, int sd, double ofs, double *b)
+{   int asph = ra && ra->ext && k >= 0 && k < ra->next && ((ra->ext[k].gutter[h & 1][sd] >> 2) & 7) == 5, rail = s->kindArg[0] == 5 && (s->kindArg[3] >> sd & 1);
+    double sg = sd ? 1 : -1, outer = (sd ? s->outerR : s->outerL) + ofs, r;
+    if (!asph && !rail) return 0;
+    *b = outer;
+    if (rail) { r = outer + sg * (signed char)s->kindArg[2] + sg * 40; if (!asph || (r - *b) * sg > 0) *b = r; }
+    return 1; }
+static void C3_AsphaltEdge(C3Course *c, int k, int h, const RoadSection *s0, const RoadSection *s1, const C3Row *r0, const C3Row *r1, int sd, const RxAssets *ra)
+{   double b0, b1;
+    if (!C3_PaveOut(ra, s0, k, h, sd, 0, &b0)) return;
+    if (!C3_PaveOut(ra, s1, k + 1, h, sd, 0, &b1)) b1 = b0 + ((sd ? s1->outerR - s0->outerR : s1->outerL - s0->outerL));
+    C3_PaveTo(c, k, h, s0, s1, r0, r1, sd, b0, b1, ra, s0->kindArg[0] == 5 && (s0->kindArg[3] >> sd & 1)); }   /* (under a guard rail: gravel) */
 static void C3_Fence(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int side, int onVerge)
 {   int j = onVerge ? (side ? 9 : 5) : (side ? 10 : 4), q; double sg = side ? 1 : -1, in = onVerge ? 60 : 40;
-    const unsigned post = 0xff3e4a58u, rail = 0xff4a5868u;   /* (ABGR: weathered grey-brown wood) */
+    const unsigned post = 0xff30486au, rail = 0xff3c5a80u;   /* (ABGR: stained cedar - the posts darker) */
     for (q = 0; q < 3; q++) { double t0 = q / 3.0, t1 = (q + 1) / 3.0, ua = r0->u[j] + (r1->u[j] - r0->u[j]) * t0 + sg * in, ub = r0->u[j] + (r1->u[j] - r0->u[j]) * t1 + sg * in,
             ha = r0->h[j] + (r1->h[j] - r0->h[j]) * t0, hb = r0->h[j] + (r1->h[j] - r0->h[j]) * t1, dp = 5.0 / c->L; unsigned hs = (unsigned)(k * 3 + q) * 2654435761u; float a[3], b[3], cc[3], d[3];
         int f; static const int fc[5][4] = { { 0, 1, 5, 4 }, { 1, 3, 7, 5 }, { 3, 2, 6, 7 }, { 2, 0, 4, 6 }, { 4, 5, 7, 6 } }; float pq[8][3]; int i2;
         for (i2 = 0; i2 < 8; i2++) C3_Point(c, k + t0 + (i2 & 1 ? dp : -dp), ua + (i2 & 2 ? 5 : -5), ha - 10 + (i2 & 4 ? 128 : 0), pq[i2]);   /* the post */
         for (f = 0; f < 5; f++) { C3_Quad(c, pq[fc[f][0]], pq[fc[f][1]], pq[fc[f][2]], pq[fc[f][3]], post); C3_Quad(c, pq[fc[f][3]], pq[fc[f][2]], pq[fc[f][1]], pq[fc[f][0]], post); }
         (void)a; (void)b; (void)cc; (void)d;
-        {   double sag = 4 + (hs >> 28), tilt = (hs >> 20) % 7 == 0 ? 26 : 0;   /* the rails: a sag, now and then the upper one slanted down */
-            C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 42, hb + 42 - sag, 8, rail); C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 96, hb + 96 - sag - tilt, 8, rail); }
+        (void)hs;   /* the rails: straight and level, one at the posts' middle, one under their tops (user, 2026-11-27 "the fences ... look abit shabby can you make them abit more
+                       uniform and nice to look at" - no sag, no slanted rail) */
+        C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 46, hb + 46, 9, rail); C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 94, hb + 94, 9, rail);
+        {   float cq[8][3]; int i3, f3; for (i3 = 0; i3 < 8; i3++) C3_Point(c, k + t0 + (i3 & 1 ? dp * 1.3 : -dp * 1.3), ua + (i3 & 2 ? 6.5 : -6.5), ha + 118 + (i3 & 4 ? 5 : 0), cq[i3]);   /* (a cap on the post) */
+            for (f3 = 0; f3 < 5; f3++) { C3_Quad(c, cq[fc[f3][0]], cq[fc[f3][1]], cq[fc[f3][2]], cq[fc[f3][3]], post); C3_Quad(c, cq[fc[f3][3]], cq[fc[f3][2]], cq[fc[f3][1]], cq[fc[f3][0]], post); } }
         C3_Obst(c, k + t0, ua, 14); C3_Obst(c, k + (t0 + t1) * 0.5, (ua + ub) * 0.5, 12); }
+}
+/* a lake's railing (user, 2026-11-26: "any lake really should have a railing"): wherever WATER painted on a side's cells (C3_GWATER, P0 .. beyond) starts beside land, a
+   wooden post-and-rail fence along the land's edge, 30 in from the water; posts every third of a piece, solid.  The game only */
+static void C3_LakeRail(C3Course *c, int k, int h, const RoadSection *s0, const C3Row *r0, const C3Row *r1, int side, const RxAssets *ra)
+{   int m = C3_SideCells(ra, s0, k, h, side, C3_GWATER), cell, j, q; double sg = side ? 1 : -1; const unsigned post = 0xff2e4a66u, rail = 0xff3a5a7au;
+    for (cell = 1; cell <= 4 && !((m >> cell & 1) && !(m >> (cell - 1) & 1)); cell++) ;
+    if (cell > 4) return;
+    j = side ? 9 + cell : 5 - cell;
+    for (q = 0; q < 3; q++) { double t0 = q / 3.0, t1 = (q + 1) / 3.0, ua = r0->u[j] + (r1->u[j] - r0->u[j]) * t0 - sg * 30, ub = r0->u[j] + (r1->u[j] - r0->u[j]) * t1 - sg * 30;
+        double ha = r0->h[j] + (r1->h[j] - r0->h[j]) * t0, hb = r0->h[j] + (r1->h[j] - r0->h[j]) * t1, dp = 5.0 / c->L; float pq[8][3]; int i2, f;
+        static const int fc[5][4] = { { 0, 1, 5, 4 }, { 1, 3, 7, 5 }, { 3, 2, 6, 7 }, { 2, 0, 4, 6 }, { 4, 5, 7, 6 } };
+        for (i2 = 0; i2 < 8; i2++) C3_Point(c, k + t0 + (i2 & 1 ? dp : -dp), ua + (i2 & 2 ? 6 : -6), ha - 10 + (i2 & 4 ? 118 : 0), pq[i2]);
+        for (f = 0; f < 5; f++) { C3_Quad(c, pq[fc[f][0]], pq[fc[f][1]], pq[fc[f][2]], pq[fc[f][3]], post); C3_Quad(c, pq[fc[f][3]], pq[fc[f][2]], pq[fc[f][1]], pq[fc[f][0]], post); }
+        C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 48, hb + 48, 7, rail); C3_RailSeg(c, k + t0, k + t1, ua, ub, ha + 98, hb + 98, 8, rail);
+        C3_Obst(c, k + t0, ua, 12); C3_Obst(c, k + (t0 + t1) * 0.5, (ua + ub) * 0.5, 10); }
+}
+/* the ground of a logging camp's yard (LOG YARD, ground_art.h): on each quad sawn rounds standing (pale tops), log ends lying about, heaps of bark, a stump; the rounds, logs and
+   stumps solid.  Not on the verge, not under buildings (C3_StripUnderBld) */
+static void C3_YardFloor(C3Course *c, int k, double u0, double u1, double h0, double h1, double v0, double v1, double g0, double g1)
+{   double w = fabs(u1 - u0); unsigned s = (unsigned)k * 668265263u ^ (unsigned)(int)(u0 * 3.0) * 2246822519u ^ 0x27d4eb2fu; int i, n;
+    if (c->noGround || w < 200) return;
+    s = (s ^ (s >> 15)) * 2654435761u; n = 2 + (int)(w / 450.0); if (n > 6) n = 6;
+    for (i = 0; i < n; i++) { double f, pp, x, y; int kind;
+        s = s * 1664525u + 1013904223u; f = 0.1 + 0.8 * ((s >> 8) / 16777216.0); s = s * 1664525u + 1013904223u; pp = k + 0.06 + 0.88 * ((s >> 8) / 16777216.0);
+        { double t = pp - k, a0 = u0 + (v0 - u0) * t, a1 = u1 + (v1 - u1) * t, y0 = h0 + (g0 - h0) * t, y1 = h1 + (g1 - h1) * t; x = a0 + (a1 - a0) * f; y = y0 + (y1 - y0) * f; }
+        s = s * 1664525u + 1013904223u; kind = (int)((s >> 24) % 100);
+        if (kind < 40) {   /* sawn rounds standing, two or three together */
+            int m, nm = 1 + (int)((s >> 4) % 3);
+            for (m = 0; m < nm; m++) { double rr = 24 + (s >> 9) % 16, hh = 30 + (s >> 13) % 26, cx = x + m * 70 - 40, cp = pp + ((double)((s >> 17) % 60) - 30) / c->L; float ring[8][3], top[8][3], ctr[3]; int j;
+                s = s * 1664525u + 1013904223u;
+                for (j = 0; j < 8; j++) { double t = j * 0.7853982; C3_Point(c, cp + sin(t) * rr / c->L, cx + cos(t) * rr, y - 4, ring[j]); C3_Point(c, cp + sin(t) * rr / c->L, cx + cos(t) * rr, y + hh, top[j]); }
+                C3_Point(c, cp, cx, y + hh, ctr);
+                for (j = 0; j < 8; j++) { int j2 = (j + 1) % 8; C3_Quad(c, ring[j], ring[j2], top[j2], top[j], 0xff34485eu); C3_Quad(c, ctr, top[j], top[j2], top[j2], 0xff70a2ccu); }
+                C3_Obst(c, cp, cx, rr + 6); } }
+        else if (kind < 62) {   /* a log end lying about */
+            double ln = 160 + (s >> 8) % 200, rr = 18 + (s >> 13) % 12, th = ((s >> 3) % 628) / 100.0, ca = cos(th), sa = sin(th); float P[2][6][3]; int e, j;
+            for (e = 0; e < 2; e++) for (j = 0; j < 6; j++) { double a = j * 1.0471976, along = (e ? 0.5 : -0.5) * ln, sd2 = cos(a) * rr, up = sin(a) * rr + rr * 0.7;
+                C3_Point(c, pp + (along * ca - sd2 * sa) / c->L, x + along * sa + sd2 * ca, y + up, P[e][j]); }
+            for (j = 0; j < 6; j++) C3_Quad(c, P[0][j], P[0][(j + 1) % 6], P[1][(j + 1) % 6], P[1][j], 0xff30445au);
+            for (e = 0; e < 2; e++) for (j = 1; j < 5; j++) C3_Quad(c, P[e][0], P[e][j], P[e][j + 1], P[e][j + 1], 0xff6c9ec8u);
+            C3_Obst(c, pp, x, rr + 20); }
+        else if (kind < 84) C3_Rock(c, pp, x, y - 8, 40 + (s >> 8) % 40, s, 0xff28405eu, -1);   /* (a heap of bark) */
+        else { double sr = 22 + (s >> 8) % 16, sh = 26 + (s >> 12) % 40, dp = sr / c->L; float q2[8][3]; int j, f2; static const int fc[5][4] = { { 0, 1, 5, 4 }, { 1, 3, 7, 5 }, { 3, 2, 6, 7 }, { 2, 0, 4, 6 }, { 4, 5, 7, 6 } };
+            for (j = 0; j < 8; j++) C3_Point(c, pp + (j & 1 ? dp : -dp), x + (j & 2 ? sr : -sr), y - 10 + (j & 4 ? sh + 10 : 0), q2[j]);   /* (a stump) */
+            for (f2 = 0; f2 < 5; f2++) C3_Quad(c, q2[fc[f2][0]], q2[fc[f2][1]], q2[fc[f2][2]], q2[fc[f2][3]], f2 == 4 ? 0xff5c88b4u : 0xff28405au);
+            C3_Obst(c, pp, x, sr + 6); } }
 }
 /* grounds meeting each other (user, 2026-11-18: "any terrain that touches up against another terrain should dynamically just mesh in what that terrain"):
    where two ground strips with different pictures meet - side by side across the road, or one piece after another along it - the inner / earlier one's
@@ -1236,7 +1395,7 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                         u2[0] = ua0; u2[1] = V; u2[2] = ub0; u2[3] = V; u2[4] = ub1; u2[5] = 0; u2[6] = ua1; u2[7] = 0; }
                     C3_QuadTint(c, p0[0], p0[1], p1[1], p1[0], 0xffffffffu, tex[i], u2, i == c->darkStrip ? 0xfc8a8a8au : 0xfcffffffu); }
                 continue; }
-            {   int m0 = c->nv, m = r0->mat[i], dirt = (m == M_TERRAIN || m == M_FAR || m == M_SLOPE || m == M_VERGE) && kind != SEC_OPEN && C3_TexDirt(ra, tex[i]);
+            {   int m0 = c->nv, gq = -1, m = r0->mat[i], dirt = (m == M_TERRAIN || m == M_FAR || m == M_SLOPE || m == M_VERGE) && kind != SEC_OPEN && C3_TexDirt(ra, tex[i]);
                 {   int sd = i < C3_NP / 2, sc = sd ? 4 - i : i - 9;   /* (past a sea cliff: the sea, flat at its level - C3_SeaCliffRow) */
                     if (sc >= 0 && sc <= 4 && ((r0->sm[!sd] | r1->sm[!sd]) >> sc & 1) && ra && ra->nground > C3_GWATER) { float wa[3], wb[3], wc[3], wd[3]; double l0 = r0->sm[!sd] ? r0->wl[!sd] : r1->wl[!sd], l1 = r1->sm[!sd] ? r1->wl[!sd] : l0;
                         C3_Point(c, k, r0->u[i], l0, wa); C3_Point(c, k, r0->u[i + 1], l0, wb); C3_Point(c, k + 1, r1->u[i + 1], l1, wc); C3_Point(c, k + 1, r1->u[i], l1, wd);
@@ -1244,7 +1403,7 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                 if (C3_IsWaterTex(ra, tex[i])) { C3_QuadTint(c, a, b, cc, d, 0xfd8a5a2au, tex[i], uv, 0xfdffffffu); continue; }
                 if (!g_c3Editor && C3_IsHoleTex(ra, tex[i])) { C3_QuadTint(c, a, b, cc, d, 0xff000000u, tex[i], uv, 0xff000000u); continue; }
                 if (!g_c3Editor && ra && ra->nground > C3_GDUNES && tex[i] == ra->ground0 + C3_GDUNES) { C3_Dunes(c, k, i, r0, r1, tex[i], uv, ra); continue; }   /* (dunes in the game) */   /* (a hole's floor in the game: black, not its stripes) */   /* (painted water: the sea's shading, as it lies) */
-                C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex[i], uv, i == c->darkStrip ? 0xff8a8a8au : 0xffffffffu);
+                C3_QuadTint(c, a, b, cc, d, 0xffffffffu, tex[i], uv, i == c->darkStrip ? 0xff8a8a8au : 0xffffffffu); gq = c->nv - 6;
                 if (!g_c3Editor && ra && ra->nground > C3_GCLIFF && (tex[i] == ra->ground0 + C3_GCLIFF || (ra->nground > C3_GSEACLIFF && tex[i] == ra->ground0 + C3_GSEACLIFF)) && (fabs(r0->h[i + 1] - r0->h[i]) > fabs(r0->u[i + 1] - r0->u[i]) * 0.8 || fabs(r1->h[i + 1] - r1->h[i]) > fabs(r1->u[i + 1] - r1->u[i]) * 0.8))
                     C3_Mark(c, m0, 0xfc);   /* (a cliff's face: rock - render3d.h vertex alpha 252, strata) */
                 if (ra && tex[i] >= ra->ground0 && tex[i] < ra->ground0 + ra->nground && tex[i] - ra->ground0 < 32 && ra->groundTree[tex[i] - ra->ground0]   /* (REDWOOD, FOREST, SHRUB: their trees - */
@@ -1255,11 +1414,17 @@ static void C3_Strip(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
                 {   int ht = ra->groundHedge[tex[i] - ra->ground0] - 1;   /* (a square picture - REDWOOD's wall of giants: tall, like FOREST's wall - user, 2026-11-22 note: "the redwood wall
                                                                              has to be tall redwood trees ... the backdrop is just redwood trees"; a hedge strip: the hedge) */
                     if (ra->tex[ht].w == ra->tex[ht].h) C3_Shrub(c, k, i, r0, r1, ht, C3_REDWOODH, 1.0, 0, C3_FORESTOUT); else C3_GroundHedge(c, k, i, r0, r1, ht); }
+                if (!g_c3Editor && ra && ra->nground > C3_GDUFF && tex[i] == ra->ground0 + C3_GDUFF && i != 0 && i != C3_NP - 2 && i != 4 && i != 9 && !C3_StripUnderBld(c, ra, k, i))
+                    C3_DuffFloor(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], ra);   /* (REDWOOD DUFF: ferns, logs, rocks - not on the verge, not under buildings) */
+                if (!g_c3Editor && ra && ra->nground > C3_GLOGYARD && tex[i] == ra->ground0 + C3_GLOGYARD && i != 0 && i != C3_NP - 2 && i != 4 && i != 9 && !C3_StripUnderBld(c, ra, k, i))
+                    C3_YardFloor(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1]);   /* (LOG YARD: rounds, log ends, bark) */
                 if (!g_c3Editor && ra && ra->shrubTex && ra->nground > C3_GSHRUB && tex[i] == ra->ground0 + C3_GSHRUB && (i == 0 || i == C3_NP - 2 || !ra->groundTree[C3_GSHRUB])) C3_Shrub(c, k, i, r0, r1, ra->shrubTex - 1, C3_HEDGEH, 2.0, 0xff2a4a2eu, C3_SHRUBOUT);   /* (SHRUB: its block) */
                 if (!g_c3Editor && ra && ra->shrubGTex && ra->nground > C3_GSHRUBG && tex[i] == ra->ground0 + C3_GSHRUBG && (i == 0 || i == C3_NP - 2 || !ra->groundTree[C3_GSHRUBG])) C3_Shrub(c, k, i, r0, r1, ra->shrubGTex - 1, C3_HEDGEH, 2.0, 0xff22381fu, C3_SHRUBOUT);   /* (GREEN SHRUB: its block, dark green) */
                 if (!g_c3Editor && ra && ra->forestTex && ra->nground > C3_GFOREST && tex[i] == ra->ground0 + C3_GFOREST && (i == 0 || i == C3_NP - 2 || !ra->groundTree[C3_GFOREST])) {   /* (the wall on P3 only - P0 .. P2 its trees: user, 2026-11-22) */ const RxTex *ft = &ra->tex[ra->forestTex - 1];
                     C3_Shrub(c, k, i, r0, r1, ra->forestTex - 1, C3_FORESTH, ft->h > 0 ? (double)ft->w / ft->h : 1.0, 0xff1f3a24u, C3_FORESTOUT); }   /* (FOREST: its wall of trees, and a
                     canopy over it - seen from above it was only that wall, open to the ground, leaning over the road from the left: user, 2026-11-22 note) */
+                if (!dirt && gq >= 0) { int j; unsigned ga = ra && ra->nground > C3_GGRAVEL && tex[i] == ra->ground0 + C3_GGRAVEL ? 0xef000000u : C3_GROUNDA;   /* (GRAVEL: bumped as the dirt, alpha 239 - as under a rail) */
+                    for (j = gq; j < gq + 6 && j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | ga; }   /* (the ground's own quad: render3d.h breaks up its repeats) */
                 if (dirt) { C3_Mark(c, m0, 0xef);   /* dirt ground (vertex alpha 239: render3d.h - mottled, pebbles, bumps) and rocks on the flatter of it */
                     if (fabs(r0->h[i + 1] - r0->h[i]) < fabs(r0->u[i + 1] - r0->u[i]) * 0.6) C3_DirtRocks(c, k, r0->u[i], r0->u[i + 1], r0->h[i], r0->h[i + 1], r1->u[i], r1->u[i + 1], r1->h[i], r1->h[i + 1], m == M_VERGE, ra ? ra->rockTex : -1); } }
         } else C3_Quad(c, a, b, cc, d, (ground && r0->mat[i] != M_CURB && r0->mat[i] != M_WALK) ? ground : C3_Colour(r0->mat[i], kind, k));
@@ -1319,11 +1484,38 @@ static void C3_Skirt(C3Course *c, int k, const C3Row *r0, const C3Row *r1, int k
 /* roadside textures of walls (kinds 1..3, see below) and SEC_PROFILE terrain (rr_StripTableDraw -> LaneLookupMax / LaneLookupFloor: BankEntry2(sideTex[side], 1, span)): span 0 = outer edge -> P0,
    1 = P0 -> P1, 2 = P1 -> P2 (the far extension repeats span 2); in row terms (C3_Section) left spans 3 / 2 / 1 (+ 0), right 10 / 11 / 12 (+ 13).
    A span painted in the Course Editor (ra->ext: course_edit.h RrcExtra.band) takes that row of that group instead - terrain only */
+/* the piece nearest k (k itself when self) whose sprite sets have picture code / row of category cat (aToo: carriageway B looks in A's sets too); -1 none.  Nearer
+   first, the one before on a tie - what a search outwards over the whole course found.  That search ran for every piece of every rebuild where a picture is missing
+   (a terrain side's far ground, a footpath's kerb face): most of the live stretch's time.  Now once for each (cat, code, row, half): for every piece the nearest one
+   with it on each side */
+static int C3_NearSet(RxAssets *ra, int k, int h, int cat, unsigned code, int row, int self, int aToo)
+{   static struct { const RxAssets *ra; const void *bind; int n, h, cat, row, a; unsigned code; int *L, *R; } wc[48]; static int nwc;
+    int e, j, l, r;
+    if (!ra || k < 0 || k >= ra->next) return -1;
+    for (e = 0; e < nwc; e++) if (wc[e].ra == ra && wc[e].bind == (const void *)ra->bind && wc[e].n == ra->next && wc[e].h == h && wc[e].cat == cat && wc[e].row == row && wc[e].a == aToo && wc[e].code == code) break;
+    if (e == nwc) { int *L, *R, last;
+        e = nwc < 48 ? nwc++ : (int)(code * 7u + (unsigned)row * 3u + (unsigned)h + (unsigned)cat * 11u) % 48;
+        free(wc[e].L); free(wc[e].R); wc[e].L = L = (int *)malloc(sizeof(int) * (ra->next + 1)); wc[e].R = R = (int *)malloc(sizeof(int) * (ra->next + 1));
+        wc[e].ra = ra; wc[e].bind = (const void *)ra->bind; wc[e].n = ra->next; wc[e].h = h; wc[e].cat = cat; wc[e].row = row; wc[e].a = aToo; wc[e].code = code;
+        if (!L || !R) { free(L); free(R); wc[e].L = wc[e].R = NULL; wc[e].n = -1; return -2; }
+        for (j = 0; j < ra->next; j++) { int rw = row; RxSet *st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3); unsigned t = st ? RX_Lookup(st, cat, code, &rw, 1) : 0;
+            if (!t && h && aToo) { rw = row; st = RX_SetFor(ra, j, 0, (int)(code >> 6) & 3); t = st ? RX_Lookup(st, cat, code, &rw, 1) : 0; }
+            L[j] = t ? j : -1; }
+        for (j = 0, last = -1; j < ra->next; j++) { if (L[j] == j) last = j; R[j] = L[j]; L[j] = last; }
+        for (j = ra->next - 1, last = -1; j >= 0; j--) { if (R[j] == j) last = j; R[j] = last; } }
+    if (!wc[e].L) return -2;
+    if (self && wc[e].L[k] == k) return k;
+    l = k > 0 ? wc[e].L[k - 1] : -1; r = k + 1 < ra->next ? wc[e].R[k + 1] : -1;
+    return l < 0 ? r : r < 0 ? l : (k - l <= r - k ? l : r); }
 static int C3_FarGround(RxAssets *ra, int k, int h, unsigned code, int row)   /* ground picture code / row from the sprite sets loaded nearest piece k that
                                                                                 have it (-1 none): an edited terrain side (RrcExtra.sideKind) where the sets
                                                                                 loaded have no ground (downtown) */
 {
-    int r, d;
+    int r, d, jn = C3_NearSet(ra, k, h, 1, code, row, 0, 1);
+    if (jn == -1) return -1;
+    if (jn >= 0) { int rw = row; RxSet *st = RX_SetFor(ra, jn, h, (int)(code >> 6) & 3); unsigned t = st ? RX_Lookup(st, 1, code, &rw, 1) : 0;   /* (C3_NearSet: the piece the search below finds) */
+        if (!t && h) { rw = row; st = RX_SetFor(ra, jn, 0, (int)(code >> 6) & 3); t = st ? RX_Lookup(st, 1, code, &rw, 1) : 0; }
+        if (t) return RX_TexIn(ra, st, t); }
     for (r = 1; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
         int j = k + d * r, rw = row; RxSet *st; unsigned t;
         if (j < 0 || j >= ra->next) continue;
@@ -1448,6 +1640,9 @@ static int C3_WalkTex(RxAssets *ra, const RoadSection *s, int k, int h, int side
     int w = C3_SideWalk(ra, s, k, h, side), r, d; unsigned code;
     if (!w) return -1;
     code = (unsigned)(w - 1);
+    {   int jn = C3_NearSet(ra, k, h, 5, code, row, 1, 0); RxSet *st; unsigned t; int rw = row, x;
+        if (jn == -1) return -1;
+        if (jn >= 0 && (st = RX_SetFor(ra, jn, h, (int)(code >> 6) & 3)) && (t = RX_Lookup(st, 5, code, &rw, 1)) && (x = RX_TexIn(ra, st, t)) >= 0) return x; }   /* (else: the search) */
     for (r = 0; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
         int j = k + d * r, rw = row, x; RxSet *st; unsigned t;
         if ((r == 0 && d > 0) || j < 0 || j >= ra->next || !(st = RX_SetFor(ra, j, h, (int)(code >> 6) & 3))) continue;
@@ -1465,11 +1660,210 @@ static int C3_FacPick(RxAssets *ra, int k, int h, int side, int *fac)
         if (!st || !(t = RX_Lookup(st, 1, (v >> 2) & 0xff, NULL, 0)) || (x = RX_TexIn(ra, st, t)) < 0) return 0;
         *fac = x; return 1; }
 }
+/* the forest buildings (user, 2026-11-26: "more types of houses/buildings ... suitable for sierra nevada red wood / forest type scenario. maybe cabins?"): painted from the
+   Course Editor's Buildings list as RrcExtra.fac = RRC_BAND | RRC_GEN | (C3_CABGEN + kind) on a terrain side with buildings (C3_SideBld) - not a row of facades but houses
+   standing apart, each on a lot of C3_CABLOT pieces (lot n = pieces n * C3_CABLOT ..): set back from the buildings' front line, a gable roof, a porch, windows that light up at
+   night, snow on the roof when it snows.  kind C3_NCAB = the mix (each lot one of them by a hash, now and then none).  The materials: ground_art.h C3_CabinArt (tex[cab0 + C3C_*]) */
+#define C3_CABGEN 0xC0   /* (RrcExtra.fac & 0xff: past any generated facade - C3_FacPick ignores it) */
+#define C3_CABLOT 5   /* (~3300 units, 22 m: room between them - a settlement in the trees, not a street) */
+static int C3_CabCode(const RxAssets *ra, int k, int h, int side)   /* piece k's forest building kind on that side (C3_NCAB the mix), -1 none */
+{   unsigned v;
+    if (!ra || !ra->ext || ra->ncab < C3_NCABCODE || k < 0 || k >= ra->next) return -1;
+    v = ra->ext[k].fac[h & 1][side & 1];
+    if ((v & (RRC_BAND | RRC_GEN)) != (RRC_BAND | RRC_GEN) || (int)(v & 0xff) < C3_CABGEN || (int)(v & 0xff) >= C3_CABGEN + C3_NCABCODE) return -1;
+    return (int)(v & 0xff) - C3_CABGEN; }
+static int C3_CabAt(const C3Course *c, const RxAssets *ra, int k, int h, int side)   /* the same where buildings stand there (C3_SideBld) */
+{   const RoadSection *s;
+    if (k < 0 || k >= c->n || (h && c->piece[k].layout != 2)) return -1;
+    s = h ? &c->piece[k].halfB : &c->piece[k].halfA;
+    return C3_SideBld(ra, s, k, h, side) ? C3_CabCode(ra, k, h, side) : -1; }
+typedef struct C3CabPlan { int kind, start; double a0, W, D, sb, eave, rise; unsigned s; } C3CabPlan;   /* a lot's building: from piece start + a0 along, W long, D deep, sb behind the front line */
+static unsigned C3_CabRnd(unsigned *s) { *s = *s * 1664525u + 1013904223u; return *s >> 8; }
+static int C3_CabPlanAt(const C3Course *c, const RxAssets *ra, int k, int h, int side, C3CabPlan *P)   /* the building of the lot holding piece k (the same whichever piece asks); 0 none */
+{   static const double dW[C3_NCABCODE] = { 1100, 860, 2000, 1400, 560, 0, 1700, 1800, 0 }, dD[C3_NCABCODE] = { 850, 1150, 1250, 950, 380, 0, 760, 1100, 0 }, dE[C3_NCABCODE] = { 360, 0, 720, 400, 330, 0, 0, 540, 0 },
+                        dR[C3_NCABCODE] = { 300, 1000, 420, 260, 250, 0, 0, 220, 0 };
+    int k0 = k - k % C3_CABLOT, j, code = -1, len = 0, kind; unsigned s; double room, f, slack;
+    if (k < 0) return 0;
+    P->start = -1;
+    for (j = k0; j < k0 + C3_CABLOT; j++) { int cc = C3_CabAt(c, ra, j, h, side);
+        if (P->start < 0) { if (cc >= 0) { P->start = j; code = cc; len = 1; } }
+        else if (cc == code && j == P->start + len) len++; else break; }
+    if (P->start < 0 || k < P->start || k >= P->start + len) return 0;
+    s = (unsigned)k0 * 2654435761u ^ (unsigned)(side * 40503 + h * 977 + 4242); s ^= s >> 15; s *= 2246822519u; s ^= s >> 13;
+    if (code != C3_CAB_MIX && code != C3_CAB_CAMP) kind = code;
+    else if (code == C3_CAB_CAMP) { unsigned r = C3_CabRnd(&s) % 100;   /* (the logging camp: log decks mostly, a sawmill, bunkhouses, woodsheds) */
+        kind = r < 42 ? C3_CAB_LOGPILE : r < 56 ? C3_CAB_SAWMILL : r < 66 ? C3_CAB_LOG : r < 72 ? C3_CAB_LODGE : r < 82 ? C3_CAB_SHED : -1; }
+    else { unsigned r = C3_CabRnd(&s) % 100; kind = r < 30 ? C3_CAB_LOG : r < 50 ? C3_CAB_AFRAME : r < 60 ? C3_CAB_LODGE : r < 68 ? C3_CAB_RANGER : r < 78 ? C3_CAB_SHED : -1; }   /* (about one lot in five empty) */
+    room = len * c->L - 180;
+    f = 0.92 + (C3_CabRnd(&s) % 1000) / 6250.0;
+    if (kind == C3_CAB_LOGPILE && dW[kind] * f > room) f = room / dW[kind];   /* (a log deck: as long as the lot allows) */
+    if (kind == C3_CAB_LOGPILE && room < 500) kind = -1;
+    while (kind >= 0 && dW[kind] * f > room) kind = kind == C3_CAB_SAWMILL ? C3_CAB_LOGPILE : kind == C3_CAB_LODGE || kind == C3_CAB_RANGER ? C3_CAB_LOG : kind == C3_CAB_LOG ? C3_CAB_AFRAME : kind == C3_CAB_AFRAME ? C3_CAB_SHED : -1;   /* (a short lot: a smaller one) */
+    if (kind < 0) return 0;
+    P->kind = kind; P->W = dW[kind] * f; P->D = dD[kind] * (0.94 + (C3_CabRnd(&s) % 1000) / 8333.0); P->eave = dE[kind]; P->rise = dR[kind] * f;
+    slack = room - P->W; P->a0 = 90 + slack * ((C3_CabRnd(&s) % 1000) / 1000.0);
+    {   double mn = kind == C3_CAB_LOGPILE || kind == C3_CAB_SAWMILL ? 120 : 340, mx = 1460 - P->D; P->sb = mn + (mx > mn ? (mx - mn) * ((C3_CabRnd(&s) % 1000) / 1000.0) : 0); }   /* (room for its porch in front; behind it the next band - its trees) */
+    P->s = C3_CabRnd(&s);
+    return 1; }
+typedef struct C3Cab { C3Course *c; double p0, uf, sg; int t0; } C3Cab;   /* a building's frame: a along the road from p0, d away from the road from uf, y the world's height */
+static void C3_CabPt(const C3Cab *b, double a, double d, double y, float *o) { C3_Point(b->c, b->p0 + a / b->c->L, b->uf + b->sg * d, 0, o); o[1] = (float)y; }
+#define C3_CT(rgb) (0xfe000000u | (rgb))   /* (a textured face's tint: vertex alpha 254 - lit by the sun as a building's wall, its windows lit at night: render3d.h) */
+static void C3_CabQ(const C3Cab *b, const double q[4][3], int tex, const float *uv, unsigned tint)
+{   float P[4][3]; int i;
+    for (i = 0; i < 4; i++) C3_CabPt(b, q[i][0], q[i][1], q[i][2], P[i]);
+    if (tex < 0) C3_Quad(b->c, P[0], P[1], P[2], P[3], tint); else C3_QuadTint(b->c, P[0], P[1], P[2], P[3], 0xffffffffu, b->t0 + tex, uv, tint); }
+static void C3_CabRect(const C3Cab *b, double a0, double d0, double a1, double d1, double y0, double y1, int tex, double rep, double vref, unsigned tint)   /* upright, (a0, d0) -> (a1, d1),
+                                                                    y0 .. y1; the picture every rep units (v from vref down), rep 0 = once */
+{   double q[4][3] = { { a0, d0, y0 }, { a1, d1, y0 }, { a1, d1, y1 }, { a0, d0, y1 } }, len = sqrt((a1 - a0) * (a1 - a0) + (d1 - d0) * (d1 - d0)); float uv[8];
+    if (rep > 0) { float u1 = (float)(len / rep), vb = (float)((vref - y0) / rep), vt = (float)((vref - y1) / rep); uv[0] = 0; uv[1] = vb; uv[2] = u1; uv[3] = vb; uv[4] = u1; uv[5] = vt; uv[6] = 0; uv[7] = vt; }
+    else { uv[0] = 0; uv[1] = 1; uv[2] = 1; uv[3] = 1; uv[4] = 1; uv[5] = 0; uv[6] = 0; uv[7] = 0; }
+    C3_CabQ(b, q, tex, uv, tint); }
+static void C3_CabGable(const C3Cab *b, double a0, double d0, double a1, double d1, double y0, double y1, int tex, double rep, unsigned tint)   /* a triangle on (a0, d0) -> (a1, d1) at y0, its top at y1 */
+{   double q[4][3] = { { a0, d0, y0 }, { a1, d1, y0 }, { (a0 + a1) * 0.5, (d0 + d1) * 0.5, y1 }, { (a0 + a1) * 0.5, (d0 + d1) * 0.5, y1 } }, len = sqrt((a1 - a0) * (a1 - a0) + (d1 - d0) * (d1 - d0));
+    float uv[8]; uv[0] = 0; uv[1] = (float)((y1 - y0) / rep); uv[2] = (float)(len / rep); uv[3] = uv[1]; uv[4] = uv[2] * 0.5f; uv[5] = 0; uv[6] = uv[4]; uv[7] = 0;
+    C3_CabQ(b, q, tex, uv, tint); }
+static void C3_CabBox(const C3Cab *b, double a0, double a1, double d0, double d1, double y0, double y1, int tex, double rep, unsigned tint)   /* four sides and a top */
+{   double q[4][3] = { { a0, d0, y1 }, { a1, d0, y1 }, { a1, d1, y1 }, { a0, d1, y1 } }; float uv[8];
+    C3_CabRect(b, a0, d0, a1, d0, y0, y1, tex, rep, y1, tint); C3_CabRect(b, a1, d0, a1, d1, y0, y1, tex, rep, y1, tint);
+    C3_CabRect(b, a1, d1, a0, d1, y0, y1, tex, rep, y1, tint); C3_CabRect(b, a0, d1, a0, d0, y0, y1, tex, rep, y1, tint);
+    uv[0] = 0; uv[1] = 0; uv[2] = (float)((a1 - a0) / rep); uv[3] = 0; uv[4] = uv[2]; uv[5] = (float)((d1 - d0) / rep); uv[6] = 0; uv[7] = uv[5];
+    C3_CabQ(b, q, tex, uv, tint); }
+static void C3_CabRoof(const C3Cab *b, const double q[4][3], int tex, double rep, unsigned tint)   /* a roof plane: q eave, eave, ridge, ridge; snow on it (vertex alpha 250: only while it snows) */
+{   double l = sqrt((q[1][0] - q[0][0]) * (q[1][0] - q[0][0]) + (q[1][1] - q[0][1]) * (q[1][1] - q[0][1])), sl = sqrt((q[3][0] - q[0][0]) * (q[3][0] - q[0][0]) + (q[3][1] - q[0][1]) * (q[3][1] - q[0][1]) + (q[3][2] - q[0][2]) * (q[3][2] - q[0][2]));
+    double sn[4][3]; float uv[8]; int i;
+    uv[0] = 0; uv[1] = (float)(sl / rep); uv[2] = (float)(l / rep); uv[3] = uv[1]; uv[4] = uv[2]; uv[5] = 0; uv[6] = 0; uv[7] = 0;
+    C3_CabQ(b, q, tex, uv, tint);
+    for (i = 0; i < 4; i++) { sn[i][0] = q[i][0]; sn[i][1] = q[i][1]; sn[i][2] = q[i][2] + (i < 2 ? 4 : 9); }
+    C3_CabQ(b, sn, -1, NULL, 0xfaf2f4f8u); }
+static void C3_CabWin(const C3Cab *b, int alongA, double at, double on, double w, double y0, double y1, unsigned tint)   /* a window w wide centred at `at` on a wall: alongA - the wall runs along a at d = on, else along d at a = on (stood 3 out) */
+{   if (alongA) C3_CabRect(b, at - w * 0.5, on, at + w * 0.5, on, y0, y1, C3C_WINDOW, 0, 0, tint); else C3_CabRect(b, on, at - w * 0.5, on, at + w * 0.5, y0, y1, C3C_WINDOW, 0, 0, tint); }
+static void C3_CabLog(const C3Cab *b, double a0, double a1, double d0, double d1, double y, double r, unsigned bark, int dark)   /* a log from (a0, d0) to (a1, d1), its middle at y: eight
+                                                                    sides of bark, its sawn ends pale with a darker heart (dark: weathered ends) */
+{   double la = a1 - a0, ld = d1 - d0, l = sqrt(la * la + ld * ld), pa, pd; double q[2][8][3]; int e, j;
+    if (l < 1) return;
+    pa = -ld / l; pd = la / l;   /* (across the log, level) */
+    for (e = 0; e < 2; e++) for (j = 0; j < 8; j++) { double t = j * 0.7853982, ca = cos(t) * r, sa = sin(t) * r;
+        q[e][j][0] = (e ? a1 : a0) + pa * ca; q[e][j][1] = (e ? d1 : d0) + pd * ca; q[e][j][2] = y + sa; }
+    for (j = 0; j < 8; j++) { int j2 = (j + 1) % 8; double f[4][3]; memcpy(f[0], q[0][j], sizeof f[0]); memcpy(f[1], q[1][j], sizeof f[0]); memcpy(f[2], q[1][j2], sizeof f[0]); memcpy(f[3], q[0][j2], sizeof f[0]);
+        C3_CabQ(b, f, -1, NULL, bark); }
+    for (e = 0; e < 2; e++) { double ea = e ? a1 : a0, ed = e ? d1 : d0, out = (e ? 1.5 : -1.5) / l;   /* (each end: the cut face, then the heart a little proud of it) */
+        for (j = 0; j < 8; j++) { int j2 = (j + 1) % 8; double f[4][3] = { { ea, ed, y }, { q[e][j][0], q[e][j][1], q[e][j][2] }, { q[e][j2][0], q[e][j2][1], q[e][j2][2] }, { q[e][j2][0], q[e][j2][1], q[e][j2][2] } };
+            C3_CabQ(b, f, -1, NULL, dark ? 0xff4a6680u : 0xff6c9ec8u);
+            {   double g[4][3] = { { ea + la * out, ed + ld * out, y }, { ea + la * out + (q[e][j][0] - ea) * 0.45, ed + ld * out + (q[e][j][1] - ed) * 0.45, y + (q[e][j][2] - y) * 0.45 },
+                                   { ea + la * out + (q[e][j2][0] - ea) * 0.45, ed + ld * out + (q[e][j2][1] - ed) * 0.45, y + (q[e][j2][2] - y) * 0.45 }, { 0, 0, 0 } };
+                memcpy(g[3], g[2], sizeof g[3]); C3_CabQ(b, g, -1, NULL, dark ? 0xff3a526au : 0xff4e7ea8u); } } } }
+static void C3_Cabin(C3Course *c, RxAssets *ra, const C3CabPlan *P, int side, double uf, double hr)   /* the lot's building (built with its first piece) - uf, hr: the front line's lateral and height there */
+{   C3Cab B; double W = P->W, D = P->D, fl, foot, ymin = 1e30, ymax = -1e30, E, R; unsigned s = P->s; int i; const unsigned WH = C3_CT(0xffffffu);
+    B.c = c; B.sg = side ? 1 : -1; B.p0 = P->start + P->a0 / c->L; B.uf = uf + B.sg * P->sb; B.t0 = ra->cab0;
+    for (i = 0; i < 6; i++) { float o[3]; double a = i & 1 ? W + 40 : -40, d = i < 2 ? -340 : i < 4 ? 0 : D + 40; C3_Point(c, B.p0 + a / c->L, B.uf + B.sg * d, hr, o); if (o[1] < ymin) ymin = o[1]; if (o[1] > ymax) ymax = o[1]; }
+    fl = ymax + 30; foot = ymin - 60; E = fl + P->eave; R = E + P->rise;
+    if (P->kind == C3_CAB_LOG || P->kind == C3_CAB_LODGE || P->kind == C3_CAB_RANGER) {
+        static const unsigned logT[3] = { 0xffffffu, 0xd0dce8u, 0xa4b8ccu }, lodT[3] = { 0x4a6a8cu, 0x50708cu, 0x5a7890u };   /* (ABGR: honey logs, darker, weathered; the lodge's redwood boards) */
+        int kd = P->kind, wallT = kd == C3_CAB_LOG ? C3C_LOGS : C3C_BOARD; double rep = kd == C3_CAB_LOG ? 176 : 240, oh = 70, sl = P->rise / (D * 0.5);
+        unsigned wt = C3_CT(kd == C3_CAB_LOG ? logT[s % 3] : kd == C3_CAB_LODGE ? lodT[s % 3] : 0x587c9cu), roofT, winT = kd == C3_CAB_RANGER ? C3_CT(0x90c8a0u) : WH; int roofX;
+        roofX = kd == C3_CAB_RANGER ? C3C_METAL : kd == C3_CAB_LOG && (s >> 7) % 3 == 0 ? C3C_METAL : C3C_SHINGLE;
+        roofT = kd == C3_CAB_RANGER ? C3_CT(0x3c6a46u) : roofX == C3C_METAL ? C3_CT((s >> 9) & 1 ? 0x46704au : 0x2a347au) : WH;
+        C3_CabBox(&B, -20, W + 20, -20, D + 20, foot, fl, C3C_STONE, 160, WH);   /* the foundation, down to the lowest ground */
+        C3_CabRect(&B, 0, 0, W, 0, fl, E, wallT, rep, E, wt); C3_CabRect(&B, W, 0, W, D, fl, E, wallT, rep, E, wt);
+        C3_CabRect(&B, W, D, 0, D, fl, E, wallT, rep, E, wt); C3_CabRect(&B, 0, D, 0, 0, fl, E, wallT, rep, E, wt);
+        C3_CabGable(&B, W, 0, W, D, E, R, wallT, rep, wt); C3_CabGable(&B, 0, D, 0, 0, E, R, wallT, rep, wt);
+        {   double qf[4][3] = { { -oh, -oh, E - oh * sl }, { W + oh, -oh, E - oh * sl }, { W + oh, D * 0.5, R + 6 }, { -oh, D * 0.5, R + 6 } };
+            double qb[4][3] = { { W + oh, D + oh, E - oh * sl }, { -oh, D + oh, E - oh * sl }, { -oh, D * 0.5, R + 6 }, { W + oh, D * 0.5, R + 6 } };
+            C3_CabRoof(&B, qf, roofX, roofX == C3C_METAL ? 128 : 200, roofT); C3_CabRoof(&B, qb, roofX, roofX == C3C_METAL ? 128 : 200, roofT);
+            C3_CabRect(&B, -oh, -oh, W + oh, -oh, E - oh * sl - 18, E - oh * sl, C3C_BOARD, 240, E, C3_CT(0x6a8098u)); C3_CabRect(&B, W + oh, D + oh, -oh, D + oh, E - oh * sl - 18, E - oh * sl, C3C_BOARD, 240, E, C3_CT(0x6a8098u)); }   /* (the fascia boards) */
+        if (kd == C3_CAB_LODGE) C3_CabBox(&B, -170, -10, D * 0.5 - 120, D * 0.5 + 120, foot, R + 170, C3C_STONE, 160, WH);   /* the chimney: outside the end wall */
+        else if (kd == C3_CAB_LOG) C3_CabBox(&B, W - 270, W - 140, D * 0.62, D * 0.62 + 130, E - 60, R + 140, C3C_STONE, 160, WH);   /* (through the back slope) */
+        else C3_CabBox(&B, W * 0.3, W * 0.3 + 40, D * 0.7, D * 0.7 + 40, E, R + 90, C3C_METAL, 64, C3_CT(0x383838u));   /* (a stovepipe) */
+        {   double pa = kd == C3_CAB_LODGE ? -40 : kd == C3_CAB_RANGER ? W * 0.3 : W * 0.12, pb = kd == C3_CAB_LODGE ? W + 40 : kd == C3_CAB_RANGER ? W * 0.7 : W * 0.88, pd = kd == C3_CAB_LODGE ? 320 : 240;
+            int np = kd == C3_CAB_LODGE ? 6 : 3, j; double py = kd == C3_CAB_LODGE ? fl + 330 : E - 70;   /* (under the main roof's eave, not through it) */   /* the porch: a deck, posts, its own roof under the eaves */
+            C3_CabBox(&B, pa, pb, -pd, 0, fl - 34, fl, C3C_BOARD, 240, C3_CT(0x7090a8u));
+            C3_CabBox(&B, (pa + pb) * 0.5 - 130, (pa + pb) * 0.5 + 130, -pd - 90, -pd, foot, fl - 60, C3C_STONE, 160, WH);   /* (a step) */
+            for (j = 0; j < np; j++) { double a = pa + 24 + (pb - pa - 48) * j / (np - 1); C3_CabBox(&B, a - 12, a + 12, -pd + 6, -pd + 30, fl, py - 80.0 * (pd - 6) / (pd + 40) - 6, C3C_BOARD, 240, C3_CT(0x5a7088u)); }   /* (each post up to the porch roof where it stands - it slopes down outwards: user note 2026-11-26 "the wood is sticking through the roof") */
+            {   double q[4][3] = { { pa - 30, -pd - 40, py - 80 }, { pb + 30, -pd - 40, py - 80 }, { pb + 30, 0, py }, { pa - 30, 0, py } }; C3_CabRoof(&B, q, roofX, roofX == C3C_METAL ? 128 : 200, roofT); } }
+        C3_CabRect(&B, W * 0.5 - 75, -3, W * 0.5 + 75, -3, fl, fl + 272, C3C_DOOR, 0, 0, WH);   /* the door, the windows */
+        if (kd == C3_CAB_LODGE) { for (i = 0; i < 4; i++) { double a = W * (0.14 + 0.24 * i); if (fabs(a - W * 0.5) > 150) C3_CabWin(&B, 1, a, -3, 190, fl + 110, fl + 280, winT); C3_CabWin(&B, 1, a, -3, 190, fl + 420, fl + 600, winT); C3_CabWin(&B, 1, a, D + 3, 190, fl + 420, fl + 600, winT); }
+            C3_CabWin(&B, 0, D * 0.25, W + 3, 170, fl + 420, fl + 600, winT); C3_CabWin(&B, 0, D * 0.75, W + 3, 170, fl + 110, fl + 280, winT); }
+        else { C3_CabWin(&B, 1, W * 0.25, -3, 170, fl + 110, fl + 265, winT); C3_CabWin(&B, 1, W * 0.75, -3, 170, fl + 110, fl + 265, winT); C3_CabWin(&B, 1, W * 0.5, D + 3, 170, fl + 110, fl + 265, winT);
+            C3_CabWin(&B, 0, D * 0.5, -3, 150, fl + 110, fl + 255, winT); C3_CabWin(&B, 0, D * 0.5, W + 3, 150, fl + 110, fl + 255, winT); }
+        if (kd == C3_CAB_RANGER) {   /* a flagpole in front, its flag; a sign by the path */
+            double fa = -160, fd = -520, top = fl + 1350; C3_CabBox(&B, fa - 7, fa + 7, fd - 7, fd + 7, foot, top, C3C_METAL, 64, WH);
+            C3_CabRect(&B, fa + 7, fd, fa + 230, fd, top - 170, top - 30, -1, 0, 0, 0xff3c6a46u); C3_CabRect(&B, fa + 7, fd + 1, fa + 230, fd + 1, top - 120, top - 80, -1, 0, 0, 0xff48c0d8u);
+            C3_CabBox(&B, W * 0.5 - 220, W * 0.5 + 220, -640, -624, fl + 110, fl + 290, C3C_BOARD, 240, C3_CT(0x3a5a7au));
+            for (i = 0; i < 2; i++) C3_CabBox(&B, W * 0.5 + (i ? 180 : -200), W * 0.5 + (i ? 200 : -180), -636, -628, foot, fl + 110, C3C_BOARD, 240, C3_CT(0x5a7088u)); } }
+    else if (P->kind == C3_CAB_AFRAME) {   /* the roof down to the ground on both sides, its gable to the road - glass, a deck before it */
+        static const unsigned rT[3] = { 0x3c5a3cu, 0x2a347au, 0x484848u }; double oh = 60, y0 = fl + 20, ya = y0 + (R - y0) * oh / (W * 0.5 + oh); unsigned rt = C3_CT(rT[s % 3]), bt = C3_CT(0x6a8cb0u);
+        double ql[4][3] = { { -oh, -oh, y0 }, { -oh, D + oh, y0 }, { W * 0.5, D + oh, R }, { W * 0.5, -oh, R } }, qr[4][3] = { { W + oh, D + oh, y0 }, { W + oh, -oh, y0 }, { W * 0.5, -oh, R }, { W * 0.5, D + oh, R } };
+        C3_CabBox(&B, -oh - 10, W + oh + 10, -20, D + 20, foot, fl, C3C_STONE, 160, WH);
+        C3_CabRoof(&B, ql, C3C_METAL, 128, rt); C3_CabRoof(&B, qr, C3C_METAL, 128, rt);
+        for (i = 0; i < 2; i++) { double d = i ? D : 0;   /* the gable ends: boards, the front one glazed */
+            C3_CabRect(&B, 0, d, W, d, fl, ya, C3C_BOARD, 240, ya, bt); C3_CabGable(&B, 0, d, W, d, ya, R - 20, C3C_BOARD, 240, bt); }
+        {   double q[4][3] = { { W * 0.16, -3, fl + 330 }, { W * 0.84, -3, fl + 330 }, { W * 0.5, -3, R - 150 }, { W * 0.5, -3, R - 150 } }; float uv[8];
+            double gw = W * 0.68 / 230, gh = (R - 150 - fl - 330) / 230; uv[0] = 0; uv[1] = (float)gh; uv[2] = (float)gw; uv[3] = (float)gh; uv[4] = (float)(gw * 0.5); uv[5] = 0; uv[6] = uv[4]; uv[7] = 0;
+            C3_CabQ(&B, q, C3C_WINDOW, uv, WH); }   /* (the glass: panes every 230) */
+        C3_CabWin(&B, 1, W * 0.25, -3, 150, fl + 60, fl + 290, WH); C3_CabWin(&B, 1, W * 0.75, -3, 150, fl + 60, fl + 290, WH); C3_CabWin(&B, 1, W * 0.5, D + 3, 140, fl + 380, fl + 520, WH);
+        C3_CabRect(&B, W * 0.5 - 70, -3, W * 0.5 + 70, -3, fl, fl + 290, C3C_DOOR, 0, 0, WH);
+        C3_CabBox(&B, -oh, W + oh, -300, 0, fl - 34, fl, C3C_BOARD, 240, C3_CT(0x7090a8u));   /* the deck, its rail */
+        C3_CabBox(&B, -oh, W + oh, -300, -288, fl + 88, fl + 104, C3C_BOARD, 240, C3_CT(0x5a7088u));
+        for (i = 0; i < 4; i++) { double a = -oh + 8 + (W + 2 * oh - 16) * i / 3; C3_CabBox(&B, a - 8, a + 8, -300, -284, fl, fl + 104, C3C_BOARD, 240, C3_CT(0x5a7088u)); }
+        C3_CabBox(&B, W * 0.5 - 140, W * 0.5 - 106, D * 0.7, D * 0.7 + 34, R - 320, R + 110, C3C_METAL, 64, C3_CT(0x383838u)); }   /* (a stovepipe) */
+    else if (P->kind == C3_CAB_LOGPILE) {   /* a log deck: logs lying along the road in a pyramid on two bunks, strapped down (user, 2026-11-26 "logs tied up in piles") */
+        double r = 34 + s % 16, yb = (ymin + ymax) * 0.5 + 30; int nb = (int)(D / (2 * r)), row, i, q;
+        if (nb > 6) nb = 6; if (nb < 2) nb = 2;
+        for (q = 0; q < 2; q++) { double a = W * (q ? 0.82 : 0.18); C3_CabLog(&B, a - 0, a + 0, -30, D + 30, yb - 12, 20, 0xff2a3a4eu, 1); }   /* (the bunks, across) */
+        for (row = 0; row < nb; row++) for (i = 0; i < nb - row; i++) { unsigned hs = s * 2654435761u + (unsigned)(row * 17 + i * 5) * 40503u; int bv = (int)(hs >> 27);
+            double d = r + row * r + i * 2 * r, y = yb + 8 + r + row * r * 1.72, a0 = ((hs >> 8) % 90) - 45.0, a1 = W + ((hs >> 16) % 90) - 45.0, rr = r * (0.9 + ((hs >> 4) % 20) / 100.0);
+            C3_CabLog(&B, a0, a1, d, d, y, rr, 0xff000000u | (unsigned)(38 + bv) << 16 | (unsigned)(52 + bv) << 8 | (unsigned)(72 + bv * 2), 0); }
+        {   double top = yb + 8 + 2 * r + (nb - 1) * r * 1.72, dt0 = (nb - 1) * r, dt1 = dt0 + 2 * r;   /* the straps: over the pile's outline at a quarter and three quarters */
+            double od[4] = { -6, dt0 - 4, dt1 + 4, nb * 2 * r + 6 }, oy[4] = { yb, top + 4, top + 4, yb };
+            for (q = 0; q < 2; q++) { double a = W * (q ? 0.72 : 0.28); for (i = 0; i < 3; i++) {
+                    double qd[4][3] = { { a - 8, od[i], oy[i] }, { a + 8, od[i], oy[i] }, { a + 8, od[i + 1], oy[i + 1] }, { a - 8, od[i + 1], oy[i + 1] } };
+                    C3_CabQ(&B, qd, -1, NULL, 0xff1c7ae0u); } } } }   /* (orange ratchet straps) */
+    else if (P->kind == C3_CAB_SAWMILL) {   /* an open-sided mill shed: posts, a rusty tin roof, boards behind; a log on the carriage, the saw, a lumber stack, a heap of sawdust */
+        double oh = 80, sl = P->rise / (D * 0.5), a; unsigned rt = C3_CT(0x2e4a8au), bt = C3_CT(0x6a7c8cu), pt = C3_CT(0x4a5a6au); int i;
+        C3_CabBox(&B, -20, W + 20, -20, D + 20, foot, fl, C3C_STONE, 160, WH);
+        C3_CabBox(&B, 0, W, 0, D, fl - 6, fl, C3C_BOARD, 240, C3_CT(0x5a6a78u));   /* (the floor) */
+        for (a = 12; a <= W - 12 + 1; a += (W - 24) / 4) { C3_CabBox(&B, a - 14, a + 14, 2, 30, fl, E, C3C_BOARD, 240, pt); C3_CabBox(&B, a - 14, a + 14, D - 30, D - 2, fl, E, C3C_BOARD, 240, pt); }
+        C3_CabRect(&B, W, D, 0, D, fl, E, C3C_BOARD, 240, E, bt); C3_CabRect(&B, W, 0, W, D, fl, E, C3C_BOARD, 240, E, bt);
+        C3_CabGable(&B, W, 0, W, D, E, R, C3C_BOARD, 240, bt); C3_CabGable(&B, 0, D, 0, 0, E, R, C3C_BOARD, 240, bt);
+        {   double qf[4][3] = { { -oh, -oh, E - oh * sl }, { W + oh, -oh, E - oh * sl }, { W + oh, D * 0.5, R + 6 }, { -oh, D * 0.5, R + 6 } };
+            double qb[4][3] = { { W + oh, D + oh, E - oh * sl }, { -oh, D + oh, E - oh * sl }, { -oh, D * 0.5, R + 6 }, { W + oh, D * 0.5, R + 6 } };
+            C3_CabRoof(&B, qf, C3C_METAL, 128, rt); C3_CabRoof(&B, qb, C3C_METAL, 128, rt); }
+        for (i = 0; i < 2; i++) C3_CabBox(&B, W * 0.05, W * 0.95, D * (i ? 0.47 : 0.33) - 6, D * (i ? 0.47 : 0.33) + 6, fl, fl + 18, C3C_METAL, 64, C3_CT(0x404448u));   /* (the carriage's rails) */
+        C3_CabLog(&B, W * 0.08, W * 0.58, D * 0.4, D * 0.4, fl + 18 + 52, 52, 0xff34485eu, 0);
+        {   double ca = W * 0.7, cy = fl + 130, rb = 110; int j;   /* (the saw: a big disc on the log's line) */
+            for (j = 0; j < 12; j++) { double t0 = j * 0.5235988, t1 = (j + 1) * 0.5235988;
+                double q[4][3] = { { ca, D * 0.4, cy }, { ca + cos(t0) * rb, D * 0.4, cy + sin(t0) * rb }, { ca + cos(t1) * rb, D * 0.4, cy + sin(t1) * rb }, { ca + cos(t1) * rb, D * 0.4, cy + sin(t1) * rb } };
+                C3_CabQ(&B, q, -1, NULL, 0xffd0ccc8u); }
+            C3_CabBox(&B, ca - 30, ca + 30, D * 0.4 + 6, D * 0.4 + 70, fl, cy - 20, C3C_METAL, 64, C3_CT(0x2a5a9au)); }   /* (its frame, painted) */
+        C3_CabBox(&B, W * 0.08, W * 0.36, D * 0.62, D * 0.9, fl, fl + 170, C3C_BOARD, 120, C3_CT(0x8cb8dcu));   /* (fresh-sawn lumber) */
+        {   float o[3]; (void)o; C3_Rock(c, B.p0 + (W * 0.86) / c->L, B.uf + B.sg * (D * 0.72), fl - 20, 120, s, 0xff7ab0d8u, -1); } }   /* (sawdust) */
+    else {   /* the woodshed: a lean-to open at the front, a stack of firewood in it */
+        double Ef = fl + P->eave, Eb = fl + P->rise; unsigned bt = C3_CT(0x5a7090u);
+        double qe0[4][3] = { { 0, D, fl }, { 0, 0, fl }, { 0, 0, Ef }, { 0, D, Eb } }, qe1[4][3] = { { W, 0, fl }, { W, D, fl }, { W, D, Eb }, { W, 0, Ef } }, qr[4][3] = { { -40, -70, Ef + 8 }, { W + 40, -70, Ef + 8 }, { W + 40, D + 50, Eb - 4 }, { -40, D + 50, Eb - 4 } };
+        float ue[8]; ue[0] = 0; ue[1] = (float)((Ef - fl) / 240); ue[2] = (float)(D / 240); ue[3] = ue[1]; ue[4] = ue[2]; ue[5] = 0; ue[6] = 0; ue[7] = 0;
+        C3_CabBox(&B, -10, W + 10, -10, D + 10, foot, fl, C3C_STONE, 160, WH);
+        C3_CabRect(&B, W, D, 0, D, fl, Eb, C3C_BOARD, 240, Eb, bt); C3_CabQ(&B, qe0, C3C_BOARD, ue, bt); C3_CabQ(&B, qe1, C3C_BOARD, ue, bt);
+        C3_CabRoof(&B, qr, C3C_SHINGLE, 200, WH);
+        for (i = 0; i < 2; i++) { double a = i ? W - 14 : 14; C3_CabBox(&B, a - 10, a + 10, -10, 10, fl, Ef, C3C_BOARD, 240, bt); }
+        C3_CabBox(&B, 30, W - 30, D * 0.25, D - 20, fl, fl + 210, C3C_LOGS, 60, C3_CT(0xa0d0f0u)); }
+    if (c->recBldg) {   /* (its footprint: its shadow - world3d.inc W3BldgShadows) */
+        if (c->nbldg == c->capBldg) { int nc = c->capBldg ? c->capBldg * 2 : 1024; C3Bldg *nb = (C3Bldg *)realloc(c->bldg, sizeof(C3Bldg) * nc); if (nb) { c->bldg = nb; c->capBldg = nc; } }
+        if (c->nbldg < c->capBldg) { C3Bldg *Bd = &c->bldg[c->nbldg++];
+            C3_CabPt(&B, 0, 0, fl, Bd->f[0]); C3_CabPt(&B, 0, D, fl, Bd->f[1]); C3_CabPt(&B, W, D, fl, Bd->f[2]); C3_CabPt(&B, W, 0, fl, Bd->f[3]);
+            Bd->h = (float)(P->kind == C3_CAB_AFRAME ? (R - fl) * 0.6 : P->kind == C3_CAB_SHED ? P->eave : P->kind == C3_CAB_LOGPILE ? 200 : E - fl + P->rise * 0.5); Bd->piece = P->start; } }
+}
+static void C3_CabObst(C3Course *c, const C3CabPlan *P, int k, int side, double uf)   /* the building's solid footprint on piece k (each piece its own: C3_BuildRange clears a piece's as it builds it) */
+{   double sg = side ? 1 : -1, p0 = P->start + P->a0 / c->L, r = (P->W < P->D ? P->W : P->D) * 0.5, n, t;
+    int along = P->W >= P->D, j;
+    n = floor((along ? P->W : P->D) / r);
+    for (j = 0; j <= (int)n; j++) { t = n > 0 ? r * 0.5 + ((along ? P->W : P->D) - r) * j / n : 0;
+        {   double a = along ? t : P->W * 0.5, d = along ? P->D * 0.5 : t, p = p0 + a / c->L;
+            if ((int)floor(p) == k) C3_Obst(c, p, uf + sg * (P->sb + d), r * 0.9); } } }
 /* the facade of the buildings on piece k's terrain side (C3_SideBld): RrcExtra.bldCode from the sprite sets loaded nearest k that have it as a facade; 0 none */
 static int C3_BandFacade(RxAssets *ra, const RoadSection *s, int k, int h, int side, int *fac, double *fh)
 {
     unsigned code; int r, d;
-    if (!C3_SideBld(ra, s, k, h, side)) return 0;
+    if (!C3_SideBld(ra, s, k, h, side) || C3_CabCode(ra, k, h, side) >= 0) return 0;   /* (a forest building's lot: no row of facades - C3_Cabin) */
     code = ra->ext[k].bldCode[h & 1][side & 1];
     for (r = 0; r < ra->next; r++) for (d = -1; d <= 1; d += 2) {
         int j = k + d * r; RxSet *st; unsigned t; const unsigned char *g;
@@ -1602,14 +1996,31 @@ static double C3_Corner(C3Course *c, int k, int h, int side, const RoadSection *
 }
 
 
+/* a house's driveway (user note 2026-11-27 "for the houses can you do driveways here please"): GRAVEL from the road's edge (ue) to the front of the porch, 220 wide, in the
+   middle of the house, on the ground (C3_GroundAt at each point); vertex alpha 239 (bumped as the dirt).  Not for log decks, a sawmill or a woodshed */
+static double C3_GroundAt(C3Course *c, int k, int h, double x);
+static void C3_Driveway(C3Course *c, int h, const C3CabPlan *P, int side, double ue, double uf, const RxAssets *ra)
+{   double sg = side ? 1 : -1, pm = P->start + (P->a0 + P->W * 0.5) / c->L, dp = 110.0 / c->L, u1 = uf + sg * (P->sb - 340), u[7]; int j, q, t = ra && ra->nground > 25 ? ra->ground0 + 25 : -1;
+    if (t < 0 || (u1 - ue) * sg < 60 || P->kind == C3_CAB_LOGPILE || P->kind == C3_CAB_SAWMILL || P->kind == C3_CAB_SHED) return;
+    for (j = 0; j <= 6; j++) u[j] = ue + (u1 - ue) * j / 6.0;
+    for (j = 0; j < 6; j++) { float Pq[4][3], uv[8]; int n0 = c->nv; double pa = pm - dp, pb = pm + dp, ua = u[j], ub = u[j + 1];
+        C3_Point(c, pa, ua, C3_GroundAt(c, (int)floor(pa), h, ua) + 2.0, Pq[0]); C3_Point(c, pa, ub, C3_GroundAt(c, (int)floor(pa), h, ub) + 2.0, Pq[1]);
+        C3_Point(c, pb, ub, C3_GroundAt(c, (int)floor(pb), h, ub) + 2.0, Pq[2]); C3_Point(c, pb, ua, C3_GroundAt(c, (int)floor(pb), h, ua) + 2.0, Pq[3]);
+        uv[0] = (float)(ua / 256); uv[1] = (float)(pa * c->L / 256); uv[2] = (float)(ub / 256); uv[3] = uv[1]; uv[4] = uv[2]; uv[5] = (float)(pb * c->L / 256); uv[6] = uv[0]; uv[7] = uv[5];
+        if (side) C3_QuadTint(c, Pq[0], Pq[1], Pq[2], Pq[3], 0xffffffffu, t, uv, 0xffffffffu); else C3_QuadTint(c, Pq[1], Pq[0], Pq[3], Pq[2], 0xffffffffu, t, uv, 0xffffffffu);
+        for (q = n0; q < c->nv; q++) c->v[q].rgba = (c->v[q].rgba & 0xffffffu) | 0xef000000u; } }
 /* the buildings on a terrain side (C3_SideBld): their front on the band's inner profile point, rows r0 / r1 (C3_SectionAt) */
 static void C3_BandBuildings(C3Course *c, int k, int h, const RoadSection *s0, const C3Row *r0, const C3Row *r1, RxAssets *ra)
 {
     int side;
     for (side = 0; side < 2; side++) {
         int fb = C3_SideBld(ra, s0, k, h, side), fac, i, corner[2] = { 0, 0 }; double fh;
-        if (!fb || !C3_BandFacade(ra, s0, k, h, side, &fac, &fh) || fh <= 0) continue;
+        if (!fb) continue;
         {   int pt = fb == 4 ? 2 : 2 + fb; i = side ? 8 + pt : 6 - pt; }   /* (their front's point in the row: the verge's edge / profile point fb - 1 - C3_SectionK) */
+        if (C3_CabCode(ra, k, h, side) >= 0) { C3CabPlan P;   /* forest buildings: one a lot, built with its first piece; each piece its part of the footprint */
+            if (C3_CabPlanAt(c, ra, k, h, side, &P)) { if (k == P.start) { C3_Cabin(c, ra, &P, side, r0->u[i], r0->h[i] < r1->h[i] ? r0->h[i] : r1->h[i]); if (!g_c3Editor) C3_Driveway(c, h, &P, side, r0->u[side ? 8 : 6], r0->u[i], ra); } C3_CabObst(c, &P, k, side, r0->u[i]); }
+            continue; }
+        if (!C3_BandFacade(ra, s0, k, h, side, &fac, &fh) || fh <= 0) continue;
         c->bldKind = fb; C3_Building(c, k, h, side, k, k + 1, r0->u[i], r1->u[i], r0->h[i], r1->h[i], fh, fac, ra, corner); c->bldKind = 0;
     }
 }
@@ -1880,17 +2291,69 @@ static void C3_Sprites(C3Course *c, int k, int h, const RoadSection *s, double o
 
 /* side structures of kindArg[0] == 5 pieces (rr_AiZoneActions -> GroundMarkQueue, per side when bit 1 / 2 of kindArg[3]): a vertical wall parallel to the
    road at (signed) kindArg[2] beyond the outer edge, from road level up to the group's height, textured from set category 6 entry kindArg[1] */
+/* a guard rail modelled (user, 2026-11-27 "redo the guard rail texture it looks bad", with photos of a galvanised W-beam): along lateral x0 (at k) .. x1 (at k + 1) - the line the
+   game's physics pushes the riders back at - steel posts every quarter piece just behind it, spacer blocks, and in front of them the beam: a W profile (two ridges, a
+   groove) 36 high, its top at 84, each face its own shade of galvanised steel (the lit upper faces bright, the under faces dark).  Solid only as the game has it (physics) */
+static void C3_GuardRail(C3Course *c, int k, double x0, double x1, int side)
+{   static const double pd[7] = { 0, 6, 6, 1.5, 6, 6, 0 }, ph[7] = { 84, 79, 73, 66, 59, 53, 48 };   /* (the profile: depth towards the road, height) */
+    static const unsigned col[6] = { 0xffd8d2ccu, 0xffc4beb8u, 0xff86807cu, 0xffccc6c0u, 0xffaaa49fu, 0xff726e6au };   /* (ABGR) */
+    static const int fc[5][4] = { { 0, 1, 5, 4 }, { 1, 3, 7, 5 }, { 3, 2, 6, 7 }, { 2, 0, 4, 6 }, { 4, 5, 7, 6 } };
+    double sg = side ? 1 : -1, fr = 9; int i, q, j, f;
+    for (i = 0; i < 6; i++) { float a[3], b[3], cc[3], d[3];   /* the beam (both faces) */
+        C3_Point(c, k, x0 - sg * (fr + pd[i]), ph[i], a); C3_Point(c, k, x0 - sg * (fr + pd[i + 1]), ph[i + 1], b);
+        C3_Point(c, k + 1, x1 - sg * (fr + pd[i + 1]), ph[i + 1], cc); C3_Point(c, k + 1, x1 - sg * (fr + pd[i]), ph[i], d);
+        C3_Quad(c, a, b, cc, d, col[i]);
+        C3_Point(c, k, x0 - sg * (fr + pd[i] - 1.5), ph[i], a); C3_Point(c, k, x0 - sg * (fr + pd[i + 1] - 1.5), ph[i + 1], b);   /* its back face 1.5 behind (the same place: it flickered - user note 2026-11-27) */
+        C3_Point(c, k + 1, x1 - sg * (fr + pd[i + 1] - 1.5), ph[i + 1], cc); C3_Point(c, k + 1, x1 - sg * (fr + pd[i] - 1.5), ph[i], d);
+        C3_Quad(c, d, cc, b, a, col[i]); }   /* (its colours too: no dark face to show through far off) */
+    for (q = 0; q < 4; q++) { double t = q / 4.0, x = x0 + (x1 - x0) * t, dp = 3.0 / c->L; float pq[8][3];
+        for (j = 0; j < 8; j++) C3_Point(c, k + t + (j & 1 ? dp : -dp), x + sg * (j & 2 ? 7 : 1), j & 4 ? 80 : -40, pq[j]);   /* the post */
+        for (f = 0; f < 5; f++) { C3_Quad(c, pq[fc[f][0]], pq[fc[f][1]], pq[fc[f][2]], pq[fc[f][3]], 0xffa29c96u); C3_Quad(c, pq[fc[f][3]], pq[fc[f][2]], pq[fc[f][1]], pq[fc[f][0]], 0xffa29c96u); }
+        for (j = 0; j < 8; j++) C3_Point(c, k + t + (j & 1 ? dp : -dp) * 0.8, x + sg * (j & 2 ? 1 : -fr), j & 4 ? 77 : 55, pq[j]);   /* its spacer block */
+        for (f = 0; f < 5; f++) { C3_Quad(c, pq[fc[f][0]], pq[fc[f][1]], pq[fc[f][2]], pq[fc[f][3]], 0xff7c7672u); C3_Quad(c, pq[fc[f][3]], pq[fc[f][2]], pq[fc[f][1]], pq[fc[f][0]], 0xff7c7672u); } }
+}
+/* the gore of a fitted fork (user note 2026-11-27: "The curb texture shouldnt apply at the fork. i would just put safety barriers here like the original game to split the
+   road and put water barrels in front of the split - yellow barrels at the tip before the fork starts"): on carriageway A's split pieces near the fork / the join
+   (C3_NearForkJoin), two guard rails back to back on the line between the roads (C3_FitMid), solid; at the fork's first split piece six yellow crash barrels in a
+   wedge before the rails' nose, solid (C3_Obst: carriageway A's) */
+static int C3_NearForkJoin(const C3Course *c, int k, int h);   /* (below) */
+static void C3_Barrel(C3Course *c, double p, double x, double y)   /* a crash barrel: yellow, a black band near the top, 22 across, 64 high */
+{   enum { NB = 10 }; float rg[4][NB][3], top[3]; int j, q; double hh[4] = { -6, 46, 52, 64 }, r = 22;
+    for (q = 0; q < 4; q++) for (j = 0; j < NB; j++) { double a = j * 6.2832 / NB; C3_Point(c, p + r * sin(a) / c->L, x + r * cos(a), y + hh[q], rg[q][j]); }
+    C3_Point(c, p, x, y + 66, top);
+    for (q = 0; q < 3; q++) for (j = 0; j < NB; j++) { int n = (j + 1) % NB; double a = (j + 0.5) * 6.2832 / NB, l = 0.78 + 0.22 * cos(a - 2.4); unsigned col;
+        col = q == 1 ? 0xff202020u : 0xff000000u | (unsigned)(28 * l) << 16 | (unsigned)(204 * l) << 8 | (unsigned)(250 * l);
+        C3_Quad(c, rg[q][j], rg[q][n], rg[q + 1][n], rg[q + 1][j], col); C3_Quad(c, rg[q + 1][j], rg[q + 1][n], rg[q][n], rg[q][j], col); }
+    for (j = 0; j < NB; j++) { int n = (j + 1) % NB; C3_Quad(c, rg[3][j], rg[3][n], top, top, 0xff1cb0dcu); C3_Quad(c, top, top, rg[3][n], rg[3][j], 0xff1cb0dcu); }
+    C3_Obst(c, p, x, r); }
+static void C3_ForkGore(C3Course *c, int k)
+{   int fi, q; double m0, m1, s;
+    if (c->forkPick || k < 1 || k + 1 >= c->n || c->piece[k].layout != 2 || c->piece[k + 1].layout != 2 || !C3_NearForkJoin(c, k, 0) || (fi = C3_FitInner(c, k, 0)) < 0) return;
+    m0 = C3_FitMid(c, k, 0); m1 = C3_FitMid(c, k + 1, 0); s = fi ? 1 : -1;
+    C3_GuardRail(c, k, m0 - 4 * s, m1 - 4 * s, fi); C3_GuardRail(c, k, m0 + 4 * s, m1 + 4 * s, !fi);   /* (each beam facing its own road) */
+    for (q = 0; q < 4; q++) C3_Obst(c, k + q / 4.0, m0 + (m1 - m0) * q / 4.0, 12);
+    if (c->piece[k - 1].layout != 2) {   /* the fork's nose: the barrels, 3 / 2 / 1 back from it */
+        static const double bp[6] = { 0.10, 0.10, 0.10, 0.22, 0.22, 0.34 }, bu[6] = { -48, 0, 48, -24, 24, 0 }; int b;
+        for (b = 0; b < 6; b++) C3_Barrel(c, k - bp[b], m0 + bu[b], 0); }
+}
+/* the side of half h's split piece k facing the other half (a fitted fork: C3_FitInner; else A's right, B's left), -1 not split */
+static int C3_InnerSide(const C3Course *c, int k, int h)
+{   int fi; if (k < 0 || k >= c->n || c->piece[k].layout != 2) return -1; fi = C3_FitInner(c, k, h); return fi >= 0 ? fi : (h ? 0 : 1); }
 static void C3_SideStructs(C3Course *c, int k, int h, const RoadSection *s0, double o0, const RoadSection *s1, double o1, RxAssets *ra)
 {
-    int side, height, t;
+    int side, height, t, model = 0;
     if (s0->kindArg[0] != 5 || !(s0->kindArg[3] & 3)) return;
-    if ((t = RX_SideStructTex(ra, s0, k, h, &height)) < 0 || height <= 0) return;
+    if ((t = RX_SideStructTex(ra, s0, k, h, &height)) < 0 || height <= 0) model = 1;   /* (no side structure in this track's sets - The City has none - or the set's is the
+                                                                                         original guard rail picture RRRAIL1 (Sierra): the modelled guard rail, C3_GuardRail) */
+    else if (!_strnicmp(ra->tex[t].name, "RRRAIL", 6)) model = 1;
     for (side = 0; side < 2; side++) {
         double off = (signed char)s0->kindArg[2], x0, x1;
         if (!(s0->kindArg[3] & (1 << side))) continue;
         if (c->forkPick && c->piece[k].layout == 2 && side == 1) continue;   /* forks off: no rail on A's inner (median) side */
         if (side == 0) off = -off;
-        x0 = (side ? s0->outerR : s0->outerL) + off + o0; x1 = (side ? s1->outerR : s1->outerL) + off + o1;        C3_Span(c, k, x0, 0, x0, height, x1, 0, x1, height, 0xffffffffu, t, 1);
+        x0 = (side ? s0->outerR : s0->outerL) + off + o0; x1 = (side ? s1->outerR : s1->outerL) + off + o1;
+        if (model) { C3_GuardRail(c, k, x0, x1, side); continue; }
+        C3_Span(c, k, x0, 0, x0, height, x1, 0, x1, height, 0xffffffffu, t, 1);
     }
 }
 
@@ -1916,10 +2379,10 @@ static void C3_Sea(C3Course *c, int k, const RoadSection *s0, double o0, const R
     }
 }
 /* painted water past P2 (C3_WaterRow): from its far end on out C3_SEA at that height - the sea of Pacific Highway (C3_Sea) */
-static void C3_Water(C3Course *c, int k, const C3Row *r0, const C3Row *r1, const RxAssets *ra)
+static void C3_Water(C3Course *c, int k, const C3Row *r0, const C3Row *r1, const RxAssets *ra, int skip)   /* skip: a side not to (-1 none) */
 {
     int side;
-    for (side = 0; side < 2; side++) if ((r0->wm[side] | r1->wm[side]) & 16) {
+    for (side = 0; side < 2; side++) if (side != skip && ((r0->wm[side] | r1->wm[side]) & 16)) {
         float P[2][2][3], uv[8], a0[3], b0[3], a1[3], b1[3]; int rr;
         for (rr = 0; rr < 2; rr++) { const C3Row *R = rr ? r1 : r0; double u = R->u[side ? 14 : 0];
             C3_Point(c, k + rr, u, R->wl[side], P[rr][0]); C3_Point(c, k + rr, u + (side ? C3_SEA : -C3_SEA), R->wl[side], P[rr][1]); }
@@ -2321,6 +2784,8 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                                                                                      cut too - its inner side fanned out across the other half in the last piece) */   /* (forks on: the piece's end as its start -
                                                                                      the other road's last piece clamped at one end only fanned its hillside across the road) */
             C3_PieceTex(ra, s0, k, h, tex);
+            {   int in = C3_InnerSide(c, k, h), bi = in == 1 ? C3_NP - 2 : 0;   /* (a split piece's inner side: no P3 wall - a fitted fork's stood on the line between the roads, its end out across the other one: user, 2026-11-27 "the trees are all out of whack here") */
+                if (ra && in >= 0 && C3_P3Wall(ra, tex[bi])) tex[bi] = tex[in == 1 ? C3_NP - 3 : 1]; }
             c->darkStrip = -1;
             if (ra && C3_NearForkJoin(c, k, h) && ra->global[18] >= 0 && (!c->soft || C3_Gap(c, k, h) < C3_DARKGAP)) {   /* (forks on: only where the roads are close -
                                                                                                                           Peninsula's join has its plain verge further out) */   /* where B's inner rail stands (Sierra 898..903) the inner shoulders are asphalt with the white edge line at
@@ -2336,7 +2801,7 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 if (sp) C3_PieceTex(ra, sp, k - 1, hp, tp);
                 C3_PieceTex(ra, s1, k + 1, h, tn);
                 for (sd = 0; sd < 2; sd++) { int bi = sd ? C3_NP - 2 : 0; if (!C3_P3Wall(ra, tex[bi])) continue;
-                    c->wcap[sd] = (!sp || !C3_P3Wall(ra, tp[bi]) ? 1 : 0) | (!C3_P3Wall(ra, tn[bi]) ? 2 : 0); } }   /* (another wall on there - REDWOOD's hedge into FOREST:
+                    c->wcap[sd] = ((!sp || !C3_P3Wall(ra, tp[bi])) && !(sp && (c->piece[k - 1].layout == 2) != (p0->layout == 2)) ? 1 : 0) | (!C3_P3Wall(ra, tn[bi]) && (p1->layout == 2) == (p0->layout == 2) ? 2 : 0); } }   /* (no end where the road splits / joins: the side goes on, on the other half) */   /* (another wall on there - REDWOOD's hedge into FOREST:
                                                                      no end between them - two of them there fought: user, 2026-11-22 notes) */            if (!(walk && (s0->kindFlags & 0x20))) C3_Strip(c, k, &r0, &r1, s0->kind, walk, tex, walk ? 0xff000000u | (ra->pal[0xfd] & 0xffffffu) : 0, ra);
             if (ra && !(walk && (s0->kindFlags & 0x20))) {   /* (grounds meeting: torn into each other - C3_Blend; the piece before's pictures for the seam along) */
                 int pv[C3_NP - 1], hp = h && k > 0 && c->piece[k - 1].layout == 2, sd, sf = 0; const RoadSection *sp = k > 0 ? (hp ? &c->piece[k - 1].halfB : &c->piece[k - 1].halfA) : NULL;
@@ -2346,18 +2811,34 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                     if (C3_SideWalk(ra, s0, k, h, sd)) sf |= 1 << sd;   /* (a footpath lowered to the road - its curb's height 0 - runs on too) */
                     if (C3_SideKind(ra, s0, k, h, sd) == SEC_PROFILE && !(C3_SideEd(ra, s0, k, h, sd) & 16) && !(ra->ext && k < ra->next && (ra->ext[k].gutter[h & 1][sd] & 3) == 1)) sf |= 4 << sd; }
                 C3_Blend(c, k, &r0, &r1, tex, sp && !(sp->kind == SEC_OPEN && (sp->kindFlags & 0x20)) ? pv : NULL, ra, sf);
-                if (r0.wm[0] | r0.wm[1] | r1.wm[0] | r1.wm[1]) C3_Water(c, k, &r0, &r1, ra);
+                if (r0.wm[0] | r0.wm[1] | r1.wm[0] | r1.wm[1]) C3_Water(c, k, &r0, &r1, ra, C3_InnerSide(c, k, h));   /* (not out across the other carriageway of a split road - user note 2026-11-27 "its bleeding from the fork A") */
                 for (sd = 0; sd < 2; sd++) if (C3_SideCells(ra, s0, k, h, sd, C3_GBRIDGE) & 1) C3_Railing(c, k, &r0, &r1, sd);
                 if (getenv("RR_W3LOGPOST") && k >= 60 && k <= 80) { static int m; if (m++ < 60) LOG("w3post piece %d h %d cells L %x/%x/%x R %x/%x/%x verge %x %x nground %d", k, h, C3_SideCells(ra, s0, k, h, 0, C3_GTLIGHTS), C3_SideCells(ra, s0, k, h, 0, C3_GSTOP), C3_SideCells(ra, s0, k, h, 0, C3_GSIDEST),
                     C3_SideCells(ra, s0, k, h, 1, C3_GTLIGHTS), C3_SideCells(ra, s0, k, h, 1, C3_GSTOP), C3_SideCells(ra, s0, k, h, 1, C3_GSIDEST), ra->ext && k < ra->next ? ra->ext[k].cell[h & 1][0][0] : 0, ra->ext && k < ra->next ? ra->ext[k].cell[h & 1][1][0] : 0, ra->nground); }   /* (test switch RR_W3LOGPOST=1) */
                 if (!g_c3Editor) for (sd = 0; sd < 2; sd++) { if (C3_SideCells(ra, s0, k, h, sd, C3_GTLIGHTS) & 1) C3_JunctionPost(c, k, &r0, &r1, sd, 0, ra); if (C3_SideCells(ra, s0, k, h, sd, C3_GSTOP) & 1) C3_JunctionPost(c, k, &r0, &r1, sd, 1, ra); }
                 if (!g_c3Editor) for (sd = 0; sd < 2; sd++) if (C3_SideCells(ra, s0, k, h, sd, C3_GFENCE) & 3) C3_Fence(c, k, &r0, &r1, sd, C3_SideCells(ra, s0, k, h, sd, C3_GFENCE) & 1);
+                if (!g_c3Editor) for (sd = 0; sd < 2; sd++) C3_LakeRail(c, k, h, s0, &r0, &r1, sd, ra);   /* (a lake's railing) */
                 if (ra->ext && k < ra->next && p0->layout != 2) for (sd = 0; sd < 2; sd++) if (ra->ext[k].gutter[0][sd] & 0x80) {   /* FOREST EDGE (the editor's Curbs block): a white line
                                                                      painted along the road's edge, as a country road's (user, 2026-11-24 photo) */
-                    double e0 = sd ? s0->laneEdgeR - 30 : s0->laneEdgeL + 30, e1 = sd ? s1->laneEdgeR - 30 : s1->laneEdgeL + 30, w = sd ? -16 : 16; float a[3], b[3], cc[3], d[3];
+                    double e0 = sd ? s0->laneEdgeR - 30 : s0->laneEdgeL + 30, e1 = sd ? s1->laneEdgeR - 30 : s1->laneEdgeL + 30, w = sd ? -30 : 30; float a[3]   /* (30 wide: user note 2026-11-27 "abit thicker") */, b[3], cc[3], d[3];
                     if (sd) { C3_Point(c, k, e0 + w, 1.2, a); C3_Point(c, k, e0, 1.2, b); C3_Point(c, k + 1, e1, 1.2, cc); C3_Point(c, k + 1, e1 + w, 1.2, d); }
                     else { C3_Point(c, k, e0, 1.2, a); C3_Point(c, k, e0 + w, 1.2, b); C3_Point(c, k + 1, e1 + w, 1.2, cc); C3_Point(c, k + 1, e1, 1.2, d); }
                     C3_Quad(c, a, b, cc, d, 0xffe6eaeeu); } }
+                if (!g_c3Editor && ra && ra->ext && k < ra->next) { int sd; for (sd = 0; sd < 2; sd++) { double bq; if (sd == C3_InnerSide(c, k, h)) continue; if (C3_PaveOut(ra, s0, k, h, sd, 0, &bq)) C3_AsphaltEdge(c, k, h, s0, s1, &r0, &r1, sd, ra); } }   /* (ASPHALT EDGE, a guard rail: paved) */
+                if (!g_c3Editor && ra && ra->ext && k < ra->next && ra->nground > 25) { int sd; for (sd = 0; sd < 2; sd++) if (sd != C3_InnerSide(c, k, h) && (ra->ext[k].gutter[h & 1][sd] & 0x60) == 0x60 && !(s0->kindArg[0] == 5 && (s0->kindArg[3] >> sd & 1))) {   /* (no gravel strip under a guard rail's paving) */   /* GRAVEL EDGE (the editor's Curbs
+                                                                     block; gutter style 3): the road's edge crumbling into gravel onto the verge - a ragged strip of GRAVEL from just inside the lane
+                                                                     edge out 110 .. 200 (user note 2026-11-26: "where the trail meets the road ... more gravel / road texture") */
+                    double sg = sd ? 1 : -1, ea = sd ? s0->laneEdgeR : s0->laneEdgeL, eb = sd ? s1->laneEdgeR : s1->laneEdgeL; int ie = sd ? 8 : 6, io = sd ? 10 : 4, j;
+                    for (j = 0; j < 4; j++) { double t[2], wv[2], uin[2], uout[2], hi[2], ho[2]; float P[4][3], uv[8]; int q;
+                        for (q = 0; q < 2; q++) { double tq = (j + q) / 4.0, ue = r0.u[ie] + (r1.u[ie] - r0.u[ie]) * tq, uo = r0.u[io] + (r1.u[io] - r0.u[io]) * tq, he = r0.h[ie] + (r1.h[ie] - r0.h[ie]) * tq, ho2 = r0.h[io] + (r1.h[io] - r0.h[io]) * tq, f;
+                            unsigned hs = (unsigned)(k * 4 + j + q) * 2654435761u ^ (unsigned)(sd * 7919 + h * 104729); hs ^= hs >> 13; hs *= 1274126177u; hs ^= hs >> 16;
+                            t[q] = tq; wv[q] = 110 + hs % 90; uin[q] = ea + (eb - ea) * tq - sg * 22; uout[q] = ea + (eb - ea) * tq + sg * wv[q];
+                            f = fabs(uo - ue) > 1 ? (uout[q] - ue) / (uo - ue) : 0; if (f < 0) f = 0; if (f > 1) f = 1;
+                            hi[q] = 1.5; ho[q] = he + (ho2 - he) * f + 1.5; }
+                        C3_Point(c, k + t[0], uin[0], hi[0], P[0]); C3_Point(c, k + t[0], uout[0], ho[0], P[1]); C3_Point(c, k + t[1], uout[1], ho[1], P[2]); C3_Point(c, k + t[1], uin[1], hi[1], P[3]);
+                        uv[0] = (float)(uin[0] / 256); uv[1] = (float)((k + t[0]) * c->L / 256); uv[2] = (float)(uout[0] / 256); uv[3] = uv[1];
+                        uv[4] = (float)(uout[1] / 256); uv[5] = (float)((k + t[1]) * c->L / 256); uv[6] = (float)(uin[1] / 256); uv[7] = uv[5];
+                        { int n0 = c->nv; C3_QuadTint(c, P[0], P[1], P[2], P[3], 0xffffffffu, ra->ground0 + 25, uv, 0xffffffffu); C3_Mark(c, n0, 0xef); } } } }   /* (GRAVEL a texel a unit, bumped as the dirt: alpha 239) */
                 if (r0.hm[0] | r0.hm[1] | r1.hm[0] | r1.hm[1]) C3_HoleWater(c, k, &r0, &r1, ra);   /* (the water in the holes) */   /* (a bridge's railing) */   /* (painted water's surface) */
             {   int b, i, texN[C3_NP - 1], hasTn = 0; if (ra && nbrk) { C3_PieceTex(ra, s1, k + 1, h, texN); hasTn = 1; }   /* (the next piece's pictures: a hole's end wall) */
                 for (b = 0; b < nbrk; b++) for (i = 0; i < 6; i++) {   /* the step where a square end meets the next piece's side: closed (both faces) */
@@ -2408,8 +2889,8 @@ static void C3_BuildRange(C3Course *c, int k0, int k1, RxAssets *ra)
                 double e1 = (sd ? (s1->laneEdgeR < s1->edgeR ? s1->laneEdgeR : s1->edgeR) : (s1->laneEdgeL > s1->edgeL ? s1->laneEdgeL : s1->edgeL)) + o1;
                 double k1, r1, g1, d1, kb1; C3_EdgeStyle(ra, k + 1, h, sd, &k1, &r1, &g1, &d1); kb1 = C3_SideWalk(ra, s1, k + 1, h, sd) ? C3_KERB * k1 : 0;   /* (its end: the next piece's curb) */
                 C3_Gutter(c, k, sd, e0, e1, kb, kb1, gdp, gw, gdp); } }
-            if (ra) { C3_Sprites(c, k, h, s0, o0, ra); C3_SideStructs(c, k, h, s0, o0, s1, o1, ra); }
-            if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) { int j; for (j = nv0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff || (c->v[j].rgba >> 24) == 0xf8) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf9000000u; }   /* under a roof (a tunnel: vertex alpha 249) - no rain, puddles or snow there (render3d.h) */
+            if (ra) { C3_Sprites(c, k, h, s0, o0, ra); C3_SideStructs(c, k, h, s0, o0, s1, o1, ra); if (!h && !g_c3Editor) C3_ForkGore(c, k); }   /* (a fitted fork's gore: rails, barrels) */
+            if (s0->kind == SEC_WALL_SPLIT && s1->kind == SEC_WALL_SPLIT) { int j; for (j = nv0; j < c->nv; j++) if ((c->v[j].rgba >> 24) == 0xff || (c->v[j].rgba >> 24) == 0xf8 || (c->v[j].rgba >> 24) == (C3_GROUNDA >> 24)) c->v[j].rgba = (c->v[j].rgba & 0xffffffu) | 0xf9000000u; }   /* under a roof (a tunnel: vertex alpha 249) - no rain, puddles or snow there (render3d.h) */
         }
     }
     c->fr = c->frame; c->snapN = 0;
@@ -2466,8 +2947,12 @@ static int C3_Batches(C3Course *c, C3Batch *out, int max)
     if (c->nv <= 0) return 0;
     for (i = 0; i < c->nv; i += 3) { t = (int)c->v[i].tex; if (t < lo) lo = t; if (t > hi) hi = t; }
     nt = hi - lo + 1;
-    start = (int *)calloc(nt + 1, sizeof(int)); sorted = (C3Vert *)malloc(sizeof(C3Vert) * c->nv); sp = (int *)malloc(sizeof(int) * c->nv);
-    if (!start || !sorted || !sp) { free(start); free(sorted); free(sp); return 0; }
+    {   static C3Vert *sv; static int *spv, cap;   /* (kept from call to call: the live stretch is batched every q pieces - its 24 MB allocated each time was part of the hitch) */
+        if (cap < c->nv) { C3Vert *a2 = (C3Vert *)realloc(sv, sizeof(C3Vert) * (c->nv + c->nv / 4)); int *b2 = a2 ? (int *)realloc(spv, sizeof(int) * (c->nv + c->nv / 4)) : NULL;
+            if (a2) sv = a2; if (b2) spv = b2; if (!a2 || !b2) return 0; cap = c->nv + c->nv / 4; }
+        sorted = sv; sp = spv; }
+    start = (int *)calloc(nt + 1, sizeof(int));
+    if (!start) return 0;
     for (i = 0; i < c->nv; i += 3) start[(int)c->v[i].tex - lo + 1] += 3;
     for (t = 0; t < nt; t++) start[t + 1] += start[t];
     for (t = 0; t < nt && n < max; t++) if (start[t + 1] > start[t]) { out[n].first = start[t]; out[n].count = start[t + 1] - start[t]; out[n].tex = t + lo; n++; }
@@ -2476,7 +2961,7 @@ static int C3_Batches(C3Course *c, C3Batch *out, int max)
         sorted[o] = c->v[i]; sorted[o + 1] = c->v[i + 1]; sorted[o + 2] = c->v[i + 2]; sp[o] = sp[o + 1] = sp[o + 2] = c->vpiece[i];
     }
     memcpy(c->v, sorted, sizeof(C3Vert) * c->nv); memcpy(c->vpiece, sp, sizeof(int) * c->nv);
-    free(start); free(sorted); free(sp);
+    free(start);
     for (t = 0; t < n; t++) if (out[t].tex >= C3_BG - 1) for (i = out[t].first; i < out[t].first + out[t].count; i++) c->v[i].tex -= (float)C3_BG;   /* (the shader sees the texture / -1) */
     return n;
 }

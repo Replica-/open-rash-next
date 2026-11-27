@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bike Rider Mask</title>
+<!-- Served by mask_editor.ps1 (localhost): /data = the sprites from your game copy, /masks = bike-rider-mask.json (GET, PUT on every edit). -->
+<style>
+  :root { --bg: #1c1e24; --panel: #262932; --line: #3a3e4a; --text: #e6e8ee; --dim: #9aa0ad; --rider: #e04848; --bike: #3d9cff; --ok: #4cc06a; --edit: #e8a838; --stage: #3a3c42; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI", system-ui, sans-serif; display: grid; grid-template-columns: 210px 1fr 240px; height: 100vh; overflow: hidden; }
+  aside, .side { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  aside { border-right: 1px solid var(--line); }
+  .side { border-left: 1px solid var(--line); padding: 10px 12px; gap: 6px; }
+  aside header { padding: 10px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+  #list { overflow-y: auto; flex: 1; }
+  .item { display: flex; align-items: center; gap: 8px; padding: 4px 10px; cursor: pointer; border-bottom: 1px solid #2e313a; }
+  .item:hover { background: #2f333d; } .item.sel { background: #39404f; }
+  .item canvas { image-rendering: pixelated; background: var(--stage); flex: none; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #666; flex: none; } .dot.edited { background: var(--edit); } .dot.checked { background: var(--ok); }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+  button, select { background: #353a46; color: var(--text); border: 1px solid #4a5060; border-radius: 5px; padding: 4px 9px; font: inherit; cursor: pointer; }
+  button:hover { background: #414858; } button.on { outline: 2px solid #fff; }
+  button.rider { border-color: var(--rider); } button.rider.on { background: #7a2a2a; } button.bike { border-color: var(--bike); } button.bike.on { background: #1f4c80; }
+  button.go { background: #2c5e3a; border-color: var(--ok); }
+  #save { margin-left: auto; color: var(--dim); font-size: 12px; } #save.err { color: #ff7a6a; font-weight: 600; }
+  #stage { flex: 1; overflow: auto; display: grid; place-items: center; background: var(--stage); min-height: 0; }
+  #cv { image-rendering: pixelated; cursor: crosshair; box-shadow: 0 0 0 1px #000; }
+  #grid { display: none; flex: 1; overflow: auto; background: var(--stage); padding: 10px; align-content: start; flex-wrap: wrap; gap: 6px; }
+  #grid .cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 11px; color: var(--dim); }
+  #grid .cell:hover { background: #4a4d55; } #grid canvas { image-rendering: pixelated; }
+  #grid .cell .tag { display: flex; align-items: center; gap: 4px; }
+  body.overview #stage { display: none; } body.overview #grid { display: flex; }
+  .status { padding: 5px 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--dim); font-variant-numeric: tabular-nums; }
+  h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+  .prev { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .prev figure { margin: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
+  .prev figcaption { color: var(--dim); font-size: 12px; }
+  .prev .box { flex: 1; min-height: 0; display: grid; place-items: center; background: var(--stage); border: 1px solid var(--line); border-radius: 4px; }
+  .prev canvas { image-rendering: pixelated; }
+  details { color: var(--dim); font-size: 12px; } details summary { cursor: pointer; color: var(--text); } details b { color: var(--text); font-weight: 600; } details p { margin: 6px 0; }
+  label { color: var(--dim); } input[type=range] { width: 90px; vertical-align: middle; }
+  .count { color: var(--dim); font-size: 12px; }
+  #warn { display: none; color: var(--edit); font-size: 12px; }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <select id="filter"><option value="all">All sprites</option><option value="todo">Not checked yet</option><option value="checked">Checked</option></select>
+    <div class="count" id="count">Loading…</div>
+  </header>
+  <div id="list"></div>
+</aside>
+<main>
+  <div class="bar">
+    <button class="rider on" id="tRider" title="R">Rider</button>
+    <button class="bike" id="tBike" title="B">Bike</button>
+    <button id="tFill" title="F: fill the touched rider / bike area">Fill</button>
+    <span class="sep"></span>
+    <label>Brush <select id="brush"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>6</option></select></label>
+    <label>Zoom <select id="zoom"><option>3</option><option>4</option><option selected>6</option><option>8</option><option>10</option></select></label>
+    <label>Overlay <input type="range" id="alpha" min="0" max="100" value="45"></label>
+    <span class="sep"></span>
+    <button id="undo" title="Ctrl+Z">Undo</button>
+    <button id="regress" title="Back to the automatic guess">Re-guess</button>
+    <button id="copyPrev" title="Copy the previous sprite's mask (bottom-centre aligned)">Copy previous</button>
+    <span class="sep"></span>
+    <button class="go" id="check" title="Enter">Checked ✓ and next</button>
+    <button id="tOverview" title="O: every sprite with its mask">Overview</button>
+    <span id="save">&nbsp;</span>
+  </div>
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <div id="grid"></div>
+  <div class="status" id="status">&nbsp;</div>
+</main>
+<div class="side">
+  <h3 id="sname">&nbsp;</h3>
+  <div id="warn">Menu palette: race colours not captured yet (analysis\race_palette.ps1). The masks are not affected.</div>
+  <div class="prev">
+    <figure><figcaption>Rider</figcaption><div class="box" id="boxRider"><canvas id="pRider"></canvas></div></figure>
+    <figure><figcaption>Bike</figcaption><div class="box" id="boxBike"><canvas id="pBike"></canvas></div></figure>
+  </div>
+  <details>
+    <summary>Keys and how it works</summary>
+    <p><b>Left drag</b> paint the chosen part · <b>Right drag</b> paint the other part · <b>Shift+click</b> fill an area · <b>R / B / F</b> tools · <b>[ ]</b> brush ·
+      <b>← →</b> previous / next sprite · <b>Enter</b> checked and next · <b>O</b> overview · <b>Ctrl+Z</b> undo · <b>Space</b> hold to hide the overlay</p>
+    <p>The guess: helmet and suit colours are rider; bike paint, lamps, metal and tyres are bike. Metal-coloured pixels far above the seat (the chain, a raised
+      weapon) start as rider, and below each trouser leg the greys within the leg's width start as the boot. Check boots and handlebars by eye.</p>
+    <p>Every edit is saved to <span id="mfile"></span> straight away.</p>
+  </details>
+  <button id="quit" title="Stop the editor's local server">Close editor</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let LUT, SPR, store = {};
+
+// ---- the automatic guess: 1 = rider, 2 = bike, 0 = transparent ----
+// slot = template & 31 (analysis\RIDER_COLOURS.md): 2..5 helmet, 8..13 jacket, 14..15 stripes, 16..19 trousers, 20..25 bike paint,
+// 6..7 lamps, 26..29 greys / black (metal, tyre, boots), 30 indicators; 0 / 1 / 31 outlines
+function guess(s) {
+  const { w, h, d } = s, c = new Uint8Array(w * h); let seat = h, bx = 0, bn = 0;
+  for (let i = 0; i < d.length; i++) { const t = d[i], sl = t & 31; if (t && sl >= 20 && sl <= 25) { seat = Math.min(seat, (i / w) | 0); bx += i % w; bn++; } }
+  const q = [];
+  for (let i = 0; i < d.length; i++) { const t = d[i]; if (!t) continue; const sl = t & 31;
+    if (sl === 8 && (t >> 5) >= 3) c[i] = 2;                                   // tail lamp rim
+    else if ((sl >= 2 && sl <= 5) || (sl >= 8 && sl <= 19)) c[i] = 1;          // helmet, suit
+    else if (sl >= 6 && sl <= 30) c[i] = ((i / w) | 0) < seat - 12 ? 1 : 2;    // bike; far above the seat = chain / weapon
+    if (c[i]) q.push(i); }
+  for (let k = 0; k < q.length; k++) { const i = q[k], x = i % w, y = (i / w) | 0;   // outlines: the nearest classified pixel
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1])
+      if (j >= 0 && d[j] && !c[j]) { c[j] = c[i]; q.push(j); } }
+  // boots: below each trouser leg, the greys / outlines within the leg's width, grown down from the leg for ~14% of the sprite height
+  const mid = bn ? bx / bn : w / 2, L = Math.round(h * 0.14), grey = sl => sl <= 1 || sl === 31 || (sl >= 26 && sl <= 29);
+  for (const left of [true, false]) {
+    let rb = -1; for (let i = 0; i < d.length; i++) { const sl = d[i] & 31, x = i % w; if (d[i] && sl >= 14 && sl <= 19 && (x < mid) === left) rb = Math.max(rb, (i / w) | 0); }
+    if (rb < 0) continue;
+    let xa = w, xb = -1; const seeds = [];
+    for (let y = Math.max(0, rb - 2); y <= rb; y++) for (let x = 0; x < w; x++) { const i = y * w + x, sl = d[i] & 31;   // the leg's end, not the crotch
+      if (d[i] && sl >= 14 && sl <= 19 && (x < mid) === left) { xa = Math.min(xa, x); xb = Math.max(xb, x); seeds.push(i); } }
+    for (let k = 0; k < seeds.length; k++) { const i = seeds[k], x = i % w, y = (i / w) | 0;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y < h - 1 ? i + w : -1]) {
+        if (j < 0 || !d[j] || c[j] !== 2) continue; const X = j % w, Y = (j / w) | 0;
+        if (Y > rb && Y <= rb + L && X >= xa - 1 && X <= xb + 1 && grey(d[j] & 31)) { c[j] = 1; seeds.push(j); } } }
+  }
+  return c;
+}
+function maskOf(s) { const e = store[s.n]; if (e && e.m && e.m.length === s.w * s.h) { const c = new Uint8Array(e.m.length); for (let i = 0; i < c.length; i++) c[i] = e.m.charCodeAt(i) - 48; return c; } return guess(s); }
+function str(m) { let s = ''; for (let i = 0; i < m.length; i++) s += m[i]; return s; }
+function setMask(s, m, state) { store[s.n] = { w: s.w, h: s.h, m: str(m), state: state || (store[s.n] && store[s.n].state === 'checked' ? 'checked' : 'edited') }; scheduleSave(); }
+function stateOf(s) { return store[s.n] ? store[s.n].state : 'auto'; }
+
+// ---- saving: the whole file, a moment after the last edit ----
+let saveTimer = 0, saving = false, again = false;
+function scheduleSave() { $('save').textContent = 'Unsaved changes…'; $('save').className = ''; clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+async function save() {
+  if (saving) { again = true; return; } saving = true;
+  const out = { format: 'rr-bike-rider-mask-1', note: '1 = rider, 2 = bike, 0 = transparent; one character per sprite pixel, rows top to bottom; state auto = the guess, not checked', sprites: {} };
+  for (const s of SPR) { const e = store[s.n]; out.sprites[s.n] = { w: s.w, h: s.h, state: e ? e.state : 'auto', m: e ? e.m : str(guess(s)) }; }
+  try { const r = await fetch('/masks', { method: 'PUT', body: JSON.stringify(out) }); if (!r.ok) throw new Error(await r.text());
+    $('save').textContent = 'Saved ✓ ' + (await r.json()).saved; }
+  catch (e) { $('save').textContent = 'NOT SAVED - retrying… is the editor still running? (' + e.message + ')'; $('save').className = 'err';
+    clearTimeout(saveTimer); saveTimer = setTimeout(save, 3000); }   // (keeps trying: a restarted editor gets everything)
+  saving = false; if (again) { again = false; save(); }
+}
+
+// ---- drawing ----
+const cv = $('cv'), cx = cv.getContext('2d');
+let cur = 0, mask = null, tool = 1, fill = false, undo = [], hideOverlay = false;
+function rgb(t) { const c = LUT[t]; return [(c >> 16) & 255, (c >> 8) & 255, c & 255]; }
+function picture(s, m, a, only) {   // ImageData of sprite s: overlay a (0..1) of mask m, or only the pixels of part `only`
+  const img = new ImageData(s.w, s.h);
+  for (let i = 0; i < s.d.length; i++) { const t = s.d[i]; if (!t || (only && m[i] !== only)) continue; let [r, g, b] = rgb(t);
+    if (a && m[i]) { const o = m[i] === 1 ? [224, 72, 72] : [61, 156, 255]; r += (o[0] - r) * a; g += (o[1] - g) * a; b += (o[2] - b) * a; }
+    img.data.set([r, g, b, 255], i * 4); }
+  return img;
+}
+function blit(canvas, img, scale) { const t = new OffscreenCanvas(img.width, img.height); t.getContext('2d').putImageData(img, 0, 0);
+  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale); const c = canvas.getContext('2d'); c.imageSmoothingEnabled = false; c.drawImage(t, 0, 0, canvas.width, canvas.height); }
+function draw() {
+  const s = SPR[cur], z = +$('zoom').value, a = hideOverlay ? 0 : $('alpha').value / 100;
+  blit(cv, picture(s, mask, a), z);
+  if (z >= 6 && a) { cx.strokeStyle = 'rgba(255,255,255,.9)'; cx.lineWidth = 1; cx.beginPath();          // the rider / bike border
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) { const m = mask[y * s.w + x]; if (!m) continue;
+      if (x + 1 < s.w && mask[y * s.w + x + 1] && mask[y * s.w + x + 1] !== m) { cx.moveTo((x + 1) * z + .5, y * z); cx.lineTo((x + 1) * z + .5, (y + 1) * z); }
+      if (y + 1 < s.h && mask[(y + 1) * s.w + x] && mask[(y + 1) * s.w + x] !== m) { cx.moveTo(x * z, (y + 1) * z + .5); cx.lineTo((x + 1) * z, (y + 1) * z + .5); } }
+    cx.stroke(); }
+  for (const [id, want] of [['Rider', 1], ['Bike', 2]]) { const box = $('box' + id).getBoundingClientRect();   // fitted into its box, whole pixels when it can
+    let k = Math.min((box.width - 8) / s.w, (box.height - 8) / s.h); if (k >= 1) k = Math.floor(k);
+    blit($('p' + id), picture(s, mask, 0, want), Math.max(k, 0.25)); }
+  $('sname').textContent = `Sprite #${s.n} · ${s.w}×${s.h} · ${stateOf(s)}`;
+}
+function thumb(s, m, k) { const c = document.createElement('canvas'); blit(c, picture(s, m || new Uint8Array(s.d.length), m ? 0.5 : 0), k); return c; }
+let items = [];
+function refreshList() { const f = $('filter').value; let done = 0; $('list').replaceChildren();
+  SPR.forEach((s, k) => { const st = stateOf(s); if (st === 'checked') done++; items[k].dot.className = 'dot ' + st; items[k].el.classList.toggle('sel', k === cur);
+    if (f === 'all' || (f === 'todo' && st !== 'checked') || (f === 'checked' && st === 'checked')) $('list').append(items[k].el); });
+  $('count').textContent = `${done} of ${SPR.length} checked`; }
+function select(k) { cur = Math.max(0, Math.min(SPR.length - 1, k)); mask = maskOf(SPR[cur]); undo = []; document.body.classList.remove('overview'); $('tOverview').classList.remove('on');
+  draw(); refreshList(); items[cur].el.scrollIntoView({ block: 'nearest' }); }
+function overview(on) { document.body.classList.toggle('overview', on); $('tOverview').classList.toggle('on', on); if (!on) { draw(); return; }
+  const g = $('grid'); g.replaceChildren(); const f = $('filter').value;
+  SPR.forEach((s, k) => { const st = stateOf(s); if (f === 'todo' && st === 'checked' || f === 'checked' && st !== 'checked') return;
+    const cell = document.createElement('div'); cell.className = 'cell'; cell.onclick = () => select(k);
+    const tag = document.createElement('div'); tag.className = 'tag'; tag.append(Object.assign(document.createElement('span'), { className: 'dot ' + st }), `#${s.n}`);
+    cell.append(thumb(s, maskOf(s), 2), tag); g.append(cell); }); }
+
+// ---- painting ----
+let painting = 0;
+function at(e) { const r = cv.getBoundingClientRect(), z = +$('zoom').value; return [Math.floor((e.clientX - r.left) / z), Math.floor((e.clientY - r.top) / z)]; }
+function paint(x, y, cls) { const s = SPR[cur], b = +$('brush').value, o = Math.floor((b - 1) / 2);
+  for (let j = 0; j < b; j++) for (let i = 0; i < b; i++) { const X = x - o + i, Y = y - o + j; if (X < 0 || Y < 0 || X >= s.w || Y >= s.h) continue; const k = Y * s.w + X; if (s.d[k]) mask[k] = cls; } }
+function flood(x, y, cls) { const s = SPR[cur], k0 = y * s.w + x; if (!s.d[k0]) return; const from = mask[k0]; if (from === cls) return; const st = [k0];
+  while (st.length) { const k = st.pop(); if (mask[k] !== from || !s.d[k]) continue; mask[k] = cls; const X = k % s.w, Y = (k / s.w) | 0;
+    if (X > 0) st.push(k - 1); if (X < s.w - 1) st.push(k + 1); if (Y > 0) st.push(k - s.w); if (Y < s.h - 1) st.push(k + s.w); } }
+function commit(state) { setMask(SPR[cur], mask, state); draw(); refreshList(); }
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('mousedown', e => { const [x, y] = at(e); const cls = e.button === 2 ? 3 - tool : tool; undo.push(mask.slice()); if (undo.length > 50) undo.shift();
+  if (fill || e.shiftKey) { flood(x, y, cls); commit(); return; } painting = cls; paint(x, y, cls); draw(); });
+window.addEventListener('mouseup', () => { if (painting) { painting = 0; commit(); } });
+cv.addEventListener('mousemove', e => { const [x, y] = at(e), s = SPR[cur]; if (x < 0 || y < 0 || x >= s.w || y >= s.h) return; const t = s.d[y * s.w + x];
+  $('status').textContent = `x ${x}  y ${y}   ` + (t ? `template ${t}  (slot ${t & 31}, brightness ${t >> 5})   ${['', 'rider', 'bike'][mask[y * s.w + x]]}` : 'transparent');
+  if (painting) { paint(x, y, painting); draw(); } });
+function setTool(t) { if (t === 'fill') fill = !fill; else { tool = t; fill = false; } $('tRider').classList.toggle('on', tool === 1); $('tBike').classList.toggle('on', tool === 2); $('tFill').classList.toggle('on', fill); }
+$('tRider').onclick = () => setTool(1); $('tBike').onclick = () => setTool(2); $('tFill').onclick = () => setTool('fill');
+$('undo').onclick = () => { if (undo.length) { mask = undo.pop(); commit(); } };
+$('regress').onclick = () => { undo.push(mask.slice()); mask = guess(SPR[cur]); delete store[SPR[cur].n]; scheduleSave(); draw(); refreshList(); };
+$('copyPrev').onclick = () => { if (cur === 0) return; const a = SPR[cur - 1], b = SPR[cur], ma = maskOf(a); undo.push(mask.slice());
+  const dx = Math.round((b.w - a.w) / 2), dy = b.h - a.h;   // bottom-centre aligned, like the race draws them
+  for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) { const k = y * b.w + x, X = x - dx, Y = y - dy; if (b.d[k] && X >= 0 && Y >= 0 && X < a.w && Y < a.h && ma[Y * a.w + X]) mask[k] = ma[Y * a.w + X]; }
+  commit(); };
+$('check').onclick = () => { commit('checked'); const f = $('filter').value; let k = cur + 1;
+  if (f === 'todo') while (k < SPR.length && stateOf(SPR[k]) === 'checked') k++; select(k < SPR.length ? k : cur); };
+$('tOverview').onclick = () => overview(!document.body.classList.contains('overview'));
+$('quit').onclick = async () => { clearTimeout(saveTimer); await save(); try { await fetch('/quit', { method: 'POST' }); } catch (e) {} document.body.innerHTML = '<p style="padding:20px">Mask editor closed - saved to the mask file. You can close this tab.</p>'; };
+['zoom', 'alpha'].forEach(id => $(id).addEventListener('input', draw)); $('filter').onchange = () => { refreshList(); if (document.body.classList.contains('overview')) overview(true); };
+window.addEventListener('resize', () => { if (SPR) draw(); });
+window.addEventListener('keydown', e => { if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowRight' || e.key === '.') select(cur + 1); else if (e.key === 'ArrowLeft' || e.key === ',') select(cur - 1);
+  else if (e.key === 'Enter') $('check').click(); else if (e.key === 'r' || e.key === 'R') setTool(1); else if (e.key === 'b' || e.key === 'B') setTool(2); else if (e.key === 'f' || e.key === 'F') setTool('fill');
+  else if (e.key === 'o' || e.key === 'O') $('tOverview').click();
+  else if (e.key === '[' || e.key === ']') { const b = $('brush'); b.selectedIndex = Math.max(0, Math.min(b.options.length - 1, b.selectedIndex + (e.key === ']' ? 1 : -1))); }
+  else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) $('undo').click(); else if (e.key === ' ') { hideOverlay = true; draw(); } else return;
+  e.preventDefault(); });
+window.addEventListener('keyup', e => { if (e.key === ' ') { hideOverlay = false; draw(); } });
+window.addEventListener('beforeunload', e => { if (saving || saveTimer && $('save').textContent.startsWith('Unsaved')) { save(); e.preventDefault(); } });
+
+(async () => {
+  const [data, masks] = await Promise.all([fetch('/data').then(r => r.json()), fetch('/masks').then(r => r.json())]);
+  LUT = data.lut; $('warn').style.display = data.palette === 'race' ? 'none' : 'block'; $('mfile').textContent = data.maskFile;
+  SPR = data.sprites.map(([n, w, h, b]) => { const s = atob(b), d = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) d[i] = s.charCodeAt(i); return { n, w, h, d }; });
+  for (const [n, e] of Object.entries(masks.sprites || {})) if (e.state !== 'auto') store[n] = e;
+  items = SPR.map((s, k) => { const el = document.createElement('div'); el.className = 'item'; const dot = document.createElement('span'); dot.className = 'dot';
+    el.append(dot, thumb(s, null, 0.4), Object.assign(document.createElement('span'), { textContent: `#${s.n}  ${s.w}×${s.h}` })); el.onclick = () => select(k); return { el, dot }; });
+  const p = new URLSearchParams(location.search), want = +(p.get('sprite') || 89);
+  select(Math.max(0, SPR.findIndex(s => s.n === want)));
+  if (p.has('overview')) overview(true);
+  if (masks.sprites) $('save').textContent = 'Mask file loaded'; else save();   // (a new file: written straight away, every sprite as the guess)
+})();
+</script>
+</body>
+</html>

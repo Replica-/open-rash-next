@@ -5,7 +5,7 @@
 # The editor starts the game (a course's first extract, Test drive F5, the game renderer), so the latest game build is staged into analysis\build\play
 # first, as run_new.ps1 does; files of a game still running from there are renamed aside (*.old<time>) - Windows lets a loaded exe / DLL be renamed.
 # Edited courses are saved to data\mods\courses\t<track>.rrc (one road per track, raced at every level); the game races them from then on.
-param([switch]$Rebuild, [int]$Track = 1, [int]$Level = 1, [switch]$GameRenderer)
+param([switch]$Rebuild, [int]$Track = 1, [int]$Level = 5, [switch]$GameRenderer)
 $root = (Resolve-Path "$PSScriptRoot\..").Path; $a = "$root\analysis"; $play = "$a\build\play"; $data = "$root\data"; $ed = "$a\build\editor\CourseEdit.exe"; $src = "$root\src"
 if (Get-Process CourseEdit -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ed }) {
     "The Course Editor is already open (analysis\build\editor\CourseEdit.exe) - close it first, then run this again (it is built anew from the latest source)."

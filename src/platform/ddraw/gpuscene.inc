@@ -178,8 +178,27 @@ static void GpuPedTint(DWORD *px, int w, int h, int var)   /* (below the head - 
         GcHsv(p, &hh, &ss, &vv);
         if (ss >= 0.15f && vv >= 0.1f) px[i] = GcRgb(p, fmodf(hh + dh[var - 1], 1.0f), ss < 0.35f ? 0.35f : ss > 0.6f ? 0.6f : ss, vv * dv[var - 1]);   /* (not garish: 0.35 .. 0.6) */
         else if ((var & 1) && vv < 0.45f && vv >= 0.06f) px[i] = GcRgb(p, dh[var - 1], 0.55f, vv * 1.25f); } }
+/* the traffic's vehicles by variant (road\road_features.c: the variant a car was spawned as, its record +0x1fc): their model names (the picture's name without its
+   angle - TAXIG06 -> TAXI) as they are seen, into world3d\vehicles_t<track>.txt - the Course Editor names its Map settings' vehicles from it */
+static int g_w3hdTrack;
+static void GpuCarLearn(int v, const char *nm8)
+{   static char known[6][32][12]; char m[12]; int n = 0, t = g_w3hdTrack, i;
+    if (v < 0 || v >= 32 || t < 1 || t > 5) return;
+    while (n < 8 && nm8[n] && nm8[n] != ' ') n++;
+    memcpy(m, nm8, n); m[n] = 0;
+    while (n > 0 && m[n - 1] >= '0' && m[n - 1] <= '9') m[--n] = 0;   /* (the angle) */
+    if (n > 2 && (m[n - 1] == 'G' || m[n - 1] == 'C')) m[--n] = 0;    /* (its size: G / C) */
+    if (!m[0] || !strcmp(known[t][v], m)) return;
+    strcpy(known[t][v], m);
+    {   char fn[64], line[64]; FILE *f; char have[32][12]; memset(have, 0, sizeof have);
+        _snprintf(fn, sizeof fn, "world3d\\vehicles_t%d.txt", t); fn[sizeof fn - 1] = 0;
+        if ((f = fopen(fn, "r")) != NULL) { while (fgets(line, sizeof line, f)) { int k; char w[12]; if (sscanf(line, "%d %11s", &k, w) == 2 && k >= 0 && k < 32) strcpy(have[k], w); } fclose(f); }
+        if (!strcmp(have[v], m)) return;
+        strcpy(have[v], m);
+        if ((f = fopen(fn, "w")) != NULL) { for (i = 0; i < 32; i++) if (have[i][0]) fprintf(f, "%d %s\n", i, have[i]); fclose(f); }
+        LOG("vehicles: track %d variant %d is %s (%s)", t, v, m, fn); } }
 static GpuTex *GpuTexFor(const RrGpuQuad *q)
-{   int pitch=q->pitch?q->pitch:q->w, key=((q->flags&RRG_KEY)!=0)|((q->flags&RRG_TRUECOL)?2:0), w=q->w, h=q->h, l;   /* (key bit 2: true-colour rider tile, a texture of its own) */ DWORD hs=GpuHashMemo(q->bits[0],w,h,pitch,(q->flags&RRG_SNAP)!=0);
+{   if (q->objKind == RRO_CAR && q->objId && q->name[0]) GpuCarLearn(*(const signed char *)((const char *)(size_t)q->objId + 0x1fc), q->name);   /* (which vehicle each traffic variant is: the Course Editor's Map settings) */   int pitch=q->pitch?q->pitch:q->w, key=((q->flags&RRG_KEY)!=0)|((q->flags&RRG_TRUECOL)?2:0), w=q->w, h=q->h, l;   /* (key bit 2: true-colour rider tile, a texture of its own) */ DWORD hs=GpuHashMemo(q->bits[0],w,h,pitch,(q->flags&RRG_SNAP)!=0);
     int wpn=(q->objKind==RRO_PLAYER && WpClubSprite(q->riderSprite))?WpPicture():0; if(wpn>0) hs^=0x9e3779b9u*(unsigned)wpn;   /* the player swinging the club: drawn as the chosen weapon (weapons.inc) - a texture of its own per choice */
     int cv=0, cc=0; if(q->objKind==RRO_CAR && q->name[0] && !(q->flags&RRG_SNAP) && HdTexOn() && _strnicmp(q->name,"TAXI",4) && _strnicmp(q->name,"POLICE",6)) GpuCarPick(q->objId,HdCarVariants(q->name),&cv,&cc);
     if(cv) hs^=0x7f4a7c15u*(unsigned)cv; if(cc) hs^=0x5bd1e995u*(unsigned)cc;
