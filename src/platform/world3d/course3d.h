@@ -481,14 +481,19 @@ static void C3_HoleRow(const RxAssets *ra, const RoadSection *sec, int k, int h,
 /* cliffs (user, 2026-11-19: "cliff textures that are flat in P3D but actually form full cliffs ... the cliff textures should dynamically join together"): the cells painted
    CLIFF - in the game their points raised C3_CliffH (varying slowly along the road, a little more for each cliff cell further out: the cells next to each other one rock
    mass, rising away from the road); where a cliff starts outside a cell that is not one, its face steep - the raised point drawn in towards the foot (C3_Strip: rock) */
+#define C3_CLIFFEASE 7   /* a cliff's ends: over this many pieces it rises out of the ground (user note 2026-11-27 "the cliff terrain here has way too many gaps": each run of
+                            cliff cells stood at its full height to its last piece - a slab with a blank end, sky between it and the next) */
 static double C3_CliffH(int k, int n) { return 1500.0 + 600.0 * (0.5 + 0.5 * sin(k * 0.23 + 0.7 * sin(k * 0.071))) + 350.0 * n; }
 static void C3_CliffRow(const RxAssets *ra, const RoadSection *sec, int k, int h, int side, C3Row *row)
 {
-    int m, c, i, n = 0; double sg = side ? 1 : -1, base[7];
+    int m, c, i, n = 0; double sg = side ? 1 : -1, base[7], ease = 1;
     if (g_c3Editor || !(m = C3_SideCells(ra, sec, k, h, side, C3_GCLIFF))) return;
     for (i = 0; i < 7; i++) base[i] = row->h[side ? 8 + i : 6 - i];
+    {   int j, d = C3_CLIFFEASE + 1;   /* (the pieces to where this side's cliff ends, either way) */
+        for (j = 1; j <= C3_CLIFFEASE && d > C3_CLIFFEASE; j++) if (!C3_SideCells(ra, sec, k - j, h, side, C3_GCLIFF) || !C3_SideCells(ra, sec, k + j, h, side, C3_GCLIFF)) d = j;
+        if (d <= C3_CLIFFEASE) { double t = (d - 0.6) / C3_CLIFFEASE; ease = 0.08 + 0.92 * t * t * (3 - 2 * t); } }
     for (c = 0; c <= 4; c++) if (m & (1 << c)) { int first = c == 0 || !(m & (1 << (c - 1)));
-        double H = C3_CliffH(k, n++);
+        double H = C3_CliffH(k, n++) * ease;
         for (i = first ? c + 2 : c + 1; i <= c + 2; i++) { double t = base[i] + H; if (row->h[side ? 8 + i : 6 - i] < t) row->h[side ? 8 + i : 6 - i] = t; }
         if (first) {   /* (the face: steep - its top drawn in towards its foot) */
             double u0 = row->u[side ? 8 + c + 1 : 6 - (c + 1)], u1 = row->u[side ? 8 + c + 2 : 6 - (c + 2)], w = fabs(u1 - u0), in = w * 0.75;

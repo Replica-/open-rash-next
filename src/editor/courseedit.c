@@ -4213,6 +4213,60 @@ static void SampleMountains(int F, int L2, int L3, int L4, int L5, int snow0)
         TerrEnd(); LOG("mountains: %d turn sides narrowed to their cliffs, %d dropping away", nw, nd); }
     LOG("mountains: %d..%d - %d S-bends, %d runs painted (L2 %d, L3 %d, L4 %d)", F, L5, nb, nn, L2, L3, L4);
     free(code); free(in); }
+/* the mountain filled in (user note 2026-11-27, piece 4560: "the cliff terrain here has way too many gaps ... also there should be some trees up here in teh mountains ...
+   also you can have less empty space in p0-p4"), levels 4 and 5's stretch L3 .. L5 of the saved course:
+   - the cliffs (P3 CLIFF) one rock wall along a side: runs less than MF_GAP pieces apart joined (not across a side that drops away - the outside of a turn), a run
+     shorter than MF_MIN left alone on its side taken out (snow / scree) - their ends rise out of the ground in the game (course3d.h C3_CLIFFEASE);
+   - firs: FOREST on P3 (its wall of trees and the trees before it) in patches where no cliff stands, here and there on P2 too;
+   - P0 .. P2 narrow everywhere (the verge's edge + MF_W to P2's, a cliff's side MF_WC as SampleMountains made it), eased along the road - the cliffs, the trees and the
+     drops close to the road, no wide empty shelf */
+#define MF_GAP 60
+#define MF_MIN 16
+#define MF_W 520.0
+#define MF_WC 230.0
+static void SampleMountainFill(int L3, int L4, int L5)
+{   unsigned short cl = (unsigned short)(RRC_BAND | RRC_GEN | C3_GCLIFF); int k, sd, nj = 0, nx = 0, nt = 0, nw = 0;
+    char (*cf)[2] = (char (*)[2])calloc((size_t)g_c.n + 2, sizeof *cf), (*tr)[2] = (char (*)[2])calloc((size_t)g_c.n + 2, sizeof *tr); signed char *in = (signed char *)calloc((size_t)g_c.n + 2, 1);
+    double (*tg)[2] = (double (*)[2])calloc((size_t)g_c.n + 2, sizeof *tg);
+    if (!cf || !tr || !in || !tg || !g_ra.ext || L5 <= L3 || L5 > g_c.n || L5 > g_ra.next) { free(cf); free(tr); free(in); free(tg); return; }
+    for (k = L3; k < L5 && k + 1 < g_c.n; k++) { float a0[3], a1[3], b0[3], b1[3]; double dl, dr;   /* the inside of each turn (as SampleMountains) */
+        if (abs(g_c.piece[k].halfA.curve) < 14 || g_c.piece[k].layout == 2) continue;
+        C3_PointF(&g_c, g_c.frame, k, -800, 0, a0); C3_PointF(&g_c, g_c.frame, k + 1, -800, 0, a1); C3_PointF(&g_c, g_c.frame, k, 800, 0, b0); C3_PointF(&g_c, g_c.frame, k + 1, 800, 0, b1);
+        dl = (a1[0] - a0[0]) * (a1[0] - a0[0]) + (a1[2] - a0[2]) * (a1[2] - a0[2]); dr = (b1[0] - b0[0]) * (b1[0] - b0[0]) + (b1[2] - b0[2]) * (b1[2] - b0[2]);
+        in[k] = dl < dr ? 1 : 2; }
+    for (k = L3; k < L5; k++) for (sd = 0; sd < 2; sd++) { unsigned short *set, *v = CellVal(&g_ra.ext[k], 0, sd, 4, &set); cf[k][sd] = *v == cl; }
+    for (sd = 0; sd < 2; sd++) {   /* the cliffs: joined, the short ones out */
+        int a, e, j;
+        for (k = L3; k < L5; k++) if (cf[k][sd] == 1 && (k + 1 >= L5 || !cf[k + 1][sd])) {   /* a run's last piece: on to the next run, if near and no drop / split between */
+            int ok = 1; for (e = k + 1; e < L5 && !cf[e][sd]; e++) ;
+            if (e >= L5 || e - k - 1 > MF_GAP || e - k - 1 < 1) continue;
+            for (j = k + 1; j < e && ok; j++) if ((in[j] && in[j] != sd + 1) || g_c.piece[j].layout == 2) ok = 0;
+            if (ok) { for (j = k + 1; j < e; j++) cf[j][sd] = 2; nj++; } }
+        for (k = L3; k < L5; k = e) { e = k + 1; if (!cf[k][sd]) continue; a = k; while (e < L5 && cf[e][sd]) e++;
+            if (e - a < MF_MIN) { for (j = a; j < e; j++) cf[j][sd] = cf[j][sd] == 1 ? 3 : 0; nx++; } }
+        for (k = L3; k < L5; k = e) { int v = cf[k][sd]; e = k + 1; while (e < L5 && cf[e][sd] == v) e++;   /* painted in runs: 2 = a cliff now, 3 = none any more */
+            if (v == 2) SamplePaint(5, "CLIFF", k, e - k, 0, sd, 4); else if (v == 3) SamplePaint(2, k < L4 ? "SCREE" : "SNOW", k, e - k, 0, sd, 4); }
+        for (k = L3; k < L5; k++) cf[k][sd] = cf[k][sd] == 1 || cf[k][sd] == 2; }
+    for (k = L3; k < L5; k++) for (sd = 0; sd < 2; sd++) {   /* the firs: a patch's dice (20 pieces) - more on level 4's stretch than on level 5's snowfields */
+        unsigned h = SampleH((unsigned)(k / 20), (unsigned)sd * 11 + 29); int r = (int)(h % 100), r2 = (int)((h >> 9) % 100);
+        if (cf[k][sd] || g_c.piece[k].layout == 2) continue;
+        if (r < (k < L4 ? 60 : 45)) tr[k][sd] = (char)(r2 < 35 ? 2 : 1); }   /* (1: P3; 2: P2 too) */
+    for (sd = 0; sd < 2; sd++) { int e;
+        for (k = L3; k < L5; k = e) { int v = tr[k][sd]; e = k + 1; while (e < L5 && tr[e][sd] == v) e++;
+            if (v) { SamplePaint(2, "FOREST", k, e - k, 0, sd, 4); if (v == 2) SamplePaint(2, "FOREST", k, e - k, 0, sd, 3); nt += e - k; } } }
+    {   int j; TerrBegin();   /* P0 .. P2 narrow: each side's width eased along the road (a box of 13 pieces), in from the stretch's start over 24 */
+        for (k = L3; k < L5; k++) for (sd = 0; sd < 2; sd++) tg[k][sd] = cf[k][sd] ? MF_WC : MF_W;
+        for (k = L3; k < L5; k++) for (sd = 0; sd < 2; sd++) { double s = 0, ve, cur, w, f; int m = 0, order[3];
+            if (g_c.piece[k].layout == 2 || !TerrRec(k)) continue;
+            for (j = k - 6; j <= k + 6; j++) if (j >= L3 && j < L5) { s += tg[j][sd]; m++; }
+            ve = VtxOut(k, sd, 1); cur = VtxOut(k, sd, 4) - ve; w = s / (m ? m : 1);
+            f = k - L3 < 24 ? (k - L3) / 24.0 : L5 - 1 - k < 24 ? (L5 - 1 - k) / 24.0 : 1; w = cur + (w - cur) * f;
+            if (w > cur) { order[0] = 4; order[1] = 3; order[2] = 2; } else { order[0] = 2; order[1] = 3; order[2] = 4; }
+            for (j = 0; j < 3; j++) VtxOutSet(k, sd, order[j], ve + w * (order[j] == 2 ? 0.47 : order[j] == 3 ? 0.73 : 1.0));
+            BlockSync(k); nw++; }
+        TerrEnd(); }
+    LOG("mountain fill %d..%d: %d cliff gaps joined, %d short cliffs out, firs on %d piece sides, %d sides narrowed", L3, L5, nj, nx, nt, nw);
+    free(cf); free(tr); free(in); free(tg); }
 /* a fork's B apart from A (user, 2026-11-27: "The road forks should not overlap from road a and road b or get close to eachother can you make sure they are completely
    separated please"): B's own curves plus a swing out just past the fork and its mirror before the join (each a bend and its opposite: B shifted sideways, its heading
    as it was) - B runs beside A at a distance between them and meets it where it did; the side that takes it further away, the swing made stronger until B's middle
@@ -4693,6 +4747,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         SampleRamp(S, L5, 20, 3); SampleRedwoodStart(S - 30, S + (int)(0.04 * ((g_lvFin[0] > S ? g_lvFin[0] : g_c.n - 1) - S)) + 2);
         for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("ramp: saved as %s: %d", getenv("CE_RAMP"), SaveRrcTo(getenv("CE_RAMP"))); }
     if (getenv("CE_FINFIX") && g_open) { int ok = FinishesAtMarkers(); LOG("finishes: saved as %s: %d", getenv("CE_FINFIX"), ok ? SaveRrcTo(getenv("CE_FINFIX")) : -1); }   /* (the saved course's finishes at its markers, saved there) */
+    if (getenv("CE_MTNFILL") && g_open && g_lvFin[2] > 0 && g_lvFin[3] > g_lvFin[2] && g_lvFin[4] > g_lvFin[3]) { int k; SampleMountainFill(g_lvFin[2], g_lvFin[3], g_lvFin[4]); for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1;
+        LOG("mountain fill: saved as %s: %d", getenv("CE_MTNFILL"), SaveRrcTo(getenv("CE_MTNFILL"))); }   /* (the saved course's mountain: cliffs joined, firs, narrow shelves - saved there; NOT idempotent: the firs' dice paint over) */
     if (getenv("CE_TIDY") && g_open) { int k; SampleTidy(); for (k = 0; k < g_c.n; k++) BlockSync(k); g_dirty = 1; LOG("tidy: saved as %s: %d", getenv("CE_TIDY"), SaveRrcTo(getenv("CE_TIDY"))); }   /* (the notes' tidy on the saved course) */
     if (getenv("CE_FORKSEP") && g_open) { int k, a = -1;   /* (every fork's B apart from A, saved there) */
         for (k = 0; k <= g_c.n; k++) { int sp = k < g_c.n && g_c.piece[k].layout == 2; if (sp && a < 0) a = k; if (!sp && a >= 0) { SampleForkSeparate(a, k - 1, 4000); a = -1; } }
